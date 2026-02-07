@@ -58,8 +58,7 @@ impl DevelopmentCard {
 
     pub fn can_play(&self) -> bool {
         match self {
-            // Victory Point cards are never playable - they automatically count as VP
-            Self::VictoryPoint(_) => false,
+            Self::VictoryPoint(_) => false, // Victory Point cards are never playable - they automatically count as VP
             Self::Knight(s) | Self::RoadBuilder(s) | Self::YearOfPlenty(s) | Self::Monopoly(s) => s.can_play(),
         }
     }
@@ -86,20 +85,15 @@ impl DevelopmentCard {
                 s.played = true;
             }
             Self::VictoryPoint(_) => {
-                // Victory Point cards cannot be played - they grant VP automatically when bought
                 unreachable!("Victory Point cards should never be played");
             }
             Self::RoadBuilder(s) => {
                 s.played = true;
             }
             Self::YearOfPlenty(s) => {
-                // Resources are given after the player chooses via YearOfPlentyChoice request
-                // Just mark the card as played here
                 s.played = true;
             }
             Self::Monopoly(s) => {
-                // Resource collection happens after the player chooses via MonopolyChoice request
-                // Just mark the card as played here
                 s.played = true;
             }
         }
@@ -113,5 +107,89 @@ impl DevelopmentCard {
             Self::YearOfPlenty(_) => DevCardType::YearOfPlenty,
             Self::Monopoly(_) => DevCardType::Monopoly,
         }
+    }
+}
+
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use shared::DevCardType;
+
+    use crate::game::entities::development_card::{
+        DevelopmentCard, DevCardState,
+    };
+    use crate::game::entities::resources::ResourceType;
+
+    #[test]
+    fn dev_card_trait_cost_is_standard_cost() {
+        let k = DevelopmentCard::new(DevCardType::Knight);
+        let cost = k.cost();
+
+        assert_eq!(cost.amount_of(ResourceType::Sheep), 1);
+        assert_eq!(cost.amount_of(ResourceType::Wheat), 1);
+        assert_eq!(cost.amount_of(ResourceType::Ore), 1);
+        assert_eq!(cost.amount_of(ResourceType::Wood), 0);
+        assert_eq!(cost.amount_of(ResourceType::Brick), 0);
+    }
+
+    #[test]
+    fn dev_card_state_new_is_not_playable_same_turn() {
+        let s = DevCardState::new();
+        assert!(s.bought_this_turn);
+        assert!(!s.played);
+        assert!(!s.can_play());
+    }
+
+    #[test]
+    fn dev_card_state_next_turn_makes_playable_if_not_played() {
+        let mut s = DevCardState::new();
+        s.next_turn();
+        assert!(!s.bought_this_turn);
+        assert!(!s.played);
+        assert!(s.can_play());
+    }
+
+    #[test]
+    fn knight_glyph_and_can_play_follows_state() {
+        let mut k = DevelopmentCard::new(DevCardType::Knight);
+        assert!(!k.can_play(), "bought_this_turn should block play");
+
+        k.next_turn();
+        assert!(k.can_play());
+    }
+
+    #[test]
+    fn victory_point_glyph_and_can_play_follows_state() {
+        let mut v = DevelopmentCard::new(DevCardType::VictoryPoint);
+        assert!(!v.can_play());
+        v.next_turn();
+        assert!(!v.can_play(), "victory points cannot be played");
+    }
+
+    #[test]
+    fn road_builder_glyph_and_can_play_follows_state() {
+        let mut r = DevelopmentCard::new(DevCardType::RoadBuilding);
+        assert!(!r.can_play());
+        r.next_turn();
+        assert!(r.can_play());
+    }
+
+    #[test]
+    fn year_of_plenty_glyph_and_can_play_follows_state() {
+        let mut y = DevelopmentCard::new(DevCardType::YearOfPlenty);
+        assert!(!y.can_play());
+        y.next_turn();
+        assert!(y.can_play());
+    }
+
+    #[test]
+    fn monopoly_glyph_and_can_play_follows_state() {
+        let mut m = DevelopmentCard::new(DevCardType::Monopoly);
+        assert!(!m.can_play());
+        m.next_turn();
+        assert!(m.can_play());
     }
 }
