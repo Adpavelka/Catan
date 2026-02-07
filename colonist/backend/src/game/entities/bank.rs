@@ -23,8 +23,9 @@ pub enum ResourceEndpoint {
 pub struct Bank {
     #[serde_as(as = "Vec<(_, _)>")]
     pub players: HashMap<Uuid, Player>,
-    pub game_resources: ResourceSet,
-    pub dev_cards: Vec<DevelopmentCard>,
+
+    game_resources: ResourceSet,
+    dev_cards: Vec<DevelopmentCard>,
 }
 
 impl Bank {
@@ -382,6 +383,12 @@ impl Bank {
         }
 
         Ok(())
+    }
+
+    pub fn draw_dev_card(&mut self) -> Result<DevelopmentCard, GameError> {
+        self.dev_cards
+            .pop()
+            .ok_or(GameError::InvalidAction)
     }
 }
 

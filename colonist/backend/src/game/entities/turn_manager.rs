@@ -263,7 +263,7 @@ impl TurnManager {
 
         self.bank.collect_from_player(pid, cost)?;
 
-        let card = self.bank.dev_cards.pop().ok_or(GameError::InvalidAction)?;
+        let card = self.bank.draw_dev_card()?;
         let card_type = card.get_type();
 
         let player = self

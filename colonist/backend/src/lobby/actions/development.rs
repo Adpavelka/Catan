@@ -1,3 +1,5 @@
+use crate::game::entities::bank::ResourceEndpoint;
+use crate::game::entities::resources::ResourceSet;
 use crate::lobby::GameInstance;
 use shared::ResourceType::{Brick, Ore, Sheep, Wheat, Wood};
 use shared::ServerMessage;
@@ -123,20 +125,15 @@ pub fn handle_year_of_plenty_choice(
 
     let tm = &mut game.turn_manager;
 
-    tm.bank.game_resources.take(resource1, 1);
-    tm.bank.game_resources.take(resource2, 1);
+    let mut cost = ResourceSet::new();
+    cost.add(resource1, 1);
+    cost.add(resource2, 1);
 
-    {
-        let player = tm
-            .bank
-            .players
-            .get_mut(&pid)
-            .ok_or_else(|| "Player not found".to_string())?;
+    tm.bank
+        .collect_from_to(ResourceEndpoint::Bank, ResourceEndpoint::Player(pid), &cost)
+        .map_err(|e| format!("Failed to collect resources: {e}"))?;
 
-        player.resources.add(resource1, 1);
-        player.resources.add(resource2, 1);
-    }
-
+    // reset pending status
     game.year_of_plenty_pending = None;
 
     Ok(ServerMessage::YearOfPlentyResourcesReceived {
