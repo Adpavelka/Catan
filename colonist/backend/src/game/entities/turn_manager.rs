@@ -2,7 +2,6 @@ use crate::errors::GameError;
 use crate::game::entities::bank::Bank;
 use crate::game::entities::board::{Board, Coordinates};
 use crate::game::entities::bonus_points::{BiggestArmy, BonusCard, LongestRoad};
-// Building trait needed for cost()
 use crate::game::entities::dice::Dice;
 use crate::game::entities::player::Player;
 use crate::game::entities::resources::ResourceSet;

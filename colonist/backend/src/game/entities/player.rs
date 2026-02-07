@@ -89,15 +89,15 @@ impl Player {
         self.resources.add(res, amount);
     }
 
-    pub fn has_settlement(&self) -> bool {
+    fn has_settlement(&self) -> bool {
         self.settlements_left > 0
     }
 
-    pub fn has_city(&self) -> bool {
+    fn has_city(&self) -> bool {
         self.cities_left > 0
     }
 
-    pub fn has_road(&self) -> bool {
+    fn has_road(&self) -> bool {
         self.roads_left > 0
     }
 
