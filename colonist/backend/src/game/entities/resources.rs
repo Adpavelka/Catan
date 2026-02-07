@@ -97,3 +97,107 @@ impl From<&ResourceSet> for Resources {
         }
     }
 }
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use crate::game::entities::resources::{ResourceType, ResourceSet};
+    #[test]
+    fn resource_set_new_starts_empty() {
+        let rs = ResourceSet::new();
+        assert_eq!(rs.amount_of(ResourceType::Wood), 0);
+        assert_eq!(rs.amount_of(ResourceType::Brick), 0);
+        assert_eq!(rs.amount_of(ResourceType::Sheep), 0);
+        assert_eq!(rs.amount_of(ResourceType::Wheat), 0);
+        assert_eq!(rs.amount_of(ResourceType::Ore), 0);
+        assert_eq!(rs.amount_of(ResourceType::Desert), 0);
+    }
+
+    #[test]
+    fn add_increases_amount_and_desert_is_ignored() {
+        let mut rs = ResourceSet::new();
+        rs.add(ResourceType::Wood, 2);
+        rs.add(ResourceType::Wood, 3);
+        rs.add(ResourceType::Desert, 100);
+
+        assert_eq!(rs.amount_of(ResourceType::Wood), 5);
+        assert_eq!(rs.amount_of(ResourceType::Desert), 0, "desert should never be stored");
+    }
+
+    #[test]
+    fn take_decreases_amount() {
+        let mut rs = ResourceSet::new();
+        rs.add(ResourceType::Brick, 4);
+        rs.take(ResourceType::Brick, 2);
+        assert_eq!(rs.amount_of(ResourceType::Brick), 2);
+    }
+
+    #[test]
+    fn get_cards_total_sums_all_resources() {
+        let mut rs = ResourceSet::new();
+        rs.add(ResourceType::Wood, 2);
+        rs.add(ResourceType::Brick, 1);
+        rs.add(ResourceType::Sheep, 3);
+        rs.add(ResourceType::Wheat, 4);
+        rs.add(ResourceType::Ore, 5);
+
+        assert_eq!(rs.get_cards_total(), 15);
+    }
+
+    #[test]
+    fn can_pay_true_when_sufficient_and_false_when_insufficient() {
+        let mut have = ResourceSet::new();
+        have.add(ResourceType::Wood, 2);
+        have.add(ResourceType::Brick, 1);
+
+        let mut cost_ok = ResourceSet::new();
+        cost_ok.add(ResourceType::Wood, 2);
+        cost_ok.add(ResourceType::Brick, 1);
+
+        let mut cost_too_much = ResourceSet::new();
+        cost_too_much.add(ResourceType::Wood, 3);
+
+        let mut cost_missing_type = ResourceSet::new();
+        cost_missing_type.add(ResourceType::Ore, 1);
+
+        assert!(have.can_pay(&cost_ok));
+        assert!(!have.can_pay(&cost_too_much));
+        assert!(!have.can_pay(&cost_missing_type));
+    }
+
+    #[test]
+    fn take_random_card_returns_none_when_empty() {
+        let mut rs = ResourceSet::new();
+        assert_eq!(rs.take_random_card(), None);
+    }
+
+    #[test]
+    fn take_random_card_reduces_total_by_one_and_returns_existing_resource() {
+        let mut rs = ResourceSet::new();
+        rs.add(ResourceType::Wood, 2);
+        rs.add(ResourceType::Ore, 1);
+
+        let total_before = rs.get_cards_total();
+        let wood_before = rs.amount_of(ResourceType::Wood);
+        let ore_before = rs.amount_of(ResourceType::Ore);
+
+        let taken = rs.take_random_card().expect("should take a card");
+        let total_after = rs.get_cards_total();
+
+        assert_eq!(total_after, total_before - 1);
+
+        match taken {
+            ResourceType::Wood => {
+                assert_eq!(rs.amount_of(ResourceType::Wood), wood_before - 1);
+                assert_eq!(rs.amount_of(ResourceType::Ore), ore_before);
+            }
+            ResourceType::Ore => {
+                assert_eq!(rs.amount_of(ResourceType::Ore), ore_before - 1);
+                assert_eq!(rs.amount_of(ResourceType::Wood), wood_before);
+            }
+            other => panic!("unexpected resource taken: {:?}", other),
+        }
+    }
+}

@@ -291,22 +291,28 @@ impl Board {
             return false;
         };
 
+        if vertex.building.is_some() {
+            return false;
+        }
+
         for edge_coord in &vertex.adjacent_edges {
             let Some(edge) = self.edges.get(edge_coord) else {
-                return false;
+                continue;
             };
 
-            for &vertex_coord in &[edge.adjacent_vertices.0, edge.adjacent_vertices.1] {
-                if let Some(vertex) = self.vertices.get(&vertex_coord) {
-                    if vertex.building.is_some() {
-                        return false;
-                    }
+            let (a, b) = edge.adjacent_vertices;
+            let neighbor = if a == pos { b } else { a };
+
+            if let Some(v) = self.vertices.get(&neighbor) {
+                if v.building.is_some() {
+                    return false;
                 }
             }
         }
 
         true
     }
+
 
     pub fn is_vertex_connected_to_player(&self, pos: Coordinates, player_id: Uuid) -> bool {
         self.vertices
