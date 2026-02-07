@@ -17,7 +17,7 @@ pub fn handle_discard_cards(pid: Uuid, resources: shared::Resources, game: &mut 
     discard_set.add(Wheat, resources.grain as u32);
     discard_set.add(Ore, resources.ore as u32);
 
-    match tm.bank.players.get_mut(&pid) {
+    match tm.new_players.get_mut(pid) {
         Some(player) => {
             if player.resources.can_pay(&discard_set) {
                 player.resources.take_set(&discard_set);
@@ -39,7 +39,7 @@ pub fn handle_discard_cards(pid: Uuid, resources: shared::Resources, game: &mut 
 
 pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
-    if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
+    if pid != tm.new_players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
 
     tm.buy_dev_card()
         .map(|card_type| {
@@ -53,7 +53,7 @@ pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerM
 
 pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option<shared::DevCardTarget>, game: &mut GameInstance) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
-    if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
+    if pid != tm.new_players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
 
     tm.play_development_card(card.clone(), target)
         .map(|_| {
@@ -83,7 +83,7 @@ pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option
 
 pub fn handle_move_robber(pid: Uuid, q: i32, r: i32, game: &mut GameInstance) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
-    if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
+    if pid != tm.new_players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
 
     tm.move_robber((q, r))
         .map(|_| {
@@ -128,7 +128,7 @@ pub fn handle_year_of_plenty_choice(
     cost.add(resource1, 1);
     cost.add(resource2, 1);
 
-    tm.bank.trade_with_bank(pid, ResourceSet::new(), cost, false).unwrap();
+    tm.bank.trade_with_bank(pid, ResourceSet::new(), cost, &mut tm.new_players, false).unwrap();
 
     // reset pending status
     game.year_of_plenty_pending = None;
@@ -152,7 +152,7 @@ pub fn handle_monopoly_choice(
     let tm = &mut game.turn_manager;
 
     // Collect all resources of this type from all other players
-    let total_stolen = tm.bank.collect_resource_from_all_to_player(pid, resource)
+    let total_stolen = tm.bank.collect_resource_from_all_to_player(pid, resource, &mut tm.new_players)
         .map_err(|e| format!("{:?}", e))?;
 
     game.monopoly_pending = None;

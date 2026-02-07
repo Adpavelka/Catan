@@ -77,11 +77,11 @@ impl DevelopmentCard {
 
         match self {
             Self::Knight(s) => {
-                let pid = game.current_player_id();
-                if let Some(player) = game.bank.players.get_mut(&pid) {
+                let pid = game.new_players.get_current_player().id;
+                if let Some(player) = game.new_players.get_mut(pid) {
                     player.knight_played += 1;
                 }
-                game.army_bonus.recalculate(&mut game.bank.players);
+                game.army_bonus.recalculate(&mut game.new_players);
                 s.played = true;
             }
             Self::VictoryPoint(_) => {

@@ -30,7 +30,7 @@ impl Lobby {
         if let Some(game) = self.games.get_mut(&game_id) {
             game.player_ids.retain(|&pid_in_game| pid_in_game != pid);
             game.player_id_to_slot.remove(&pid);
-            let _ = game.turn_manager.remove_player(pid);
+            let _ = game.turn_manager.new_players.remove_player(pid);
 
             if game.player_ids.is_empty() {
                 should_remove_game = true;
@@ -77,7 +77,7 @@ impl Lobby {
                 let slot = game.player_ids.len();
                 game.player_id_to_slot.insert(pid, slot);
                 game.player_ids.push(pid);
-                game.turn_manager.add_player_with_colour(pid);
+                game.turn_manager.new_players.add_player_with_colour(pid);
             }
 
             (game.player_ids.len() >= game.max_players, already_in)
@@ -131,7 +131,7 @@ impl Lobby {
             initial_settlements: HashMap::new(),
         };
 
-        game.turn_manager.add_player_with_colour(pid);
+        game.turn_manager.new_players.add_player_with_colour(pid);
 
         self.games.insert(gid.clone(), game);
         self.player_to_game.insert(pid, gid.clone());

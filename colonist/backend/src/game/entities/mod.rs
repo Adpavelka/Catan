@@ -5,6 +5,7 @@ pub mod building;
 pub mod dice;
 pub mod development_card;
 pub mod player;
+pub mod players;
 pub mod robber;
 pub mod resources;
 pub mod turn_manager;

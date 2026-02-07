@@ -4,6 +4,7 @@ use crate::game::entities::board::{Board, Coordinates, PortType};
 use crate::game::entities::development_card::DevelopmentCard::Knight;
 use crate::game::entities::development_card::{DevCardState, DevelopmentCard};
 use crate::game::entities::player::Player;
+use crate::game::entities::players::Players;
 use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::robber::Robber;
 use serde::{Deserialize, Serialize};
@@ -21,9 +22,6 @@ pub enum ResourceEndpoint {
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Bank {
-    #[serde_as(as = "Vec<(_, _)>")]
-    pub players: HashMap<Uuid, Player>,
-
     game_resources: ResourceSet,
     dev_cards: Vec<DevelopmentCard>,
 }
@@ -59,14 +57,9 @@ impl Bank {
         dev_cards.shuffle(&mut rng);
 
         Self {
-            players: HashMap::new(),
             game_resources: resources,
             dev_cards,
         }
-    }
-
-    pub fn add_player(&mut self, player: Player) {
-        self.players.insert(player.id, player);
     }
 
     pub fn give_resources_for_roll(
@@ -74,15 +67,13 @@ impl Bank {
         board: &Board,
         dice_number: u8,
         robber: &Robber,
+        players: &mut Players
     ) -> Vec<(Uuid, ResourceType, u32)> {
         let mut pending: Vec<(Uuid, ResourceType, u32)> = Vec::new();
         let mut totals: HashMap<ResourceType, u32> = HashMap::new();
 
         for hex in board.hexes.values() {
-            if hex.number != dice_number
-                || hex.resource == ResourceType::Desert
-                || robber.pos == hex.coord
-            {
+            if hex.number != dice_number || hex.resource == ResourceType::Desert || robber.pos == hex.coord {
                 continue;
             }
 
@@ -131,6 +122,7 @@ impl Bank {
                     ResourceEndpoint::Bank,
                     ResourceEndpoint::Player(player_id),
                     &cost,
+                    players,
                 )
                 .is_ok()
             {
@@ -147,6 +139,7 @@ impl Bank {
         board: &Board,
         player_id: Uuid,
         settlement_pos: Coordinates,
+        players: &mut Players,
     ) {
         use log::info;
 
@@ -174,6 +167,7 @@ impl Bank {
                 ResourceEndpoint::Bank,
                 ResourceEndpoint::Player(player_id),
                 &cost,
+                players,
             ) {
                 Ok(_) => {
                     resources_given += 1;
@@ -249,30 +243,28 @@ impl Bank {
 
     pub fn trade_with_bank(
         &mut self,
-        player_id: Uuid,
+        pid: Uuid,
         gives: ResourceSet,
         takes: ResourceSet,
+        players: &mut Players,
         validate: bool
     ) -> Result<(), GameError> {
-        let player = self
-            .players
-            .get(&player_id)
-            .ok_or(GameError::PlayerNotFound)?;
-
         if validate {
-            self.validate_bank_trade(player, &gives, &takes)?;
+            self.validate_bank_trade(players.get(pid).unwrap(), &gives, &takes)?;
         }
 
         self.collect_from_to(
-            ResourceEndpoint::Player(player_id),
+            ResourceEndpoint::Player(pid),
             ResourceEndpoint::Bank,
             &gives,
+            players,
         )?;
 
         self.collect_from_to(
             ResourceEndpoint::Bank,
-            ResourceEndpoint::Player(player_id),
+            ResourceEndpoint::Player(pid),
             &takes,
+            players,
         )?;
 
         Ok(())
@@ -297,11 +289,13 @@ impl Bank {
         &mut self,
         player_id: Uuid,
         cost: ResourceSet,
+        players: &mut Players,
     ) -> Result<(), GameError> {
         self.collect_from_to(
             ResourceEndpoint::Player(player_id),
             ResourceEndpoint::Bank,
             &cost,
+            players,
         )
     }
 
@@ -310,28 +304,36 @@ impl Bank {
         from_id: Uuid,
         to_id: Uuid,
         cost: &ResourceSet,
+        players: &mut Players,
     ) -> Result<(), GameError> {
         self.collect_from_to(
             ResourceEndpoint::Player(from_id),
             ResourceEndpoint::Player(to_id),
             cost,
+            players,
         )
     }
 
-    pub fn collect_resource_from_all_to_player(&mut self, to_id: Uuid, resource: ResourceType) -> Result<u32, GameError> {
-        let transfers: Vec<(Uuid, u32)> = self
-            .players
-            .iter()
-            .filter(|(player_id, _)| *player_id != &to_id)
-            .map(|(&player_id, player)| (player_id, player.resources.amount_of(resource)))
-            .filter(|(_, amt)| *amt > 0)
-            .collect();
+    pub fn collect_resource_from_all_to_player(&mut self, to_id: Uuid, resource: ResourceType, players: &mut Players) -> Result<u32, GameError> {
+        let mut transfers: Vec<(Uuid, u32)> = Vec::new();
+        for idx in 0..players.len() {
+            let player = players.get_by_index(idx).unwrap();
+
+            if player.id == to_id {
+                continue;
+            }
+
+            let amount = player.resources.amount_of(resource);
+            if amount > 0 {
+                transfers.push((player.id, amount));
+            }
+        }
 
         let mut total_stolen = 0u32;
         for (from_id, amt) in transfers {
             let mut cost = ResourceSet::new();
             cost.add(resource, amt);
-            self.collect_from_player_to_player(from_id, to_id, &cost)?;
+            self.collect_from_player_to_player(from_id, to_id, &cost, players)?;
             total_stolen += amt;
         }
 
@@ -343,6 +345,7 @@ impl Bank {
         from: ResourceEndpoint,
         to: ResourceEndpoint,
         cost: &ResourceSet,
+        players: &mut Players, 
     ) -> Result<(), GameError> {
         if from == to {
             return Ok(());
@@ -350,10 +353,9 @@ impl Bank {
 
         match from {
             ResourceEndpoint::Player(id) => {
-                let player = self
-                    .players
-                    .get(&id)
-                    .ok_or(GameError::PlayerNotFound)?;
+                let player = players
+                                        .get(id)
+                                        .ok_or(GameError::PlayerNotFound)?;
 
                 if !player.can_pay(cost) {
                     return Err(GameError::NotEnoughResources);
@@ -368,9 +370,8 @@ impl Bank {
 
         match to {
             ResourceEndpoint::Player(id) => {
-                let _ = self
-                    .players
-                    .get(&id)
+                let _ = players
+                    .get(id)
                     .ok_or(GameError::PlayerNotFound)?;
             }
             _ => {}
@@ -379,7 +380,7 @@ impl Bank {
 
         match from {
             ResourceEndpoint::Player(id) => {
-                let player = self.players.get_mut(&id).unwrap();
+                let player = players.get_mut(id).unwrap();
                 player.pay(cost);
             }
             ResourceEndpoint::Bank => {
@@ -389,7 +390,7 @@ impl Bank {
 
         match to {
             ResourceEndpoint::Player(id) => {
-                let player = self.players.get_mut(&id).unwrap();
+                let player = players.get_mut(id).unwrap();
                 player.resources.add_set(cost);
             }
             ResourceEndpoint::Bank => {
@@ -407,7 +408,25 @@ impl Bank {
     }
 }
 
-// teeeeeeest
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #[cfg(test)]
 mod tests {
@@ -421,6 +440,10 @@ mod tests {
 
     fn pid(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    fn players(ps: Vec<Player>) -> Players {
+        Players::new(ps)
     }
 
     #[test]
@@ -444,22 +467,14 @@ mod tests {
     }
 
     #[test]
-    fn add_player_inserts_player() {
-        let mut bank = Bank::new();
-        let p = Player::new(pid(1), "Alice", 'A');
-
-        bank.add_player(p);
-
-        assert!(bank.players.contains_key(&pid(1)));
-    }
-
-    #[test]
     fn give_resources_for_roll_pays_settlement() {
         let mut bank = Bank::new();
         let mut board = Board::new();
 
         let player_id = pid(1);
-        bank.add_player(Player::new(player_id, "A", 'A'));
+        let mut players = players(vec![
+            Player::new(player_id, "A", 'A')
+        ]);
 
         let (_, dice, res, vertex) = {
             let hex = board.hexes.values()
@@ -474,16 +489,29 @@ mod tests {
 
         let robber = Robber { pos: (999, 999) };
 
-        let before = bank.players.get(&player_id).unwrap().resources.amount_of(res);
+        let before = players
+            .get(player_id)
+            .unwrap()
+            .resources
+            .amount_of(res);
 
-        let distributed = bank.give_resources_for_roll(&board, dice, &robber);
+        let distributed = bank.give_resources_for_roll(
+            &board,
+            dice,
+            &robber,
+            &mut players,
+        );
 
-        let after = bank.players.get(&player_id).unwrap().resources.amount_of(res);
+        let after = players
+            .get(player_id)
+            .unwrap()
+            .resources
+            .amount_of(res);
 
         assert_eq!(after - before, 1);
-        assert_eq!(distributed.len(), 1);
-        assert_eq!(distributed[0], (player_id, res, 1));
+        assert_eq!(distributed, vec![(player_id, res, 1)]);
     }
+
 
     #[test]
     fn give_resources_for_roll_blocked_by_robber() {
@@ -491,7 +519,9 @@ mod tests {
         let mut board = Board::new();
 
         let player_id = pid(1);
-        bank.add_player(Player::new(player_id, "A", 'A'));
+        let mut players = players(vec![
+            Player::new(player_id, "A", 'A')
+        ]);
 
         let (hex_coord, dice, res, vertex) = {
             let hex = board.hexes.values()
@@ -506,14 +536,20 @@ mod tests {
 
         let robber = Robber { pos: hex_coord };
 
-        let distributed = bank.give_resources_for_roll(&board, dice, &robber);
+        let distributed = bank.give_resources_for_roll(
+            &board,
+            dice,
+            &robber,
+            &mut players,
+        );
 
         assert!(distributed.is_empty());
         assert_eq!(
-            bank.players.get(&player_id).unwrap().resources.amount_of(res),
+            players.get(player_id).unwrap().resources.amount_of(res),
             0
         );
     }
+
 
 
     #[test]
@@ -528,65 +564,95 @@ mod tests {
 
         let p2 = Player::new(to, "To", 'B');
 
-        bank.add_player(p1);
-        bank.add_player(p2);
+        let mut players = players(vec![p1, p2]);
 
         let mut cost = ResourceSet::new();
         cost.add(ResourceType::Wood, 2);
 
-        bank.collect_from_player_to_player(from, to, &cost).unwrap();
+        bank.collect_from_player_to_player(
+            from,
+            to,
+            &cost,
+            &mut players,
+        ).unwrap();
 
-        assert_eq!(bank.players.get(&from).unwrap().resources.amount_of(ResourceType::Wood), 1);
-        assert_eq!(bank.players.get(&to).unwrap().resources.amount_of(ResourceType::Wood), 2);
+        assert_eq!(
+            players.get(from).unwrap().resources.amount_of(ResourceType::Wood),
+            1
+        );
+        assert_eq!(
+            players.get(to).unwrap().resources.amount_of(ResourceType::Wood),
+            2
+        );
     }
+
 
     #[test]
     fn collect_resource_from_all_to_player_collects_everything() {
         let mut bank = Bank::new();
 
         let target = pid(0);
-        bank.add_player(Player::new(target, "T", 'T'));
+
+        let mut ps = vec![Player::new(target, "T", 'T')];
 
         for i in 1..=3 {
             let mut p = Player::new(pid(i), "P", 'A');
             p.resources.add(ResourceType::Ore, i as u32);
-            bank.add_player(p);
+            ps.push(p);
         }
 
+        let mut players = players(ps);
+
         let stolen = bank
-            .collect_resource_from_all_to_player(target, ResourceType::Ore)
+            .collect_resource_from_all_to_player(
+                target,
+                ResourceType::Ore,
+                &mut players,
+            )
             .unwrap();
 
         assert_eq!(stolen, 6);
         assert_eq!(
-            bank.players.get(&target).unwrap().resources.amount_of(ResourceType::Ore),
+            players.get(target).unwrap().resources.amount_of(ResourceType::Ore),
             6
         );
     }
+
 
     #[test]
     fn collect_from_player_to_player_returns_err_when_target_missing_and_source_is_restored() {
         let mut bank = Bank::new();
 
         let pid1 = Uuid::from_u128(1);
-        let pid2 = Uuid::from_u128(2);
+        let pid2 = Uuid::from_u128(2); // nebude existovat
 
         let mut from = Player::new(pid1, "From", 'A');
         from.add_resource(ResourceType::Brick, 2);
-        bank.add_player(from);
+
+        let mut players = Players::new(vec![from]);
 
         let mut cost = ResourceSet::new();
         cost.add(ResourceType::Brick, 1);
 
-        let from_brick_before = bank.players.get(&pid1).unwrap().resources.amount_of(ResourceType::Brick);
+        let from_brick_before = players
+            .get(pid1)
+            .unwrap()
+            .resources
+            .amount_of(ResourceType::Brick);
 
         let err = bank
-            .collect_from_player_to_player(pid1, pid2, &cost)
+            .collect_from_player_to_player(pid1, pid2, &cost, &mut players)
             .unwrap_err();
+
         assert_eq!(err, GameError::PlayerNotFound);
 
-        let from_after = bank.players.get(&pid1).unwrap();
-        assert_eq!(from_after.resources.amount_of(ResourceType::Brick), from_brick_before);
+        let from_after = players.get(pid1).unwrap();
+        assert_eq!(
+            from_after.resources.amount_of(ResourceType::Brick),
+            from_brick_before,
+            "source player must not lose resources when transfer fails"
+        );
     }
+
 }
 

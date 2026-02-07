@@ -27,7 +27,7 @@ pub fn handle_bank_trade(
 ) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
 
-    if pid != tm.current_player_id() {
+    if pid != tm.new_players.get_current_player().id {
         return Err("Wait for your turn!".to_string());
     }
 
@@ -39,9 +39,8 @@ pub fn handle_bank_trade(
     }
 
     let player = tm
-        .bank
-        .players
-        .get(&pid)
+        .new_players
+        .get(pid)
         .ok_or("Player not found")?;
 
     let possible_ratios = [2, 3, 4];
@@ -55,7 +54,7 @@ pub fn handle_bank_trade(
 
         if tm.bank.validate_bank_trade(player, &gives, &takes).is_ok() {
             tm.bank
-                .trade_with_bank(pid, gives, takes, true)
+                .trade_with_bank(pid, gives, takes, &mut tm.new_players, true)
                 .map_err(|e| format!("{:?}", e))?;
 
             return Ok(ServerMessage::BankTradeCompleted {
@@ -79,7 +78,7 @@ pub fn handle_trade_offer(
 ) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
 
-    if pid != tm.current_player_id() {
+    if pid != tm.new_players.get_current_player().id {
         return Err("Wait for your turn!".to_string());
     }
 
@@ -91,9 +90,8 @@ pub fn handle_trade_offer(
     }
 
     let proposer = tm
-        .bank
-        .players
-        .get(&pid)
+        .new_players
+        .get(pid)
         .ok_or("Player not found")?;
 
     let offer_set = resources_to_set(&offer);
@@ -185,15 +183,13 @@ pub fn handle_trade_response(
     let accepter_gives = resources_to_set(&trade.requesting);
 
     let proposer = tm
-        .bank
-        .players
-        .get(&trade.proposer_id)
+        .new_players
+        .get(trade.proposer_id)
         .ok_or("Proposer not found")?;
 
     let accepter = tm
-        .bank
-        .players
-        .get(&pid)
+        .new_players
+        .get(pid)
         .ok_or("Accepter not found")?;
 
     if !proposer.can_pay(&proposer_gives) {
@@ -210,6 +206,7 @@ pub fn handle_trade_response(
             trade.proposer_id,
             pid,
             &proposer_gives,
+            &mut tm.new_players
         )
         .map_err(|e| format!("{:?}", e))?;
 
@@ -218,6 +215,7 @@ pub fn handle_trade_response(
             pid,
             trade.proposer_id,
             &accepter_gives,
+            &mut tm.new_players
         )
         .map_err(|e| format!("{:?}", e))?;
 

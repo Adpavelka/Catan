@@ -105,7 +105,7 @@ impl Handler<ClientActorMessage> for Lobby {
                     if (dice_1 + dice_2) == 7 {
                         if let Some(game) = self.games.get(&gid) {
                             for &p_id in &game.pending_discards {
-                                if let Some(player) = game.turn_manager.bank.players.get(&p_id) {
+                                if let Some(player) = game.turn_manager.new_players.get(p_id) {
                                     let total = player.resources.clone().get_cards_total();
 
                                     if total > 7 {
@@ -166,7 +166,7 @@ impl Handler<ClientActorMessage> for Lobby {
                             }
                             if let Some(game) = self.games.get(&gid) {
                                 let n_msg = ServerMessage::NextTurn {
-                                    player_id: game.turn_manager.current_player_id(),
+                                    player_id: game.turn_manager.new_players.get_current_player().id,
                                 };
                                 self.broadcast_to_game(&gid, n_msg);
                             }

@@ -52,7 +52,7 @@ impl Lobby
         let Some(game) = self.games.get(game_id) else { return };
 
         let players: Vec<shared::PlayerInfo> = game.player_ids.iter()
-            .filter_map(|&id| game.turn_manager.get_player_info(id))
+            .filter_map(|&id| game.turn_manager.new_players.get(id))
             .map(|p| p.into())
             .collect();
 
@@ -92,7 +92,7 @@ impl Lobby
             players: game.get_all_players_info(),
             board: game.turn_manager.board.to_info(game.turn_manager.robber.pos),
             game_phase: game.phase.clone(),
-            current_turn_player_id: game.turn_manager.current_player_id(),
+            current_turn_player_id: game.turn_manager.new_players.get_current_player().id,
             robber_pos: game.turn_manager.robber.pos,
             last_dice_roll: last_roll,
         };
@@ -106,6 +106,7 @@ impl Lobby
             self.send_server_msg(pid, MustMoveRobber { player_id: pid });
         }
     }
+    
     pub(crate) fn send_error(&self, pid: Uuid, error_msg: &str) {
         self.send_server_msg(pid, shared::ServerMessage::Error {
             message: error_msg.to_string(),
@@ -115,7 +116,7 @@ impl Lobby
     let Some(game) = self.games.get(gid) else { return };
 
     for &pid in &game.player_ids {
-        if let Some(player) = game.turn_manager.get_player_info(pid) {
+        if let Some(player) = game.turn_manager.new_players.get(pid) {
             let res: shared::Resources = (&player.resources).into();
             info!("Sending resource update to pid {}: {:?}", pid, res);
             let msg = shared::ServerMessage::ResourceUpdate {
@@ -130,7 +131,7 @@ impl Lobby
     pub(crate) fn broadcast_players_update(&self, gid: &str) {
         if let Some(game) = self.games.get(gid) {
             let players: Vec<shared::PlayerInfo> = game.player_ids.iter()
-                .filter_map(|&pid| game.turn_manager.get_player_info(pid).map(|p| (pid, p)))
+                .filter_map(|&pid| game.turn_manager.new_players.get(pid).map(|p| (pid, p)))
                 .map(|(pid, p)| {
                     let mut info = shared::PlayerInfo::from(p);
                     info.has_longest_road = game.turn_manager.road_bonus.holder() == Some(pid);
