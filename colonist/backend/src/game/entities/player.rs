@@ -147,3 +147,160 @@ impl From<&Player> for PlayerInfo {
         }
     }
 }
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use crate::game::entities::player::Player;
+    use crate::game::entities::resources::{ResourceType, ResourceSet};
+    use crate::errors::GameError;
+
+    #[test]
+    fn player_new_initializes_defaults() {
+        let p = Player::new(Uuid::from_u128(42), "Alice", 'A');
+
+        assert_eq!(p.id, Uuid::from_u128(42));
+        assert_eq!(p.name, "Alice");
+        assert_eq!(p.colour, 'A');
+
+        assert_eq!(p.get_victory_points(), 0);
+        assert_eq!(p.knight_played, 0);
+        assert_eq!(p.longest_road, 0);
+
+        assert!(p.has_settlement());
+        assert!(p.has_city());
+        assert!(p.has_road());
+
+        assert_eq!(p.resources.amount_of(ResourceType::Wood), 0);
+        assert_eq!(p.resources.amount_of(ResourceType::Brick), 0);
+        assert_eq!(p.resources.amount_of(ResourceType::Sheep), 0);
+        assert_eq!(p.resources.amount_of(ResourceType::Wheat), 0);
+        assert_eq!(p.resources.amount_of(ResourceType::Ore), 0);
+
+        assert!(p.dev_cards.is_empty());
+    }
+
+    #[test]
+    fn add_victory_point_increments() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        assert_eq!(p.get_victory_points(), 0);
+        p.add_victory_point();
+        assert_eq!(p.get_victory_points(), 1);
+        p.add_victory_point();
+        assert_eq!(p.get_victory_points(), 2);
+    }
+
+    #[test]
+    fn add_resource_increases_resources() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        p.add_resource(ResourceType::Wood, 3);
+        p.add_resource(ResourceType::Wood, 2);
+        p.add_resource(ResourceType::Ore, 1);
+
+        assert_eq!(p.resources.amount_of(ResourceType::Wood), 5);
+        assert_eq!(p.resources.amount_of(ResourceType::Ore), 1);
+    }
+
+    #[test]
+    fn can_pay_and_pay_succeeds_and_deducts_resources() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        p.add_resource(ResourceType::Wood, 2);
+        p.add_resource(ResourceType::Brick, 1);
+
+        let mut cost = ResourceSet::new();
+        cost.add(ResourceType::Wood, 2);
+        cost.add(ResourceType::Brick, 1);
+        assert!(p.can_pay(&cost));
+
+        let ok = p.pay(&cost);
+        assert!(ok);
+
+        assert_eq!(p.resources.amount_of(ResourceType::Wood), 0);
+        assert_eq!(p.resources.amount_of(ResourceType::Brick), 0);
+    }
+
+    #[test]
+    fn pay_fails_when_cannot_pay_and_changes_nothing() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        p.add_resource(ResourceType::Wood, 1);
+
+        let mut cost = ResourceSet::new();
+        cost.add(ResourceType::Wood, 2);
+        assert!(!p.can_pay(&cost));
+
+        let before = p.resources.clone();
+        let ok = p.pay(&cost);
+        assert!(!ok);
+
+        assert_eq!(p.resources, before);
+    }
+
+    #[test]
+    fn use_settlement_decrements_available_and_adds_victory_point() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+
+        let vp_before = p.get_victory_points();
+        p.use_settlement().expect("should have settlements");
+
+        assert_eq!(p.get_victory_points(), vp_before + 1);
+
+        // Use all remaining settlements (total 5)
+        for _ in 0..4 {
+            p.use_settlement().expect("should still have settlements");
+        }
+        assert!(!p.has_settlement());
+
+        let err = p.use_settlement().unwrap_err();
+        assert_eq!(err, GameError::NotEnoughBuildingsOfThisType);
+    }
+
+    #[test]
+    fn use_city_decrements_cities_increments_settlements_and_adds_victory_point() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+
+        let vp_before = p.get_victory_points();
+        // Use all settlements so we can observe that using a city increases settlements_left by 1.
+        for _ in 0..5 {
+            p.use_settlement().unwrap();
+        }
+        assert!(!p.has_settlement());
+
+        p.use_city().expect("should have cities");
+        assert_eq!(p.get_victory_points(), vp_before + 6, "5 settlements + 1 city = +6 VP");
+        assert!(p.has_settlement(), "using a city should add one settlement back");
+
+        // Use remaining cities (started 4, used 1 already)
+        for _ in 0..3 {
+            p.use_city().expect("should still have cities");
+        }
+        assert!(!p.has_city());
+
+        let err = p.use_city().unwrap_err();
+        assert_eq!(err, GameError::NotEnoughBuildingsOfThisType);
+    }
+
+    #[test]
+    fn use_road_decrements_roads_and_errors_when_none_left() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+
+        // Start: 15 roads => has_road and
+        assert!(p.has_road());
+
+        // Use 14 roads => 1 left
+        for _ in 0..14 {
+            p.use_road().expect("should have roads");
+        }
+        assert!(p.has_road());
+
+        // Use last road => 0 left
+        p.use_road().expect("should have last road");
+        assert!(!p.has_road());
+
+        let err = p.use_road().unwrap_err();
+        assert_eq!(err, GameError::NotEnoughBuildingsOfThisType);
+    }
+}
