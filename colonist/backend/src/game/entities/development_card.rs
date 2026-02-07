@@ -1,6 +1,6 @@
-use crate::game::entities::bonus_points::BonusCard;
+use crate::game::entities::{bonus_points::BonusCard, resources::ResourceSet};
 use crate::game::entities::turn_manager::TurnManager;
-use shared::{DevCardTarget, DevCardType};
+use shared::{DevCardTarget, DevCardType, ResourceType};
 use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
 
@@ -48,14 +48,12 @@ impl DevelopmentCard {
         }
     }
 
-    pub fn glyph(&self) -> char {
-        match self {
-            Self::Knight(_) => 'K',
-            Self::VictoryPoint(_) => 'V',
-            Self::RoadBuilder(_) => 'R',
-            Self::YearOfPlenty(_) => 'Y',
-            Self::Monopoly(_) => 'M',
-        }
+    pub fn cost(&self) -> ResourceSet {
+        let mut cost = ResourceSet::new();
+        cost.add(ResourceType::Sheep, 1);
+        cost.add(ResourceType::Wheat, 1);
+        cost.add(ResourceType::Ore, 1);
+        cost
     }
 
     pub fn can_play(&self) -> bool {
