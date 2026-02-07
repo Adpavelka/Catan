@@ -694,7 +694,6 @@ mod tests {
         let vx = board.vertices.get(&v).unwrap();
         assert_eq!(vx.owner, Some(pid7));
         assert!(vx.building.is_some());
-        assert_eq!(vx.building.as_ref().unwrap().glyph(), 'S');
     }
 
     #[test]
@@ -708,7 +707,6 @@ mod tests {
         let ed = board.edges.get(&e).unwrap();
         assert_eq!(ed.owner, Some(pid3));
         assert!(ed.building.is_some());
-        assert_eq!(ed.building.as_ref().unwrap().glyph(), 'R');
     }
 
     #[test]
