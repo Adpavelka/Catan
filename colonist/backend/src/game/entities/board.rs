@@ -3,8 +3,7 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use shared::{BoardInfo, BuildingInfo, HexInfo, PortInfo, ResourceType};
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::iter::repeat_n;
 use uuid::Uuid;
 
@@ -13,30 +12,24 @@ pub type Coordinates = (i32, i32);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hex {
     pub coord: Coordinates,
-
     pub resource: ResourceType,
     pub number: u8,
-
     pub adjacent_vertices: [Coordinates; 6],
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vertex {
     pub coord: Coordinates,
-
     pub building: Option<VertexBuilding>,
     pub owner: Option<Uuid>,
-
     pub adjacent_edges: HashSet<Coordinates>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
     pub coord: Coordinates,
-
     pub building: Option<EdgeBuilding>,
     pub owner: Option<Uuid>,
-
     pub adjacent_vertices: (Coordinates, Coordinates),
 }
 
@@ -54,11 +47,13 @@ impl From<&PortType> for shared::PortType {
         }
     }
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Port {
     pub coord: [Coordinates; 2],
     pub port_type: PortType,
 }
+
 impl From<&Port> for PortInfo {
     fn from(p: &Port) -> Self {
         PortInfo {
@@ -95,7 +90,6 @@ impl Board {
     pub fn get_adjacent_vertices(hex_coord: Coordinates) -> [Coordinates; 6] {
         let (q, r) = hex_coord;
         let base = (q * 3, r * 3);
-
         let neighbours = Self::get_hex_neighbours();
         let mut vertices = [base; 6];
 
@@ -109,33 +103,13 @@ impl Board {
         vertices
     }
 
-    // maybe useless
-    pub fn get_adjacent_edges(hex_coord: Coordinates) -> [Coordinates; 6] {
-        let (q, r) = hex_coord;
-        let base = (q * 2, r * 2);
-
-        let neighbours = Self::get_hex_neighbours();
-        let mut edges = [base; 6];
-
-        for i in 0..6 {
-            edges[i] = (
-                base.0 + neighbours[i].0,
-                base.1 + neighbours[i].1,
-            );
-        }
-
-        edges
-    }
-
-    pub fn edge_key(a: Coordinates, b: Coordinates) -> Coordinates {
+    fn edge_key(a: Coordinates, b: Coordinates) -> Coordinates {
         ((a.0 + b.0) / 3, (a.1 + b.1) / 3)
     }
 
     pub fn generate_from_layout(resources: Vec<ResourceType>, numbers: Vec<u8>) -> Self {
         let mut board = Board::default();
 
-
-        // ---------- generate hex coordinates ----------
         let radius = 2;
         let mut hex_coords = Vec::new();
         for q in -radius..=radius {
@@ -146,7 +120,6 @@ impl Board {
             }
         }
 
-        // ---------- create hexes ----------
         let mut res_iter = resources.into_iter();
         let mut num_iter = numbers.into_iter();
 
@@ -174,7 +147,6 @@ impl Board {
                 let b = vertices[(i + 1) % 6];
                 let edge_coord = Self::edge_key(a, b);
 
-                // ---------- edge ----------
                 board.edges.entry(edge_coord).or_insert_with(|| Edge {
                     coord: edge_coord,
                     building: None,
@@ -182,7 +154,6 @@ impl Board {
                     adjacent_vertices: (a, b),
                 });
 
-                // ---------- vertex a ----------
                 board.vertices
                     .entry(a)
                     .or_insert_with(|| Vertex {
@@ -194,7 +165,6 @@ impl Board {
                     .adjacent_edges
                     .insert(edge_coord);
 
-                // ---------- vertex b ----------
                 board.vertices
                     .entry(b)
                     .or_insert_with(|| Vertex {
@@ -223,7 +193,6 @@ impl Board {
         resources.push(Desert);
 
         let numbers = vec![5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11, 0]; // fixed order
-
         (resources, numbers)
     }
 
@@ -290,7 +259,7 @@ impl Board {
         self.ports = ports_map;
     }
 
-    /// Returns unique ports (deduplicated - each port appears once, not twice per vertex)
+
     pub fn unique_ports(&self) -> Vec<Port> {
         use std::collections::HashSet;
 
@@ -298,7 +267,6 @@ impl Board {
         let mut result: Vec<Port> = Vec::new();
 
         for port in self.ports.values() {
-            // Create canonical key by ordering the coordinates
             let a = port.coord[0];
             let b = port.coord[1];
             let key = if a <= b { [a, b] } else { [b, a] };
@@ -529,18 +497,287 @@ impl Board {
             ports,
         }
     }
+}
 
-    pub fn get_number_of_buildings(&self, pid: Uuid) -> usize
-    {
-        self.vertices.values()
-            .filter(|v| v.owner == Some(pid))
-            .count()
+
+
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use crate::game::entities::board::Board;
+    use crate::game::entities::building::{VertexBuilding, EdgeBuilding};
+    use crate::game::entities::board::Coordinates;
+    use crate::game::entities::board::PortType;
+    use crate::game::entities::resources::{ResourceType};
+
+    fn pick_any_hex(board: &Board) -> Coordinates {
+        *board.hexes.keys().min().expect("board must have hexes")
     }
-    pub fn get_number_of_roads(&self, pid: Uuid) -> usize
-    {
-        self.edges.values()
-            .filter(|e| e.owner == Some(pid))
-            .count()
+
+    fn pick_any_vertex(board: &Board) -> Coordinates {
+        *board.vertices.keys().min().expect("board must have vertices")
+    }
+
+    fn pick_any_edge(board: &Board) -> Coordinates {
+        *board.edges.keys().min().expect("board must have edges")
+    }
+
+    fn pick_buildable_vertex(board: &Board) -> Coordinates {
+        *board
+            .vertices
+            .keys()
+            .find(|&&v| board.is_buildable_vertex(v))
+            .expect("expected at least one buildable vertex on an empty board")
+    }
+
+    #[test]
+    fn test_board_creation() {
+        let board = Board::new_standard_board();
+        assert!(!board.hexes.is_empty(), "Board should have hexes");
+        assert!(!board.vertices.is_empty(), "Board should have vertices");
+        assert!(!board.edges.is_empty(), "Board should have edges");
+        assert!(!board.ports.is_empty(), "Board should have ports");
+    }
+
+    #[test]
+    fn test_layout_returns_19_resources_and_numbers_with_desert_and_zero() {
+        let (resources, numbers) = Board::test_layout();
+        assert_eq!(resources.len(), 19);
+        assert_eq!(numbers.len(), 19);
+
+        let desert_count = resources.iter().filter(|&&r| r == ResourceType::Desert).count();
+        assert_eq!(desert_count, 1);
+        assert_eq!(*numbers.last().unwrap(), 0);
+    }
+
+    #[test]
+    fn random_layout_returns_19_items_and_includes_desert_and_zero_end() {
+        let (resources, numbers) = Board::random_layout();
+        assert_eq!(resources.len(), 19);
+        assert_eq!(numbers.len(), 19);
+
+        let desert_count = resources.iter().filter(|&&r| r == ResourceType::Desert).count();
+        assert_eq!(desert_count, 1);
+        assert_eq!(*numbers.last().unwrap(), 0);
+    }
+
+    #[test]
+    fn get_adjacent_vertices_returns_six_unique_coords() {
+        let board = Board::new_standard_board();
+        let h = pick_any_hex(&board);
+
+        let vs = Board::get_adjacent_vertices(h);
+        assert_eq!(vs.len(), 6);
+
+        let mut set = std::collections::HashSet::new();
+        for v in vs {
+            assert!(set.insert(v), "adjacent vertices must be unique");
+        }
+    }
+
+    #[test]
+    fn edge_key_matches_generated_edges() {
+        let board = Board::new_standard_board();
+        let e_coord = pick_any_edge(&board);
+        let e = board.edges.get(&e_coord).unwrap();
+        let (a, b) = e.adjacent_vertices;
+
+        let k1 = Board::edge_key(a, b);
+        let k2 = Board::edge_key(b, a);
+        assert_eq!(k1, k2, "edge_key should not depend on order");
+        assert_eq!(k1, e_coord, "edge_key should match stored edge coord for that vertex pair");
+    }
+
+    #[test]
+    fn generate_from_layout_creates_hexes_vertices_edges() {
+        let (resources, numbers) = Board::test_layout();
+        let board = Board::generate_from_layout(resources, numbers);
+
+        assert_eq!(board.hexes.len(), 19, "radius=2 board should have 19 hexes");
+        assert!(!board.vertices.is_empty());
+        assert!(!board.edges.is_empty());
+    }
+
+    #[test]
+    fn test_get_neighbor_vertices() {
+        let board = Board::new_standard_board();
+        let h = *board.hexes.keys().next().unwrap();
+        let neighbors = Board::get_adjacent_vertices(h);
+        assert!(!neighbors.is_empty(), "Hex should have neighbors");
+        assert!(neighbors.len() == 6, "Hex should have at most 6 adjacent vertices");
+    }
+
+
+    #[test]
+    fn test_buildable_vertex_rule() {
+        let mut board = Board::new_standard_board();
+        let v = *board.vertices.keys().next().unwrap();
+
+        assert!(board.is_buildable_vertex(v));
+
+        board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
+
+        let v1 = (v.0, v.1 + 1);
+        let v2 = (v.0 + 1, v.1);
+
+        assert!(!board.is_buildable_vertex(v1));
+        assert!(!board.is_buildable_vertex(v2));
+    }
+
+    #[test]
+    fn is_buildable_vertex_false_for_nonexistent_vertex() {
+        let board = Board::new_standard_board();
+        assert!(!board.is_buildable_vertex((123456, 654321)));
+    }
+
+    #[test]
+    fn add_ports_populates_ports_and_has_expected_count() {
+        let (resources, numbers) = Board::test_layout();
+        let mut board = Board::generate_from_layout(resources, numbers);
+        assert!(board.ports.is_empty());
+
+        board.add_ports();
+
+        assert_eq!(board.ports.len(), 18);
+
+        // all port entries reference a port with exactly two coords
+        for (k, p) in &board.ports {
+            assert!(p.coord.contains(k), "port map key should be one of port endpoints");
+            match p.port_type {
+                PortType::ThreeToOne => {}
+                PortType::TwoToOne(_) => {}
+            }
+        }
+    }
+
+    #[test]
+    fn is_buildable_vertex_true_on_empty_board_and_false_when_occupied() {
+        let mut board = Board::new_standard_board();
+        let v = pick_buildable_vertex(&board);
+
+        assert!(board.is_buildable_vertex(v));
+
+        board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
+        assert!(!board.is_buildable_vertex(v), "occupied vertex must be unbuildable");
+    }
+
+    #[test]
+    fn is_buildable_vertex_distance_two_rule_blocks_adjacent_vertices() {
+        let mut board = Board::new_standard_board();
+        let v = pick_buildable_vertex(&board);
+
+        board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
+
+        for n in Board::get_adjacent_vertices(v) {
+            if board.vertices.contains_key(&n) {
+                assert!(
+                    !board.is_buildable_vertex(n),
+                    "neighbor {n:?} should be blocked by distance rule"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn build_vertex_sets_building_and_owner() {
+        let mut board = Board::new_standard_board();
+        let v = pick_any_vertex(&board);
+
+        let pid7 = Uuid::from_u128(7);
+        board.build_vertex(pid7, v, VertexBuilding::Settlement);
+
+        let vx = board.vertices.get(&v).unwrap();
+        assert_eq!(vx.owner, Some(pid7));
+        assert!(vx.building.is_some());
+        assert_eq!(vx.building.as_ref().unwrap().glyph(), 'S');
+    }
+
+    #[test]
+    fn build_edge_sets_building_and_owner() {
+        let mut board = Board::new_standard_board();
+        let e = pick_any_edge(&board);
+
+        let pid3 = Uuid::from_u128(3);
+        board.build_edge(pid3, e, EdgeBuilding::Road);
+
+        let ed = board.edges.get(&e).unwrap();
+        assert_eq!(ed.owner, Some(pid3));
+        assert!(ed.building.is_some());
+        assert_eq!(ed.building.as_ref().unwrap().glyph(), 'R');
+    }
+
+    #[test]
+    fn is_vertex_connected_to_player_true_when_adjacent_edge_owned_by_player() {
+        let mut board = Board::new_standard_board();
+
+        let pid1 = Uuid::from_u128(1);
+        let pid2 = Uuid::from_u128(2);
+
+        let e_coord = pick_any_edge(&board);
+        let (a, _b) = board.edges.get(&e_coord).unwrap().adjacent_vertices;
+
+        assert!(!board.is_vertex_connected_to_player(a, pid1));
+
+        board.build_edge(pid1, e_coord, EdgeBuilding::Road);
+        assert!(board.is_vertex_connected_to_player(a, pid1));
+        assert!(!board.is_vertex_connected_to_player(a, pid2));
+    }
+
+    #[test]
+    fn is_edge_connected_to_player_true_when_adjacent_vertex_owned_by_player() {
+        let mut board = Board::new_standard_board();
+
+        let pid5 = Uuid::from_u128(5);
+        let pid6 = Uuid::from_u128(6);
+
+        let e_coord = pick_any_edge(&board);
+        let (a, _b) = board.edges.get(&e_coord).unwrap().adjacent_vertices;
+
+        assert!(!board.is_edge_connected_to_player(e_coord, pid5));
+
+        board.build_vertex(pid5, a, VertexBuilding::Settlement);
+
+        assert!(board.is_edge_connected_to_player(e_coord, pid5));
+        assert!(!board.is_edge_connected_to_player(e_coord, pid6));
+    }
+
+    #[test]
+    fn is_edge_connected_to_player_true_when_adjacent_edge_owned_by_player_via_shared_vertex() {
+        let mut board = Board::new_standard_board();
+
+        let pid9 = Uuid::from_u128(9);
+        let pid10 = Uuid::from_u128(10);
+
+        // Pick an existing edge e1 and one of its endpoint vertices v.
+        let (&e1, edge1) = board
+            .edges
+            .iter()
+            .next()
+            .expect("board must have at least one edge");
+        let (v, _other) = edge1.adjacent_vertices;
+    
+        // Find another existing edge e2 that also touches v.
+        let e2 = board
+            .edges
+            .iter()
+            .find_map(|(&ek, e)| {
+                if ek != e1 && (e.adjacent_vertices.0 == v || e.adjacent_vertices.1 == v) {
+                    Some(ek)
+                } else {
+                    None
+                }
+            })
+            .expect("expected at least two edges sharing a vertex");
+    
+        board.build_edge(pid9, e1, EdgeBuilding::Road);
+
+        assert!(board.is_edge_connected_to_player(e2, pid9));
+        assert!(!board.is_edge_connected_to_player(e2, pid10));
     }
 }
 

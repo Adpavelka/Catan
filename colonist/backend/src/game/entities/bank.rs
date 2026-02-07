@@ -350,6 +350,16 @@ impl Bank {
             }
         }
 
+        match to {
+            ResourceEndpoint::Player(id) => {
+                let _ = self
+                    .players
+                    .get(&id)
+                    .ok_or(GameError::PlayerNotFound)?;
+            }
+            _ => {}
+        }
+
 
         match from {
             ResourceEndpoint::Player(id) => {
@@ -530,6 +540,31 @@ mod tests {
             bank.players.get(&target).unwrap().resources.amount_of(ResourceType::Ore),
             6
         );
+    }
+
+    #[test]
+    fn collect_from_player_to_player_returns_err_when_target_missing_and_source_is_restored() {
+        let mut bank = Bank::new();
+
+        let pid1 = Uuid::from_u128(1);
+        let pid2 = Uuid::from_u128(2);
+
+        let mut from = Player::new(pid1, "From", 'A');
+        from.add_resource(ResourceType::Brick, 2);
+        bank.add_player(from);
+
+        let mut cost = ResourceSet::new();
+        cost.add(ResourceType::Brick, 1);
+
+        let from_brick_before = bank.players.get(&pid1).unwrap().resources.amount_of(ResourceType::Brick);
+
+        let err = bank
+            .collect_from_player_to_player(pid1, pid2, &cost)
+            .unwrap_err();
+        assert_eq!(err, GameError::PlayerNotFound);
+
+        let from_after = bank.players.get(&pid1).unwrap();
+        assert_eq!(from_after.resources.amount_of(ResourceType::Brick), from_brick_before);
     }
 }
 

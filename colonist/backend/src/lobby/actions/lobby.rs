@@ -127,6 +127,8 @@ impl Lobby {
             free_roads_remaining: 0,
             year_of_plenty_pending: None,
             monopoly_pending: None,
+            initial_roads: HashMap::new(),
+            initial_settlements: HashMap::new(),
         };
 
         game.turn_manager.add_player_with_colour(pid);

@@ -25,6 +25,9 @@ pub struct GameInstance {
     pub pending_trades: HashMap<u64, PendingTrade>,  // Active trade offers
     #[serde(skip)]
     pub next_trade_id: u64,  // Counter for trade IDs
+
+    pub initial_settlements: HashMap<Uuid, usize>,
+    pub initial_roads: HashMap<Uuid, usize>,
 }
 impl GameInstance {
     pub fn get_all_players_info(&self) -> Vec<shared::PlayerInfo> {
@@ -50,32 +53,39 @@ impl GameInstance {
             })
             .collect()
     }
-    pub fn can_build_settlement_in_phase(&self, pid: Uuid) -> Result<(), String> {
-        let building_count = self.turn_manager.board.get_number_of_buildings(pid);
+
+
+    pub fn can_build_settlement_in_phase(&mut self, pid: Uuid) -> Result<(), String> {
+        let count = *self.initial_settlements.get(&pid).unwrap_or(&0);
 
         match self.phase {
             GamePhase::InitialPlacementRound1 => {
                 // Round 1: Exactly 0 buildings allowed before placement
-                if building_count >= 1 {
+                if count >= 1 {
                     return Err("You must place exactly one settlement in the first round.".into());
                 }
             }
             GamePhase::InitialPlacementRound2 => {
                 // Round 2: Exactly 1 building allowed before placement
-                if building_count >= 2 {
+                if count >= 2 {
                     return Err("You have already placed your second initial settlement.".into());
                 }
-                if building_count < 1 {
+                if count < 1 {
                     return Err("Invalid state: Missing first settlement.".into());
                 }
             }
             _ => {}
         }
+
+        *self.initial_settlements.entry(pid).or_insert(0) += 1;
         Ok(())
     }
-    pub fn can_build_road_in_phase(&self, pid: Uuid) -> Result<(), String> {
-        let road_count = self.turn_manager.board.get_number_of_roads(pid);
-        let settlement_count = self.turn_manager.board.get_number_of_buildings(pid);
+
+
+    pub fn can_build_road_in_phase(&mut self, pid: Uuid) -> Result<(), String> {
+        let road_count = *self.initial_roads.get(&pid).unwrap_or(&0);
+        let settlement_count = *self.initial_settlements.get(&pid).unwrap_or(&0);
+
         match self.phase {
             GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2 => {
                 if road_count >= settlement_count {
@@ -84,6 +94,9 @@ impl GameInstance {
             }
             _ => {}
         }
+
+        *self.initial_settlements.entry(pid).or_insert(0) += 1;
+        *self.initial_roads.entry(pid).or_insert(0) += 1;
         Ok(())
     }
 }
