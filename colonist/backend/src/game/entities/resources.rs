@@ -8,7 +8,7 @@ use shared::Resources;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ResourceSet {
-    pub(crate) amounts: HashMap<ResourceType, u32>,
+    amounts: HashMap<ResourceType, u32>,
 }
 
 impl ResourceSet {
@@ -55,7 +55,7 @@ impl ResourceSet {
         }
     }
 
-    pub fn get_cards_total(&mut self) -> u32 {
+    pub fn get_cards_total(&self) -> u32 {
         self.amounts.values().sum()
     }
 

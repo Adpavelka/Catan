@@ -814,7 +814,7 @@ fn BankTradeUI() -> impl IntoView {
         match res {
             shared::ResourceType::Brick => r.brick,
             shared::ResourceType::Wood => r.lumber,
-            shared::ResourceType::Wool | shared::ResourceType::Sheep => r.wool,
+            shared::ResourceType::Sheep => r.wool,
             shared::ResourceType::Wheat => r.grain,
             shared::ResourceType::Ore => r.ore,
             _ => 0,
@@ -910,7 +910,7 @@ fn BankTradeUI() -> impl IntoView {
                                 Some(match res {
                                     shared::ResourceType::Brick => "Brick",
                                     shared::ResourceType::Wood => "Wood",
-                                    shared::ResourceType::Wool | shared::ResourceType::Sheep => "Sheep",
+                                    shared::ResourceType::Sheep => "Sheep",
                                     shared::ResourceType::Wheat => "Wheat",
                                     shared::ResourceType::Ore => "Ore",
                                     _ => "?",
@@ -1391,7 +1391,7 @@ fn YearOfPlentyModal() -> impl IntoView {
         match p {
             Some(shared::ResourceType::Brick) => "Brick",
             Some(shared::ResourceType::Wood) => "Wood",
-            Some(shared::ResourceType::Sheep) | Some(shared::ResourceType::Wool) => "Sheep",
+            Some(shared::ResourceType::Sheep) => "Sheep",
             Some(shared::ResourceType::Wheat) => "Wheat",
             Some(shared::ResourceType::Ore) => "Ore",
             _ => "—",

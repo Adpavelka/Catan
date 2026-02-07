@@ -466,7 +466,7 @@ impl GameState {
                                 match resource1 {
                                     shared::ResourceType::Brick => p.resources.brick += 1,
                                     shared::ResourceType::Wood => p.resources.lumber += 1,
-                                    shared::ResourceType::Sheep | shared::ResourceType::Wool => p.resources.wool += 1,
+                                    shared::ResourceType::Sheep => p.resources.wool += 1,
                                     shared::ResourceType::Wheat => p.resources.grain += 1,
                                     shared::ResourceType::Ore => p.resources.ore += 1,
                                     shared::ResourceType::Desert => {}
@@ -474,7 +474,7 @@ impl GameState {
                                 match resource2 {
                                     shared::ResourceType::Brick => p.resources.brick += 1,
                                     shared::ResourceType::Wood => p.resources.lumber += 1,
-                                    shared::ResourceType::Sheep | shared::ResourceType::Wool => p.resources.wool += 1,
+                                    shared::ResourceType::Sheep => p.resources.wool += 1,
                                     shared::ResourceType::Wheat => p.resources.grain += 1,
                                     shared::ResourceType::Ore => p.resources.ore += 1,
                                     shared::ResourceType::Desert => {}
@@ -537,7 +537,7 @@ impl GameState {
                     let gave_name = match gave {
                         shared::ResourceType::Brick => "Brick",
                         shared::ResourceType::Wood => "Wood",
-                        shared::ResourceType::Wool | shared::ResourceType::Sheep => "Sheep",
+                        shared::ResourceType::Sheep => "Sheep",
                         shared::ResourceType::Wheat => "Wheat",
                         shared::ResourceType::Ore => "Ore",
                         shared::ResourceType::Desert => "Desert",
@@ -546,7 +546,7 @@ impl GameState {
                     let received_name = match received {
                         shared::ResourceType::Brick => "Brick",
                         shared::ResourceType::Wood => "Wood",
-                        shared::ResourceType::Wool | shared::ResourceType::Sheep => "Sheep",
+                        shared::ResourceType::Sheep => "Sheep",
                         shared::ResourceType::Wheat => "Wheat",
                         shared::ResourceType::Ore => "Ore",
                         shared::ResourceType::Desert => "Desert",
@@ -755,9 +755,6 @@ impl GameState {
                     let matches = match (res, &resource) {
                         (shared::ResourceType::Brick, shared::ResourceType::Brick) => true,
                         (shared::ResourceType::Wood, shared::ResourceType::Wood) => true,
-                        (shared::ResourceType::Wool, shared::ResourceType::Wool) |
-                        (shared::ResourceType::Wool, shared::ResourceType::Sheep) |
-                        (shared::ResourceType::Sheep, shared::ResourceType::Wool) |
                         (shared::ResourceType::Sheep, shared::ResourceType::Sheep) => true,
                         (shared::ResourceType::Wheat, shared::ResourceType::Wheat) => true,
                         (shared::ResourceType::Ore, shared::ResourceType::Ore) => true,

@@ -201,7 +201,7 @@ impl Bank {
         gives: &ResourceSet,
         takes: &ResourceSet,
     ) -> Result<(), GameError> {
-        if gives.amounts.is_empty() || takes.amounts.is_empty() {
+        if gives.get_cards_total() == 0 || takes.get_cards_total() == 0 {
             return Err(GameError::WrongResourceRatio);
         }
 
@@ -215,17 +215,29 @@ impl Bank {
 
         let mut produced_units = 0u32;
 
-        for (res, amount) in &gives.amounts {
-            let ratio = self.best_ratio(player, *res);
+        for res in [
+            ResourceType::Brick,
+            ResourceType::Ore,
+            ResourceType::Sheep,
+            ResourceType::Wheat,
+            ResourceType::Wood,
+        ] {
+            let amount = gives.amount_of(res);
 
-            if *amount == 0 || amount % ratio != 0 {
+            if amount == 0 {
+                continue;
+            }
+
+            let ratio = self.best_ratio(player, res);
+
+            if amount % ratio != 0 {
                 return Err(GameError::WrongResourceRatio);
             }
 
             produced_units += amount / ratio;
         }
 
-        let takes_total: u32 = takes.amounts.values().sum();
+        let takes_total: u32 = takes.get_cards_total();
 
         if produced_units != takes_total {
             return Err(GameError::WrongResourceRatio);

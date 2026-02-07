@@ -25,7 +25,7 @@ fn port_resource_label(port_type: &PortType) -> Option<&'static str> {
         PortType::TwoToOne(res) => Some(match res {
             ResourceType::Brick => "BRICK",
             ResourceType::Wood => "WOOD",
-            ResourceType::Wool | ResourceType::Sheep => "SHEEP",
+            ResourceType::Sheep => "SHEEP",
             ResourceType::Wheat => "WHEAT",
             ResourceType::Ore => "ORE",
             ResourceType::Desert => "?",
@@ -39,7 +39,7 @@ fn port_color(port_type: &PortType) -> &'static str {
         PortType::TwoToOne(res) => match res {
             ResourceType::Brick => "#fb923c",   // orange-400
             ResourceType::Wood => "#059669",    // emerald-600
-            ResourceType::Wool | ResourceType::Sheep => "#84cc16",   // lime-500
+            ResourceType::Sheep => "#84cc16",   // lime-500
             ResourceType::Wheat => "#eab308",   // yellow-500
             ResourceType::Ore => "#64748b",     // slate-500
             ResourceType::Desert => "#ffffff",
@@ -53,7 +53,7 @@ fn port_bg_color(port_type: &PortType) -> &'static str {
         PortType::TwoToOne(res) => match res {
             ResourceType::Brick => "#431407",   // orange-950
             ResourceType::Wood => "#022c22",    // emerald-950
-            ResourceType::Wool | ResourceType::Sheep => "#1a2e05",   // lime-950
+            ResourceType::Sheep => "#1a2e05",   // lime-950
             ResourceType::Wheat => "#422006",   // yellow-950
             ResourceType::Ore => "#020617",     // slate-950
             ResourceType::Desert => "#1e293b",
@@ -66,7 +66,7 @@ fn resource_color(resource: &ResourceType) -> &'static str {
     match resource {
         ResourceType::Wood => "fill-emerald-600",
         ResourceType::Brick => "fill-orange-400",
-        ResourceType::Wool | ResourceType::Sheep => "fill-lime-500",
+        ResourceType::Sheep => "fill-lime-500",
         ResourceType::Wheat => "fill-yellow-500",
         ResourceType::Ore => "fill-slate-500",
         ResourceType::Desert => "fill-amber-200",
@@ -78,7 +78,7 @@ fn resource_label(resource: &ResourceType) -> &'static str {
     match resource {
         ResourceType::Wood => "WOOD",
         ResourceType::Brick => "BRICK",
-        ResourceType::Wool | ResourceType::Sheep => "SHEEP",
+        ResourceType::Sheep => "SHEEP",
         ResourceType::Wheat => "WHEAT",
         ResourceType::Ore => "ORE",
         ResourceType::Desert => "DESERT",

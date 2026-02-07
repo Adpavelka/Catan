@@ -244,8 +244,11 @@ pub struct DevCardTarget {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ResourceType {
     Brick,
-    Wood, Wool,
-    Wheat, Ore, Sheep, Desert
+    Wood,
+    Wheat,
+    Ore,
+    Sheep,
+    Desert
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
