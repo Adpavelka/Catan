@@ -233,8 +233,11 @@ impl Board {
         resources.pop();
         numbers.pop();
 
+        #[cfg(not(test))]
         let mut rng = rand::thread_rng();
+        #[cfg(not(test))]
         resources.shuffle(&mut rng);
+        #[cfg(not(test))]
         numbers.shuffle(&mut rng);
 
         resources.push(ResourceType::Desert);

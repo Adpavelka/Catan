@@ -7,6 +7,7 @@ pub enum GameError {
     PlayerNotFound,
     NotPlayersTurn,
     NotEnoughResources,
+    BankOutOfResources,
     InvalidPosition,
     InvalidAction,
     TradeNotFound,
@@ -27,6 +28,7 @@ impl fmt::Display for GameError {
             GameError::TradeNotFound => "Trade not found",
             GameError::UnauthorizedTrade => "Unauthorized trade",
             GameError::TradeWithSelf => "Cannot trade with self",
+            GameError::BankOutOfResources => "Bank not enough resources",
         };
         f.write_str(msg)
     }
