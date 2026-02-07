@@ -28,7 +28,7 @@ impl Lobby
                 let next_index = game.turn_manager.current_player_index + 1;
                 if let Some(&next_player_id) = game.player_ids.get(next_index) {
                     game.turn_manager.current_player_index = next_index;
-                    game.turn_manager.current_player_id = next_player_id;
+                    game.turn_manager.set_current_player_index(next_player_id.as_u128() as usize).unwrap();
                 }
             }
         } else {
@@ -39,11 +39,11 @@ impl Lobby
             };
             if let Some(&next_player_id) = game.player_ids.get(next_index) {
                 game.turn_manager.current_player_index = next_index;
-                game.turn_manager.current_player_id = next_player_id;
+                game.turn_manager.set_current_player_index(next_player_id.as_u128() as usize).unwrap();
             }
         }
 
-        info!("Initial placement: Now player {} (slot {})'s turn", game.turn_manager.current_player_id, game.turn_manager.current_player_index);
+        info!("Initial placement: Now player {} (slot {})'s turn", game.turn_manager.current_player_id(), game.turn_manager.current_player_index);
         false  // Did not transition to regular play
     }
 }

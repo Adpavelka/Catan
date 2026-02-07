@@ -252,13 +252,16 @@ impl Bank {
         player_id: Uuid,
         gives: ResourceSet,
         takes: ResourceSet,
+        validate: bool
     ) -> Result<(), GameError> {
         let player = self
             .players
             .get(&player_id)
             .ok_or(GameError::PlayerNotFound)?;
 
-        self.validate_bank_trade(player, &gives, &takes)?;
+        if validate {
+            self.validate_bank_trade(player, &gives, &takes)?;
+        }
 
         self.collect_from_to(
             ResourceEndpoint::Player(player_id),
@@ -335,7 +338,7 @@ impl Bank {
         Ok(total_stolen)
     }
 
-    pub fn collect_from_to(
+    fn collect_from_to(
         &mut self,
         from: ResourceEndpoint,
         to: ResourceEndpoint,
@@ -453,7 +456,7 @@ mod tests {
     #[test]
     fn give_resources_for_roll_pays_settlement() {
         let mut bank = Bank::new();
-        let mut board = Board::new_standard_board();
+        let mut board = Board::new();
 
         let player_id = pid(1);
         bank.add_player(Player::new(player_id, "A", 'A'));
@@ -485,7 +488,7 @@ mod tests {
     #[test]
     fn give_resources_for_roll_blocked_by_robber() {
         let mut bank = Bank::new();
-        let mut board = Board::new_standard_board();
+        let mut board = Board::new();
 
         let player_id = pid(1);
         bank.add_player(Player::new(player_id, "A", 'A'));

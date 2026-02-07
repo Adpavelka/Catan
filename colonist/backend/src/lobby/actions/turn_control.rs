@@ -7,7 +7,7 @@ impl GameInstance
     pub fn handle_roll_dice(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
         let tm = &mut self.turn_manager;
 
-        if pid != tm.current_player_id { return Err("Wait for your turn!".to_string()); }
+        if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
 
         if matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2) {
             return Err("Cannot roll dice during initial placement!".to_string());
@@ -43,13 +43,13 @@ impl GameInstance
     pub fn handle_end_turn(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
         let tm = &mut self.turn_manager;
 
-        if pid != tm.current_player_id { return Err("Wait for your turn!".to_string()); }
+        if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
         if self.phase != GamePhase::RegularPlay { return Err("Cannot end turn during initial placement!".to_string()); }
         if self.seven_roller.is_some() {
             return Err("Cannot end turn until you move the robber".to_string());
         }
         tm.end_turn();
-        Ok(ServerMessage::NextTurn { player_id: tm.current_player_id  })
+        Ok(ServerMessage::NextTurn { player_id: tm.current_player_id()  })
     }
 }
 

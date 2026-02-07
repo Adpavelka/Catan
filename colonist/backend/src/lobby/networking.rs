@@ -78,6 +78,7 @@ impl Lobby
 
         self.send_server_msg(pid, msg);
     }
+    
     pub(crate) fn send_full_sync(&mut self, pid: Uuid, game_id: &str) {
         let Some(game) = self.games.get(game_id) else { return };
 

@@ -37,7 +37,7 @@ mod tests {
     use crate::game::entities::resources::ResourceType;
     #[test]
     fn robber_new_starts_on_desert_hex() {
-        let board = Board::new_standard_board();
+        let board = Board::new();
         let robber = Robber::new(&board);
 
         let hex = board

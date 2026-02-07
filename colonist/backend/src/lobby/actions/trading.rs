@@ -2,7 +2,6 @@ use uuid::Uuid;
 use shared::{ServerMessage, GamePhase, ResourceType};
 use shared::ResourceType::{Brick, Ore, Sheep, Wheat, Wood};
 use std::collections::HashSet;
-use crate::game::entities::bank::ResourceEndpoint;
 use crate::game::entities::pending_trade::PendingTrade;
 use crate::lobby::GameInstance;
 
@@ -28,7 +27,7 @@ pub fn handle_bank_trade(
 ) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
 
-    if pid != tm.current_player_id {
+    if pid != tm.current_player_id() {
         return Err("Wait for your turn!".to_string());
     }
 
@@ -56,7 +55,7 @@ pub fn handle_bank_trade(
 
         if tm.bank.validate_bank_trade(player, &gives, &takes).is_ok() {
             tm.bank
-                .trade_with_bank(pid, gives, takes)
+                .trade_with_bank(pid, gives, takes, true)
                 .map_err(|e| format!("{:?}", e))?;
 
             return Ok(ServerMessage::BankTradeCompleted {
@@ -80,7 +79,7 @@ pub fn handle_trade_offer(
 ) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
 
-    if pid != tm.current_player_id {
+    if pid != tm.current_player_id() {
         return Err("Wait for your turn!".to_string());
     }
 
@@ -207,17 +206,17 @@ pub fn handle_trade_response(
     }
 
     tm.bank
-        .collect_from_to(
-            ResourceEndpoint::Player(trade.proposer_id),
-            ResourceEndpoint::Player(pid),
+        .collect_from_player_to_player(
+            trade.proposer_id,
+            pid,
             &proposer_gives,
         )
         .map_err(|e| format!("{:?}", e))?;
 
     tm.bank
-        .collect_from_to(
-            ResourceEndpoint::Player(pid),
-            ResourceEndpoint::Player(trade.proposer_id),
+        .collect_from_player_to_player(
+            pid,
+            trade.proposer_id,
             &accepter_gives,
         )
         .map_err(|e| format!("{:?}", e))?;

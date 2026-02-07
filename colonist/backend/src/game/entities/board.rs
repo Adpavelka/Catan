@@ -107,7 +107,7 @@ impl Board {
         ((a.0 + b.0) / 3, (a.1 + b.1) / 3)
     }
 
-    pub fn generate_from_layout(resources: Vec<ResourceType>, numbers: Vec<u8>) -> Self {
+    fn generate_from_layout(resources: Vec<ResourceType>, numbers: Vec<u8>) -> Self {
         let mut board = Board::default();
 
         let radius = 2;
@@ -182,7 +182,7 @@ impl Board {
     }
 
 
-    pub fn test_layout() -> (Vec<ResourceType>, Vec<u8>) { // standard counts: wood 4, sheep 4, wheat 4, brick 3, ore 3, desert 1 => 19 hexes
+    fn test_layout() -> (Vec<ResourceType>, Vec<u8>) { // standard counts: wood 4, sheep 4, wheat 4, brick 3, ore 3, desert 1 => 19 hexes
         use ResourceType::*;
         let mut resources = Vec::with_capacity(19);
         resources.extend(repeat_n(Wood, 4));
@@ -196,7 +196,7 @@ impl Board {
         (resources, numbers)
     }
 
-    pub fn random_layout() -> (Vec<ResourceType>, Vec<u8>) {
+    fn random_layout() -> (Vec<ResourceType>, Vec<u8>) {
         let (mut resources, mut numbers) = Self::test_layout();
 
         resources.pop();
@@ -215,7 +215,7 @@ impl Board {
         (resources, numbers)
     }
 
-    pub fn add_ports(&mut self) {
+    fn add_ports(&mut self) {
         use PortType::*;
 
         let port_coords: [[Coordinates; 2]; 9] = [
@@ -279,7 +279,7 @@ impl Board {
         result
     }
 
-    pub fn new_standard_board() -> Self {
+    fn new_standard_board() -> Self {
         let (resources, numbers) = Self::random_layout();
         let mut board = Self::generate_from_layout(resources, numbers);
         board.add_ports();

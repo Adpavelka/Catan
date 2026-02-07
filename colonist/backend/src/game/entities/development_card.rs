@@ -48,7 +48,7 @@ impl DevelopmentCard {
         }
     }
 
-    pub fn cost(&self) -> ResourceSet {
+    pub fn cost() -> ResourceSet {
         let mut cost = ResourceSet::new();
         cost.add(ResourceType::Sheep, 1);
         cost.add(ResourceType::Wheat, 1);
@@ -125,8 +125,7 @@ mod tests {
 
     #[test]
     fn dev_card_trait_cost_is_standard_cost() {
-        let k = DevelopmentCard::new(DevCardType::Knight);
-        let cost = k.cost();
+        let cost = DevelopmentCard::cost();
 
         assert_eq!(cost.amount_of(ResourceType::Sheep), 1);
         assert_eq!(cost.amount_of(ResourceType::Wheat), 1);

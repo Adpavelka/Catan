@@ -13,7 +13,7 @@ impl GameRepository {
     }
 
     pub async fn save_game_instance(&self, instance: &GameInstance) -> Result<(), Box<dyn std::error::Error>> {
-        let status = if instance.turn_manager.game_over { "FINISHED" } else { "ACTIVE" };
+        let status = if instance.turn_manager.game_over() { "FINISHED" } else { "ACTIVE" };
 
         let state_json = serde_json::to_value(instance)?;
 

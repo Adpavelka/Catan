@@ -2,6 +2,7 @@ use crate::errors::GameError;
 use crate::game::entities::bank::Bank;
 use crate::game::entities::board::{Board, Coordinates};
 use crate::game::entities::bonus_points::{BiggestArmy, BonusCard, LongestRoad};
+use crate::game::entities::development_card::DevelopmentCard;
 use crate::game::entities::dice::Dice;
 use crate::game::entities::player::Player;
 use crate::game::entities::resources::ResourceSet;
@@ -9,23 +10,26 @@ use crate::game::entities::robber::Robber;
 use log::info;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use shared::ResourceType::{Ore, Sheep, Wheat};
 use crate::game::entities::building::EdgeBuilding::Road;
 use crate::game::entities::building::VertexBuilding::{City, Settlement};
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TurnManager {
     dice: Dice,
     pub bank: Bank,
     pub board: Board,
+
     pub current_player_index: usize,
-    pub current_player_id: Uuid,
-    pub last_roll: Option<u8>,
-    pub players: Vec<Player>,
-    pub game_over: bool,
+    current_player_id: Uuid,
+
+    pub last_roll: Option<u8>, // atribut kostky, nebo networking by si to měl úkládat
+    players: Vec<Player>, // míchání usize a Uuid, být součástí bank, nebo tady?
+    game_over: bool,
     pub robber: Robber,
     player_count: usize,
-    pub army_bonus: BiggestArmy,
-    pub road_bonus: LongestRoad,
+    
+    pub army_bonus: BiggestArmy, // tohle by taky mělo private ne?
+    pub road_bonus: LongestRoad, // tohle by taky mělo private ne?
 }
 
 impl TurnManager {
@@ -59,8 +63,8 @@ impl TurnManager {
         if self.game_over {
             return Err(GameError::InvalidAction);
         }
-        if self.last_roll.is_some()
-        {
+
+        if self.last_roll.is_some() {
             return Ok((self.last_roll.unwrap(), Vec::new()));
         }
 
@@ -104,6 +108,7 @@ impl TurnManager {
             prev_player, self.current_player_index
         );
     }
+
     fn pay_resources(&mut self, pid: Uuid, cost: ResourceSet) -> Result<(), GameError> {
         {
             let player = self
@@ -118,6 +123,7 @@ impl TurnManager {
         self.bank.collect_from_player(pid, cost)?;
         Ok(())
     }
+
     pub fn build_settlement(
         &mut self,
         pos: Coordinates,
@@ -187,7 +193,6 @@ impl TurnManager {
             .get_mut(&pid)
             .ok_or(GameError::PlayerNotFound)?;
         player.use_city()?;
-        player.settlements_left += 1;
 
         self.board.build_vertex(pid, pos, City);
 
@@ -244,10 +249,7 @@ impl TurnManager {
 
     pub fn buy_dev_card(&mut self) -> Result<shared::DevCardType, GameError> {
         let pid = self.current_player_id;
-        let mut cost = ResourceSet::new();
-        cost.add(Sheep, 1);
-        cost.add(Wheat, 1);
-        cost.add(Ore, 1);
+        let cost = DevelopmentCard::cost();
 
         {
             let player = self
@@ -325,6 +327,7 @@ impl TurnManager {
 
         Ok(())
     }
+
     pub fn move_robber(&mut self, hex_coords: Coordinates) -> Result<(), GameError> {
         info!("Robber moved to {:?}", hex_coords);
         self.robber.pos = hex_coords;
@@ -371,10 +374,11 @@ impl TurnManager {
             .get_mut(&self.current_player_id)
             .expect("Current player index must always be valid")
     }
-    pub fn reset_order(&mut self)
-    {
+
+    pub fn reset_order(&mut self) {
        self.set_current_player_index(0).unwrap()
     }
+
     pub fn set_current_player_index(&mut self, new_index: usize) -> Result<(), String> {
         if new_index < self.player_count {
             self.current_player_index = new_index;
@@ -412,6 +416,7 @@ impl TurnManager {
             self.bank.players.insert(player_id, player);
         }
     }
+
     pub fn remove_player(&mut self, player_id: Uuid) -> Result<(), String> {
         if self.bank.players.remove(&player_id).is_some() {
             self.players.retain(|p| p.id != player_id);
@@ -420,25 +425,32 @@ impl TurnManager {
             Err("Player not found".to_string())
         }
     }
+
     fn get_random_index(&self, len: usize) -> Option<usize> {
         if len == 0 { return None; }
         use rand::Rng;
         let mut rng = rand::thread_rng();
         Some(rng.gen_range(0..len))
     }
-    pub fn has_player_won(&mut self, player_id: Uuid) -> bool
-    {
-        if let Some(player) = self.bank.players.get(&player_id) {
-            if player.get_total_victory_points() >= 10 {
-                self.game_over = true;
-            }
-            player.get_total_victory_points() >= 10
-        } else {
-            false
+
+    pub fn has_player_won(&mut self, player_id: Uuid) -> bool {
+        let answer = self.bank
+                            .players
+                            .get(&player_id)
+                            .map(|p| p.get_total_victory_points() >= 10)
+                            .unwrap_or(false);
+
+        if answer {
+            self.game_over = true;
         }
+        answer
     }
-    pub fn player_secret_victory_points(&self, player_id: Uuid) -> u8
-    {
+
+    pub fn game_over(&self) -> bool {
+        self.game_over
+    }
+
+    pub fn player_secret_victory_points(&self, player_id: Uuid) -> u8 {
         if let Some(player) = self.bank.players.get(&player_id) {
             player.get_secret_victory_points()
         } else {

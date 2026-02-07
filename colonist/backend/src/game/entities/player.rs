@@ -14,7 +14,7 @@ pub struct Player {
     
     pub colour: char,
 
-    pub(crate) settlements_left: u8,
+    settlements_left: u8,
     cities_left: u8,
     roads_left: u8,
 
@@ -25,7 +25,6 @@ pub struct Player {
     pub longest_road: usize,
 
     victory_points: u8,
-    // Used for victory point cards from development cards
     secret_victory_points: u8,
 
     pub ports: Vec<PortType>,

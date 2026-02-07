@@ -1,4 +1,3 @@
-use crate::game::entities::bank::ResourceEndpoint;
 use crate::game::entities::resources::ResourceSet;
 use crate::lobby::GameInstance;
 use shared::ResourceType::{Brick, Ore, Sheep, Wheat, Wood};
@@ -40,7 +39,7 @@ pub fn handle_discard_cards(pid: Uuid, resources: shared::Resources, game: &mut 
 
 pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
-    if pid != tm.current_player_id { return Err("Wait for your turn!".to_string()); }
+    if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
 
     tm.buy_dev_card()
         .map(|card_type| {
@@ -54,7 +53,7 @@ pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerM
 
 pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option<shared::DevCardTarget>, game: &mut GameInstance) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
-    if pid != tm.current_player_id { return Err("Wait for your turn!".to_string()); }
+    if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
 
     tm.play_development_card(card.clone(), target)
         .map(|_| {
@@ -84,7 +83,7 @@ pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option
 
 pub fn handle_move_robber(pid: Uuid, q: i32, r: i32, game: &mut GameInstance) -> Result<ServerMessage, String> {
     let tm = &mut game.turn_manager;
-    if pid != tm.current_player_id { return Err("Wait for your turn!".to_string()); }
+    if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
 
     tm.move_robber((q, r))
         .map(|_| {
@@ -129,9 +128,7 @@ pub fn handle_year_of_plenty_choice(
     cost.add(resource1, 1);
     cost.add(resource2, 1);
 
-    tm.bank
-        .collect_from_to(ResourceEndpoint::Bank, ResourceEndpoint::Player(pid), &cost)
-        .map_err(|e| format!("Failed to collect resources: {e}"))?;
+    tm.bank.trade_with_bank(pid, ResourceSet::new(), cost, false).unwrap();
 
     // reset pending status
     game.year_of_plenty_pending = None;

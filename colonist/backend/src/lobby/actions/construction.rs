@@ -7,7 +7,7 @@ impl GameInstance
     pub fn handle_build_settlement(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         let is_initial_phase = matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2);
 
-        if pid != self.turn_manager.current_player_id {
+        if pid != self.turn_manager.current_player_id() {
             return Err("Wait for your turn!".to_string());
         }
         self.can_build_settlement_in_phase(pid)?;
@@ -35,7 +35,7 @@ impl GameInstance
 
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         let tm = &mut self.turn_manager;
-        if pid != tm.current_player_id { return Err("Wait for your turn!".to_string()); }
+        if pid != tm.current_player_id() { return Err("Wait for your turn!".to_string()); }
 
         tm.build_city((x, y))
             .map(|_| {
@@ -52,7 +52,7 @@ impl GameInstance
         let is_initial_phase = matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2);
         let is_free_road = self.free_roads_remaining > 0;
 
-        if pid != self.turn_manager.current_player_id { return Err("Wait for your turn!".to_string()); }
+        if pid != self.turn_manager.current_player_id() { return Err("Wait for your turn!".to_string()); }
         self.can_build_road_in_phase(pid)?;
 
         // Build road for free if we have free roads from Road Builder card
