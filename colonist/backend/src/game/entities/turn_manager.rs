@@ -49,7 +49,7 @@ impl TurnManager {
     }
 
 
-    pub fn next_turn(&mut self) -> Result<(u8, Vec<(Uuid, shared::ResourceType, u32)>), GameError> {
+    pub fn next_turn(&mut self) -> Result<((u8, u8), Vec<(Uuid, shared::ResourceType, u32)>), GameError> {
         if self.game_over {
             return Err(GameError::InvalidAction);
         }
@@ -68,7 +68,7 @@ impl TurnManager {
             self.bank.give_resources_for_roll(&self.board, roll_value, &self.robber, &mut self.players)
         };
 
-        Ok((roll_value, distributed))
+        Ok((self.dice.values(), distributed))
     }
 
 

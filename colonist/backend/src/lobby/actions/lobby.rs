@@ -62,6 +62,7 @@ impl Lobby {
 
         self.broadcast_lobby_status();
     }
+
     pub fn handle_join_game(&mut self, pid: Uuid, game_id: String, ctx: &mut Context<Lobby>) {
         let (is_full, already_in) = {
             let Some(game) = self.games.get_mut(&game_id) else {
@@ -104,6 +105,7 @@ impl Lobby {
         self.refresh_game_for_all(&game_id);
         self.broadcast_lobby_status();
     }
+    
     pub fn handle_create_game(&mut self, pid: Uuid, player_count: usize, ctx: &mut Context<Lobby>) {
         let gid = Uuid::new_v4().to_string()[..6].to_string();
         info!("Creating game {} for player {}", gid, pid);

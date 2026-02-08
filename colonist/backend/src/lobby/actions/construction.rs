@@ -30,9 +30,6 @@ impl GameInstance
             .map_err(|e| format!("{:?}", e))
     }
 
-
-
-
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         let tm = &mut self.turn_manager;
         if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }

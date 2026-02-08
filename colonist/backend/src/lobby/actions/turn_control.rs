@@ -14,9 +14,8 @@ impl GameInstance
         }
 
         tm.next_turn()
-            .map(|(roll, _)| {
-                let d1 = roll / 2;
-                let d2 = roll - d1;
+            .map(|((d1, d2), _)| {
+                let roll = d1 + d2;
                 let mut discards_count = 0;
 
                 if roll == 7 {
@@ -43,6 +42,8 @@ impl GameInstance
             })
             .map_err(|e| format!("{:?}", e))
     }
+
+
     pub fn handle_end_turn(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
         let tm = &mut self.turn_manager;
 
