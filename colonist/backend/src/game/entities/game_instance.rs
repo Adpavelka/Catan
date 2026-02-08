@@ -32,7 +32,7 @@ pub struct GameInstance {
 impl GameInstance {
     pub fn get_all_players_info(&self) -> Vec<shared::PlayerInfo> {
         self.player_ids.iter()
-            .filter_map(|&pid| self.turn_manager.new_players.get(pid).map(|p| (pid, p)))
+            .filter_map(|&pid| self.turn_manager.players.get(pid).map(|p| (pid, p)))
             .map(|(pid, p)| {
                 let has_longest_road = self.turn_manager.road_bonus.holder() == Some(pid);
                 let has_largest_army = self.turn_manager.army_bonus.holder() == Some(pid);

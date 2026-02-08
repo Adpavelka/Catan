@@ -7,7 +7,7 @@ impl GameInstance
     pub fn handle_build_settlement(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         let is_initial_phase = matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2);
 
-        if pid != self.turn_manager.new_players.get_current_player().id {
+        if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
         }
         self.can_build_settlement_in_phase(pid)?;
@@ -17,7 +17,7 @@ impl GameInstance
                     self.initial_settlements_placed += 1;
                     // Give initial resources for second settlement (round 2 only)
                     if self.phase == GamePhase::InitialPlacementRound2 {
-                        self.turn_manager.bank.give_initial_settlement_resources(&self.turn_manager.board, pid, (x, y), &mut self.turn_manager.new_players);
+                        self.turn_manager.bank.give_initial_settlement_resources(&self.turn_manager.board, pid, (x, y), &mut self.turn_manager.players);
                     }
                 }
 
@@ -35,7 +35,7 @@ impl GameInstance
 
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         let tm = &mut self.turn_manager;
-        if pid != tm.new_players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
+        if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
 
         tm.build_city((x, y))
             .map(|_| {
@@ -52,7 +52,7 @@ impl GameInstance
         let is_initial_phase = matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2);
         let is_free_road = self.free_roads_remaining > 0;
 
-        if pid != self.turn_manager.new_players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
+        if pid != self.turn_manager.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
         self.can_build_road_in_phase(pid)?;
 
         // Build road for free if we have free roads from Road Builder card

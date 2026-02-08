@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use shared::ResourceType;
-use crate::game::entities::board::{Coordinates, Board};
+use crate::{errors::GameError, game::entities::board::{Board, Coordinates}};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Robber {
-    pub pos: Coordinates,
+    pos: Coordinates,
 }
 
 impl Robber {
@@ -18,6 +18,19 @@ impl Robber {
         }
 
         panic!("No desert hex found on the board");
+    }
+
+    pub fn move_to(&mut self, coords: Coordinates) -> Result<(), GameError> {
+        if coords == self.pos {
+            return Err(GameError::InvalidPosition);
+        }
+
+        self.pos = coords;
+        Ok(())
+    }
+
+    pub fn get_pos(&self) -> Coordinates {
+        self.pos
     }
 }
 

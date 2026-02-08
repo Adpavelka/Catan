@@ -52,7 +52,7 @@ impl Lobby
         let Some(game) = self.games.get(game_id) else { return };
 
         let players: Vec<shared::PlayerInfo> = game.player_ids.iter()
-            .filter_map(|&id| game.turn_manager.new_players.get(id))
+            .filter_map(|&id| game.turn_manager.players.get(id))
             .map(|p| p.into())
             .collect();
 
@@ -65,7 +65,7 @@ impl Lobby
             roads: game.turn_manager.board.edges.iter()
                 .filter_map(|(c, e)| e.owner.map(|owner| shared::BuildingInfo { player_id: owner, x: c.0, y: c.1 }))
                 .collect(),
-            robber_pos: game.turn_manager.robber.pos,
+            robber_pos: game.turn_manager.robber.get_pos(),
             ports: game.turn_manager.board.unique_ports().iter().map(|p| p.into()).collect(),
         };
 
@@ -90,10 +90,10 @@ impl Lobby
         let sync_msg = shared::ServerMessage::FullStateSync {
             player_id: pid,
             players: game.get_all_players_info(),
-            board: game.turn_manager.board.to_info(game.turn_manager.robber.pos),
+            board: game.turn_manager.board.to_info(game.turn_manager.robber.get_pos()),
             game_phase: game.phase.clone(),
-            current_turn_player_id: game.turn_manager.new_players.get_current_player().id,
-            robber_pos: game.turn_manager.robber.pos,
+            current_turn_player_id: game.turn_manager.players.get_current_player().id,
+            robber_pos: game.turn_manager.robber.get_pos(),
             last_dice_roll: last_roll,
         };
 
@@ -116,7 +116,7 @@ impl Lobby
     let Some(game) = self.games.get(gid) else { return };
 
     for &pid in &game.player_ids {
-        if let Some(player) = game.turn_manager.new_players.get(pid) {
+        if let Some(player) = game.turn_manager.players.get(pid) {
             let res: shared::Resources = (&player.resources).into();
             info!("Sending resource update to pid {}: {:?}", pid, res);
             let msg = shared::ServerMessage::ResourceUpdate {
@@ -131,7 +131,7 @@ impl Lobby
     pub(crate) fn broadcast_players_update(&self, gid: &str) {
         if let Some(game) = self.games.get(gid) {
             let players: Vec<shared::PlayerInfo> = game.player_ids.iter()
-                .filter_map(|&pid| game.turn_manager.new_players.get(pid).map(|p| (pid, p)))
+                .filter_map(|&pid| game.turn_manager.players.get(pid).map(|p| (pid, p)))
                 .map(|(pid, p)| {
                     let mut info = shared::PlayerInfo::from(p);
                     info.has_longest_road = game.turn_manager.road_bonus.holder() == Some(pid);

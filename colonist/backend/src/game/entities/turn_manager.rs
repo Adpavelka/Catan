@@ -19,17 +19,16 @@ pub struct TurnManager {
     dice: Dice,
     pub bank: Bank,
     pub board: Board,
+    pub robber: Robber,
+    pub players: Players,
+
 
     pub last_roll: Option<u8>, // atribut kostky, nebo networking by si to měl úkládat
 
     game_over: bool,
-    pub robber: Robber,
     
     pub army_bonus: BiggestArmy, // tohle by taky mělo private ne?
     pub road_bonus: LongestRoad, // tohle by taky mělo private ne?
-
-
-    pub new_players: Players,
 }
 
 impl TurnManager {
@@ -49,7 +48,7 @@ impl TurnManager {
             army_bonus: BiggestArmy::new(),
             road_bonus: LongestRoad::new(),
             last_roll: None,
-            new_players: Players::new(vec![first_player.clone()]),
+            players: Players::new(vec![first_player.clone()]),
         }
     }
 
@@ -66,7 +65,7 @@ impl TurnManager {
         let roll_value = self.dice.roll();
         info!(
             "Player {} rolled: {}",
-            self.new_players.get_current_index(), roll_value
+            self.players.get_current_index(), roll_value
         );
 
         let distributed = if roll_value == 7 {
@@ -75,17 +74,18 @@ impl TurnManager {
             Vec::new()
         } else {
             self.bank
-                .give_resources_for_roll(&self.board, roll_value, &self.robber, &mut self.new_players)
+                .give_resources_for_roll(&self.board, roll_value, &self.robber, &mut self.players)
         };
         self.last_roll = Some(roll_value);
         Ok((roll_value, distributed))
     }
 
+
     pub fn end_turn(&mut self) {
-        let prev_player = self.new_players.get_current_index();
+        let prev_player = self.players.get_current_index();
         {
-            let pid = self.new_players.get_current_player().id;
-            let player = self.new_players.get_mut(pid).unwrap();
+            let pid = self.players.get_current_player().id;
+            let player = self.players.get_mut(pid).unwrap();
 
             player
                 .dev_cards
@@ -94,39 +94,37 @@ impl TurnManager {
             player.dev_card_played_this_turn = false;
         }
 
-        self.new_players.next_turn();
+        self.players.next_turn();
 
         self.last_roll = None;
         info!(
             "Player {}'s turn started.",
-            self.new_players.get_current_player().id
+            self.players.get_current_player().id
         );
         info!(
             "Turn ended for Player {}. Now on turn: Player {}",
-            prev_player, self.new_players.get_current_index()
+            prev_player, self.players.get_current_index()
         );
     }
+
 
     fn pay_resources(&mut self, pid: Uuid, cost: ResourceSet) -> Result<(), GameError> {
         {
             let player = self
-                .new_players
+                .players
                 .get(pid)
                 .ok_or(GameError::PlayerNotFound)?;
             if !player.can_pay(&cost) {
                 return Err(GameError::NotEnoughResources);
             }
         }
-        self.bank.collect_from_player(pid, cost, &mut self.new_players)?;
+        self.bank.collect_from_player(pid, cost, &mut self.players)?;
         Ok(())
     }
 
-    pub fn build_settlement(
-        &mut self,
-        pos: Coordinates,
-        is_initial: bool,
-    ) -> Result<(), GameError> {
-        let pid: Uuid = self.new_players.get_current_player().id;
+
+    pub fn build_settlement(&mut self, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
+        let pid: Uuid = self.players.get_current_player().id;
 
         let vertex = self
             .board
@@ -147,7 +145,7 @@ impl TurnManager {
         let port_type = self.board.ports.get(&pos).map(|p| p.port_type);
 
         let player = self
-            .new_players
+            .players
             .get_mut(pid)
             .ok_or(GameError::PlayerNotFound)?;
         player.use_settlement()?;
@@ -161,13 +159,15 @@ impl TurnManager {
         }
 
         self.board.build_vertex(pid, pos, Settlement);
+        self.has_player_won(pid);
 
         info!("Player {} built a SETTLEMENT at {:?}", pid, pos);
         Ok(())
     }
 
+
     pub fn build_city(&mut self, pos: Coordinates) -> Result<(), GameError> {
-        let pid = self.new_players.get_current_player().id;
+        let pid = self.players.get_current_player().id;
 
         let vertex = self
             .board
@@ -184,19 +184,21 @@ impl TurnManager {
         self.pay_resources(pid, City.cost())?;
 
         let player = self
-            .new_players
+            .players
             .get_mut(pid)
             .ok_or(GameError::PlayerNotFound)?;
         player.use_city()?;
 
         self.board.build_vertex(pid, pos, City);
+        self.has_player_won(pid);
 
         info!("Player {} built a CITY at {:?}", pid, pos);
         Ok(())
     }
 
+
     pub fn build_road(&mut self, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
-        let pid = self.new_players.get_current_player().id;
+        let pid = self.players.get_current_player().id;
 
         let edge = self.board.edges.get(&pos).ok_or(GameError::InvalidAction)?;
         if edge.building.is_some() || !self.board.is_edge_connected_to_player(pos, pid) {
@@ -207,18 +209,18 @@ impl TurnManager {
 
         if !is_initial {
             let player = self
-                .new_players
+                .players
                 .get(pid)
                 .ok_or(GameError::PlayerNotFound)?;
             if !player.can_pay(&cost) {
                 return Err(GameError::NotEnoughResources);
             }
-            self.bank.collect_from_player(pid, cost, &mut self.new_players)?;
+            self.bank.collect_from_player(pid, cost, &mut self.players)?;
         }
 
         let longest_road_len = {
             let player = self
-                .new_players
+                .players
                 .get_mut(pid)
                 .ok_or(GameError::PlayerNotFound)?;
             player.use_road()?;
@@ -228,24 +230,26 @@ impl TurnManager {
         };
 
         let player = self
-            .new_players
+            .players
             .get_mut(pid)
             .ok_or(GameError::PlayerNotFound)?;
         player.longest_road = longest_road_len;
 
-        self.road_bonus.recalculate(&mut self.new_players);
+        self.road_bonus.recalculate(&mut self.players);
+        self.has_player_won(pid);
 
         info!("Player {} built a ROAD at {:?}", pid, pos);
         Ok(())
     }
 
+
     pub fn buy_dev_card(&mut self) -> Result<shared::DevCardType, GameError> {
-        let pid = self.new_players.get_current_player().id;
+        let pid = self.players.get_current_player().id;
         let cost = DevelopmentCard::cost();
 
         {
             let player = self
-                .new_players
+                .players
                 .get_mut(pid)
                 .ok_or(GameError::PlayerNotFound)?;
             if !player.can_pay(&cost) {
@@ -253,13 +257,13 @@ impl TurnManager {
             }
         }
 
-        self.bank.collect_from_player(pid, cost, &mut self.new_players)?;
+        self.bank.collect_from_player(pid, cost, &mut self.players)?;
 
         let card = self.bank.draw_dev_card()?;
         let card_type = card.get_type();
 
         let player = self
-            .new_players
+            .players
             .get_mut(pid)
             .ok_or(GameError::PlayerNotFound)?;
 
@@ -269,20 +273,18 @@ impl TurnManager {
         }
 
         player.dev_cards.push(card);
+        self.has_player_won(pid);
 
         Ok(card_type)
     }
 
-    pub fn play_development_card(
-        &mut self,
-        card_type: shared::DevCardType,
-        target: Option<shared::DevCardTarget>,
-    ) -> Result<(), GameError> {
-        let pid = self.new_players.get_current_player().id;
+
+    pub fn play_development_card(&mut self, card_type: shared::DevCardType, target: Option<shared::DevCardTarget>) -> Result<(), GameError> {
+        let pid = self.players.get_current_player().id;
 
         {
             let player = self
-                .new_players
+                .players
                 .get(pid)
                 .ok_or(GameError::PlayerNotFound)?;
             if player.dev_card_played_this_turn {
@@ -292,7 +294,7 @@ impl TurnManager {
 
         let mut card = {
             let player = self
-                .new_players
+                .players
                 .get_mut(pid)
                 .ok_or(GameError::PlayerNotFound)?;
             let idx = player
@@ -306,33 +308,25 @@ impl TurnManager {
         card.play(self, &target);
 
         let player = self
-            .new_players
+            .players
             .get_mut(pid)
             .ok_or(GameError::PlayerNotFound)?;
         player.dev_cards.push(card);
         player.dev_card_played_this_turn = true;
+        self.has_player_won(pid); // TODOOOO, win by knight???
 
         Ok(())
     }
 
-    pub fn move_robber(&mut self, hex_coords: Coordinates) -> Result<(), GameError> {
-        info!("Robber moved to {:?}", hex_coords);
-        self.robber.pos = hex_coords;
-        Ok(())
-    }
 
-    pub fn steal_card(
-        &mut self,
-        thief_id: Uuid,
-        victim_id: Uuid,
-    ) -> Result<Option<shared::ResourceType>, GameError> {
+    pub fn steal_card(&mut self, thief_id: Uuid, victim_id: Uuid) -> Result<Option<shared::ResourceType>, GameError> {
         let victim = self
-            .new_players
+            .players
             .get_mut(victim_id)
             .ok_or(GameError::PlayerNotFound)?;
         if let Some(res_type) = victim.resources.take_random_card() {
             let thief = self
-                .new_players
+                .players
                 .get_mut(thief_id)
                 .ok_or(GameError::PlayerNotFound)?;
             thief.resources.add(res_type, 1);
@@ -345,8 +339,9 @@ impl TurnManager {
         Ok(None)
     }    
 
-    pub fn has_player_won(&mut self, player_id: Uuid) -> bool {
-        let answer = self.new_players
+    
+    fn has_player_won(&mut self, player_id: Uuid) -> bool {
+        let answer = self.players
                                 .get(player_id)
                                 .map(|p| p.get_total_victory_points() >= 10)
                                 .unwrap_or(false);
@@ -357,12 +352,13 @@ impl TurnManager {
         answer
     }
 
+
     pub fn game_over(&self) -> bool {
         self.game_over
     }
 
     pub fn player_secret_victory_points(&self, player_id: Uuid) -> u8 {
-        if let Some(player) = self.new_players.get(player_id) {
+        if let Some(player) = self.players.get(player_id) {
             player.get_secret_victory_points()
         } else {
             0
@@ -392,7 +388,7 @@ mod tests {
 
     fn add_players(tm: &mut TurnManager, count: usize) {
         for i in 2..=count as u128 {
-            tm.new_players
+            tm.players
                 .add_player(Player::new(pid(i), &format!("Player {}", i), 'x'));
         }
     }
@@ -410,7 +406,7 @@ mod tests {
         let tm = make_tm(3);
 
         assert!(!tm.game_over());
-        assert_eq!(tm.new_players.len(), 1);
+        assert_eq!(tm.players.len(), 1);
     }
 
     #[test]
@@ -418,13 +414,13 @@ mod tests {
         let mut tm = make_tm(3);
         add_players(&mut tm, 3);
 
-        assert_eq!(tm.new_players.len(), 3);
+        assert_eq!(tm.players.len(), 3);
     }
 
     #[test]
     fn current_player_is_first_player() {
         let tm = make_tm(3);
-        let pid = tm.new_players.get_current_player().id;
+        let pid = tm.players.get_current_player().id;
 
         assert_eq!(pid, Uuid::from_u128(1));
     }
@@ -434,9 +430,9 @@ mod tests {
         let mut tm = make_tm(3);
         add_players(&mut tm, 3);
 
-        let first = tm.new_players.get_current_player().id;
+        let first = tm.players.get_current_player().id;
         tm.end_turn();
-        let second = tm.new_players.get_current_player().id;
+        let second = tm.players.get_current_player().id;
 
         assert_ne!(first, second);
     }
@@ -444,10 +440,10 @@ mod tests {
     #[test]
     fn next_turn_fails_when_game_over() {
         let mut tm = make_tm(3);
-        let pid = tm.new_players.get_current_player().id;
+        let pid = tm.players.get_current_player().id;
 
         for _ in 0..10 {
-            tm.new_players
+            tm.players
                 .get_mut(pid)
                 .unwrap()
                 .add_secret_victory_point();
@@ -470,7 +466,7 @@ mod tests {
     #[test]
     fn build_settlement_fails_if_vertex_occupied() {
         let mut tm = make_tm(3);
-        let pid = tm.new_players.get_current_player().id;
+        let pid = tm.players.get_current_player().id;
         let v = find_any_vertex_coords(&tm);
 
         tm.board.build_vertex(pid, v, Settlement);
@@ -482,14 +478,14 @@ mod tests {
     #[test]
     fn initial_settlement_does_not_charge_resources() {
         let mut tm = make_tm(3);
-        let pid = tm.new_players.get_current_player().id;
+        let pid = tm.players.get_current_player().id;
 
         let v = tm.board.vertices.iter()
             .find(|(c, v)| v.building.is_none() && tm.board.is_buildable_vertex(**c))
             .map(|(c, _)| *c)
             .unwrap();
 
-        let player = tm.new_players.get_mut(pid).unwrap();
+        let player = tm.players.get_mut(pid).unwrap();
         player.resources = ResourceSet::new();
         player.resources.add(ResourceType::Wood, 2);
         player.resources.add(ResourceType::Brick, 2);
@@ -498,7 +494,7 @@ mod tests {
 
         tm.build_settlement(v, true).unwrap();
 
-        let after = tm.new_players.get(pid).unwrap().resources.clone();
+        let after = tm.players.get(pid).unwrap().resources.clone();
         assert_eq!(before, after);
     }
 
@@ -534,7 +530,7 @@ mod tests {
     #[test]
     fn build_road_fails_if_edge_occupied() {
         let mut tm = make_tm(3);
-        let pid = tm.new_players.get_current_player().id;
+        let pid = tm.players.get_current_player().id;
         let e = find_any_edge_coords(&tm);
 
         tm.board.build_edge(pid, e, Road);
@@ -546,9 +542,9 @@ mod tests {
     #[test]
     fn buy_dev_card_fails_if_player_cannot_pay() {
         let mut tm = make_tm(3);
-        let pid = tm.new_players.get_current_player().id;
+        let pid = tm.players.get_current_player().id;
 
-        tm.new_players.get_mut(pid).unwrap().resources = ResourceSet::new();
+        tm.players.get_mut(pid).unwrap().resources = ResourceSet::new();
 
         let res = tm.buy_dev_card();
         assert_eq!(res.unwrap_err(), GameError::NotEnoughResources);
@@ -557,10 +553,10 @@ mod tests {
     #[test]
     fn has_player_won_sets_game_over() {
         let mut tm = make_tm(3);
-        let pid = tm.new_players.get_current_player().id;
+        let pid = tm.players.get_current_player().id;
 
         for _ in 0..10 {
-            tm.new_players
+            tm.players
                 .get_mut(pid)
                 .unwrap()
                 .add_secret_victory_point();

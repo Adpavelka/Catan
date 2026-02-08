@@ -62,18 +62,12 @@ impl Bank {
         }
     }
 
-    pub fn give_resources_for_roll(
-        &mut self,
-        board: &Board,
-        dice_number: u8,
-        robber: &Robber,
-        players: &mut Players
-    ) -> Vec<(Uuid, ResourceType, u32)> {
+    pub fn give_resources_for_roll(&mut self, board: &Board, dice_number: u8, robber: &Robber, players: &mut Players) -> Vec<(Uuid, ResourceType, u32)> {
         let mut pending: Vec<(Uuid, ResourceType, u32)> = Vec::new();
         let mut totals: HashMap<ResourceType, u32> = HashMap::new();
 
         for hex in board.hexes.values() {
-            if hex.number != dice_number || hex.resource == ResourceType::Desert || robber.pos == hex.coord {
+            if hex.number != dice_number || hex.resource == ResourceType::Desert || robber.get_pos() == hex.coord {
                 continue;
             }
 
@@ -134,13 +128,7 @@ impl Bank {
     }
 
 
-    pub fn give_initial_settlement_resources(
-        &mut self,
-        board: &Board,
-        player_id: Uuid,
-        settlement_pos: Coordinates,
-        players: &mut Players,
-    ) {
+    pub fn give_initial_settlement_resources(&mut self, board: &Board, player_id: Uuid, settlement_pos: Coordinates, players: &mut Players,) {
         use log::info;
 
         info!(
@@ -189,12 +177,7 @@ impl Bank {
     }
 
 
-    pub fn validate_bank_trade(
-        &self,
-        player: &Player,
-        gives: &ResourceSet,
-        takes: &ResourceSet,
-    ) -> Result<(), GameError> {
+    pub fn validate_bank_trade(&self, player: &Player, gives: &ResourceSet, takes: &ResourceSet) -> Result<(), GameError> {
         if gives.get_cards_total() == 0 || takes.get_cards_total() == 0 {
             return Err(GameError::WrongResourceRatio);
         }
@@ -241,14 +224,7 @@ impl Bank {
     }
 
 
-    pub fn trade_with_bank(
-        &mut self,
-        pid: Uuid,
-        gives: ResourceSet,
-        takes: ResourceSet,
-        players: &mut Players,
-        validate: bool
-    ) -> Result<(), GameError> {
+    pub fn trade_with_bank(&mut self, pid: Uuid, gives: ResourceSet, takes: ResourceSet, players: &mut Players, validate: bool) -> Result<(), GameError> {
         if validate {
             self.validate_bank_trade(players.get(pid).unwrap(), &gives, &takes)?;
         }
@@ -285,12 +261,7 @@ impl Bank {
         ratio
     }
 
-    pub fn collect_from_player(
-        &mut self,
-        player_id: Uuid,
-        cost: ResourceSet,
-        players: &mut Players,
-    ) -> Result<(), GameError> {
+    pub fn collect_from_player(&mut self, player_id: Uuid, cost: ResourceSet, players: &mut Players,) -> Result<(), GameError> {
         self.collect_from_to(
             ResourceEndpoint::Player(player_id),
             ResourceEndpoint::Bank,
@@ -299,13 +270,7 @@ impl Bank {
         )
     }
 
-    pub fn collect_from_player_to_player(
-        &mut self,
-        from_id: Uuid,
-        to_id: Uuid,
-        cost: &ResourceSet,
-        players: &mut Players,
-    ) -> Result<(), GameError> {
+    pub fn collect_from_player_to_player(&mut self, from_id: Uuid, to_id: Uuid, cost: &ResourceSet, players: &mut Players) -> Result<(), GameError> {
         self.collect_from_to(
             ResourceEndpoint::Player(from_id),
             ResourceEndpoint::Player(to_id),
@@ -340,13 +305,7 @@ impl Bank {
         Ok(total_stolen)
     }
 
-    fn collect_from_to(
-        &mut self,
-        from: ResourceEndpoint,
-        to: ResourceEndpoint,
-        cost: &ResourceSet,
-        players: &mut Players, 
-    ) -> Result<(), GameError> {
+    fn collect_from_to(&mut self, from: ResourceEndpoint, to: ResourceEndpoint, cost: &ResourceSet, players: &mut Players) -> Result<(), GameError> {
         if from == to {
             return Ok(());
         }
@@ -487,7 +446,7 @@ mod tests {
         v.owner = Some(player_id);
         v.building = Some(VertexBuilding::Settlement);
 
-        let robber = Robber { pos: (999, 999) };
+        let robber = Robber::new(&board);
 
         let before = players
             .get(player_id)
@@ -534,7 +493,8 @@ mod tests {
         v.owner = Some(player_id);
         v.building = Some(VertexBuilding::Settlement);
 
-        let robber = Robber { pos: hex_coord };
+        let mut robber = Robber::new(&board);
+        robber.move_to(hex_coord).unwrap();
 
         let distributed = bank.give_resources_for_roll(
             &board,

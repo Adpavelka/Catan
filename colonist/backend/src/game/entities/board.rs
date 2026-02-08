@@ -383,13 +383,7 @@ impl Board {
             .map(|(c, _)| *c)
             .collect();
 
-        fn dfs(
-            board: &Board,
-            current_vertex: Coordinates,
-            player_id: Uuid,
-            player_edges: &HashSet<Coordinates>,
-            visited_edges: &mut HashSet<Coordinates>,
-        ) -> usize {
+        fn dfs(board: &Board, current_vertex: Coordinates, player_id: Uuid, player_edges: &HashSet<Coordinates>, visited_edges: &mut HashSet<Coordinates>) -> usize {
             let mut max_len = 0;
 
             if let Some(vertex) = board.vertices.get(&current_vertex) {
