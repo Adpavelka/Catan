@@ -369,3 +369,205 @@ impl TurnManager {
         }
     }
 }
+
+
+
+#[cfg(test)]
+mod tests {
+    use crate::errors::GameError;
+    use crate::game::entities::building::EdgeBuilding::Road;
+    use crate::game::entities::building::VertexBuilding::Settlement;
+    use crate::game::entities::resources::{ResourceSet, ResourceType};
+    use crate::game::entities::turn_manager::TurnManager;
+    use crate::game::entities::player::Player;
+    use uuid::Uuid;
+
+    fn pid(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn make_tm(player_count: usize) -> TurnManager {
+        TurnManager::new(player_count, pid(1))
+    }
+
+    fn add_players(tm: &mut TurnManager, count: usize) {
+        for i in 2..=count as u128 {
+            tm.new_players
+                .add_player(Player::new(pid(i), &format!("Player {}", i), 'x'));
+        }
+    }
+
+    fn find_any_vertex_coords(tm: &TurnManager) -> (i32, i32) {
+        *tm.board.vertices.keys().next().unwrap()
+    }
+
+    fn find_any_edge_coords(tm: &TurnManager) -> (i32, i32) {
+        *tm.board.edges.keys().next().unwrap()
+    }
+
+    #[test]
+    fn new_initializes_state() {
+        let tm = make_tm(3);
+
+        assert!(!tm.game_over());
+        assert_eq!(tm.new_players.len(), 1);
+    }
+
+    #[test]
+    fn add_players_increases_count() {
+        let mut tm = make_tm(3);
+        add_players(&mut tm, 3);
+
+        assert_eq!(tm.new_players.len(), 3);
+    }
+
+    #[test]
+    fn current_player_is_first_player() {
+        let tm = make_tm(3);
+        let pid = tm.new_players.get_current_player().id;
+
+        assert_eq!(pid, Uuid::from_u128(1));
+    }
+
+    #[test]
+    fn end_turn_rotates_current_player() {
+        let mut tm = make_tm(3);
+        add_players(&mut tm, 3);
+
+        let first = tm.new_players.get_current_player().id;
+        tm.end_turn();
+        let second = tm.new_players.get_current_player().id;
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn next_turn_fails_when_game_over() {
+        let mut tm = make_tm(3);
+        let pid = tm.new_players.get_current_player().id;
+
+        for _ in 0..10 {
+            tm.new_players
+                .get_mut(pid)
+                .unwrap()
+                .add_secret_victory_point();
+        }
+
+        tm.has_player_won(pid);
+        let res = tm.next_turn();
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), GameError::InvalidAction);
+    }
+
+    #[test]
+    fn build_settlement_fails_if_vertex_missing() {
+        let mut tm = make_tm(3);
+
+        let res = tm.build_settlement((9999, 9999), true);
+        assert_eq!(res.unwrap_err(), GameError::InvalidPosition);
+    }
+
+    #[test]
+    fn build_settlement_fails_if_vertex_occupied() {
+        let mut tm = make_tm(3);
+        let pid = tm.new_players.get_current_player().id;
+        let v = find_any_vertex_coords(&tm);
+
+        tm.board.build_vertex(pid, v, Settlement);
+
+        let res = tm.build_settlement(v, true);
+        assert_eq!(res.unwrap_err(), GameError::InvalidPosition);
+    }
+
+    #[test]
+    fn initial_settlement_does_not_charge_resources() {
+        let mut tm = make_tm(3);
+        let pid = tm.new_players.get_current_player().id;
+
+        let v = tm.board.vertices.iter()
+            .find(|(c, v)| v.building.is_none() && tm.board.is_buildable_vertex(**c))
+            .map(|(c, _)| *c)
+            .unwrap();
+
+        let player = tm.new_players.get_mut(pid).unwrap();
+        player.resources = ResourceSet::new();
+        player.resources.add(ResourceType::Wood, 2);
+        player.resources.add(ResourceType::Brick, 2);
+
+        let before = player.resources.clone();
+
+        tm.build_settlement(v, true).unwrap();
+
+        let after = tm.new_players.get(pid).unwrap().resources.clone();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn build_city_fails_without_settlement() {
+        let mut tm = make_tm(3);
+        let v = find_any_vertex_coords(&tm);
+
+        let res = tm.build_city(v);
+        assert_eq!(res.unwrap_err(), GameError::InvalidAction);
+    }
+
+    #[test]
+    fn build_city_fails_if_settlement_not_owned() {
+        let mut tm = make_tm(3);
+        add_players(&mut tm, 2);
+
+        let v = find_any_vertex_coords(&tm);
+        tm.board.build_vertex(pid(2), v, Settlement);
+
+        let res = tm.build_city(v);
+        assert_eq!(res.unwrap_err(), GameError::InvalidAction);
+    }
+
+    #[test]
+    fn build_road_fails_if_edge_missing() {
+        let mut tm = make_tm(3);
+
+        let res = tm.build_road((9999, 9999), true);
+        assert_eq!(res.unwrap_err(), GameError::InvalidAction);
+    }
+
+    #[test]
+    fn build_road_fails_if_edge_occupied() {
+        let mut tm = make_tm(3);
+        let pid = tm.new_players.get_current_player().id;
+        let e = find_any_edge_coords(&tm);
+
+        tm.board.build_edge(pid, e, Road);
+
+        let res = tm.build_road(e, true);
+        assert_eq!(res.unwrap_err(), GameError::InvalidAction);
+    }
+
+    #[test]
+    fn buy_dev_card_fails_if_player_cannot_pay() {
+        let mut tm = make_tm(3);
+        let pid = tm.new_players.get_current_player().id;
+
+        tm.new_players.get_mut(pid).unwrap().resources = ResourceSet::new();
+
+        let res = tm.buy_dev_card();
+        assert_eq!(res.unwrap_err(), GameError::NotEnoughResources);
+    }
+
+    #[test]
+    fn has_player_won_sets_game_over() {
+        let mut tm = make_tm(3);
+        let pid = tm.new_players.get_current_player().id;
+
+        for _ in 0..10 {
+            tm.new_players
+                .get_mut(pid)
+                .unwrap()
+                .add_secret_victory_point();
+        }
+
+        let won = tm.has_player_won(pid);
+        assert!(won);
+        assert!(tm.game_over());
+    }
+}
