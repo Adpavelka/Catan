@@ -82,10 +82,7 @@ impl Lobby
     pub(crate) fn send_full_sync(&mut self, pid: Uuid, game_id: &str) {
         let Some(game) = self.games.get(game_id) else { return };
 
-        let last_roll = game.turn_manager.last_roll.map(|total| {
-            let d1 = total / 2;
-            (d1, total - d1)
-        });
+        let last_roll = game.turn_manager.dice.values();
 
         let sync_msg = shared::ServerMessage::FullStateSync {
             player_id: pid,
@@ -94,7 +91,7 @@ impl Lobby
             game_phase: game.phase.clone(),
             current_turn_player_id: game.turn_manager.players.get_current_player().id,
             robber_pos: game.turn_manager.robber.get_pos(),
-            last_dice_roll: last_roll,
+            last_dice_roll: Some(last_roll),
         };
 
         self.send_server_msg(pid, sync_msg);

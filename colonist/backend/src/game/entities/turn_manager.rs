@@ -16,14 +16,11 @@ use crate::game::entities::building::VertexBuilding::{City, Settlement};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TurnManager {
-    dice: Dice,
+    pub dice: Dice,
     pub bank: Bank,
     pub board: Board,
     pub robber: Robber,
     pub players: Players,
-
-
-    pub last_roll: Option<u8>, // atribut kostky, nebo networking by si to měl úkládat
 
     game_over: bool,
     
@@ -47,7 +44,6 @@ impl TurnManager {
             robber: Robber::new(&board),
             army_bonus: BiggestArmy::new(),
             road_bonus: LongestRoad::new(),
-            last_roll: None,
             players: Players::new(vec![first_player.clone()]),
         }
     }
@@ -56,10 +52,6 @@ impl TurnManager {
     pub fn next_turn(&mut self) -> Result<(u8, Vec<(Uuid, shared::ResourceType, u32)>), GameError> {
         if self.game_over {
             return Err(GameError::InvalidAction);
-        }
-
-        if self.last_roll.is_some() {
-            return Ok((self.last_roll.unwrap(), Vec::new()));
         }
 
         let roll_value = self.dice.roll();
@@ -73,10 +65,9 @@ impl TurnManager {
             // Logic handled by Lobby
             Vec::new()
         } else {
-            self.bank
-                .give_resources_for_roll(&self.board, roll_value, &self.robber, &mut self.players)
+            self.bank.give_resources_for_roll(&self.board, roll_value, &self.robber, &mut self.players)
         };
-        self.last_roll = Some(roll_value);
+
         Ok((roll_value, distributed))
     }
 
@@ -96,7 +87,6 @@ impl TurnManager {
 
         self.players.next_turn();
 
-        self.last_roll = None;
         info!(
             "Player {}'s turn started.",
             self.players.get_current_player().id
