@@ -1,6 +1,5 @@
 use log::info;
-use shared::GamePhase;
-use crate::lobby::Lobby;
+use crate::{game::entities::game_instance::InitialAction, lobby::Lobby};
 
 impl Lobby
 {
@@ -10,28 +9,39 @@ impl Lobby
             None => return false,
         };
 
-        let max_settlements = game.max_players * 2;
-
-        if game.initial_settlements_placed >= max_settlements {
-            info!("Initial placement complete, transitioning to regular play");
-            game.phase = GamePhase::RegularPlay;
-            game.turn_manager.players.reset_order();
-            return true;  // Signal that we transitioned to regular play
+        if !game.is_initial_phase() {
+            return false;
         }
 
-        let settlements_in_round1 = game.max_players;
-        if game.initial_settlements_placed <= settlements_in_round1 {
-            if game.initial_settlements_placed == settlements_in_round1 {
-                info!("Transitioning to initial placement round 2 - player {} goes again", game.turn_manager.players.get_current_index());
-                game.phase = GamePhase::InitialPlacementRound2;
+        if game.is_second_phase() {
+            if game.turn_manager.players.get_current_index() == 0 {
+                info!("Initial placement complete, transitioning to regular play");
+
+                game.advance_phase();
+                game.initial_action = None;
+                game.turn_manager.players.reset_order();
+                return true;
+            } else {
+                game.turn_manager.players.prev_turn();
+            }
+        } else {
+            if game.turn_manager.players.get_current_index() + 1 == game.turn_manager.players.len() {
+                info!("Transitioning to initial placement round 2");
+
+                game.advance_phase();
             } else {
                 game.turn_manager.players.next_turn();
             }
-        } else {
-            game.turn_manager.players.prev_turn();
         }
 
-        info!("Initial placement: Now player {} (slot {})'s turn", game.turn_manager.players.get_current_player().id, game.turn_manager.players.get_current_index());
-        false  // Did not transition to regular play
+        game.initial_action = Some(InitialAction::Settlement);
+
+        info!(
+            "Initial placement: Now player {} (slot {})'s turn",
+            game.turn_manager.players.get_current_player().id,
+            game.turn_manager.players.get_current_index()
+        );
+
+        false
     }
 }

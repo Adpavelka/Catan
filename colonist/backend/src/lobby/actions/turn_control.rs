@@ -5,13 +5,17 @@ use crate::lobby::GameInstance;
 impl GameInstance
 {
     pub fn handle_roll_dice(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
-        let tm = &mut self.turn_manager;
+        {
+            if pid != self.turn_manager.players.get_current_player().id {
+                return Err("Wait for your turn!".to_string());
+            }
 
-        if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
-
-        if matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2) {
-            return Err("Cannot roll dice during initial placement!".to_string());
+            if self.is_initial_phase() {
+                return Err("Cannot roll dice during initial placement!".to_string());
+            }
         }
+
+        let tm = &mut self.turn_manager;
 
         tm.next_turn()
             .map(|((d1, d2), _)| {
@@ -45,15 +49,20 @@ impl GameInstance
 
 
     pub fn handle_end_turn(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
-        let tm = &mut self.turn_manager;
+        if pid != self.turn_manager.players.get_current_player().id {
+            return Err("Wait for your turn!".to_string());
+        }
 
-        if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
-        if self.phase != GamePhase::RegularPlay { return Err("Cannot end turn during initial placement!".to_string()); }
+        if self.get_state() != GamePhase::RegularPlay {
+            return Err("Cannot end turn during initial placement!".to_string());
+        }
+
         if self.seven_roller.is_some() {
             return Err("Cannot end turn until you move the robber".to_string());
         }
-        tm.end_turn();
-        Ok(ServerMessage::NextTurn { player_id: tm.players.get_current_player().id  })
+
+        self.turn_manager.end_turn();
+        Ok(ServerMessage::NextTurn { player_id: self.turn_manager.players.get_current_player().id  })
     }
 }
 

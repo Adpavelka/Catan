@@ -6,6 +6,13 @@ use shared::GamePhase;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InitialAction {
+    Settlement,
+    Road,
+}
+
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GameInstance {
     pub id: String,
@@ -15,7 +22,7 @@ pub struct GameInstance {
     pub max_players: usize,
 
     pub turn_manager: TurnManager,
-    pub phase: GamePhase,
+    phase: GamePhase,
     
     pub pending_discards: HashSet<Uuid>,  // Players who still need to discard
     pub seven_roller: Option<Uuid>,  // Player who rolled 7 and needs to move robber
@@ -28,11 +35,40 @@ pub struct GameInstance {
     #[serde(skip)]
     pub next_trade_id: u64,  // Counter for trade IDs
 
-    pub initial_settlements_placed: usize,  // Track how many initial settlements have been placed
-    pub initial_settlements: HashMap<Uuid, usize>,
-    pub initial_roads: HashMap<Uuid, usize>,
+
+    pub initial_action: Option<InitialAction>,
 }
+
 impl GameInstance {
+    pub fn new(gid: String, creator_pid: Uuid, player_count: usize) -> Self {
+        let mut player_id_to_slot = HashMap::new();
+        player_id_to_slot.insert(creator_pid, 0);
+
+        Self {
+            id: gid,
+            player_ids: vec![creator_pid],
+            player_id_to_slot,
+            max_players: player_count,
+
+            turn_manager: TurnManager::new(player_count, creator_pid),
+            phase: GamePhase::WaitingForPlayers,
+
+            pending_discards: HashSet::new(),
+            seven_roller: None,
+            knight_mover: None,
+
+            pending_trades: HashMap::new(),
+            next_trade_id: 1,
+
+            free_roads_remaining: 0,
+            year_of_plenty_pending: None,
+            monopoly_pending: None,
+
+            initial_action: Some(InitialAction::Settlement),
+        }
+    }
+
+
     pub fn get_all_players_info(&self) -> Vec<shared::PlayerInfo> {
         self.player_ids.iter()
             .filter_map(|&pid| self.turn_manager.players.get(pid).map(|p| (pid, p)))
@@ -57,49 +93,27 @@ impl GameInstance {
             .collect()
     }
 
-
-    // jsou tyhle metody vůbec třeba?
-    // co by se stalo bez nich?
-    // nebude mít prostě suroviny ne?
-    // nebo mu to povolí postavit více měst ze začátku?
-    // asi bych radši dal nějaký free counter a dal to do construction jen
-    pub fn can_build_settlement_in_phase(&mut self, pid: Uuid) -> Result<(), String> {
-        if self.is_initial_phase() {
-            let count = *self.initial_settlements.get(&pid).unwrap_or(&0);
-
-            if self.is_second_phase() {
-                if count >= 2 {
-                    return Err("You have already placed your second initial settlement.".into());
-                } else if count < 1 {
-                    return Err("Invalid state: Missing first settlement.".into());
-                }
-            } else {
-                if count >= 1 {
-                    return Err("You must place exactly one settlement in the first round.".into());
-                }
-            }
-
-            //*self.initial_settlements.entry(pid).or_insert(0) += 1;
-        }
-
-        Ok(())
+    pub (crate) fn is_initial_phase(&self) -> bool {
+        matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2)
     }
 
+    pub (crate) fn is_second_phase(&self) -> bool {
+        GamePhase::InitialPlacementRound2 == self.phase
+    }
 
-    pub fn can_build_road_in_phase(&mut self, pid: Uuid) -> Result<(), String> {
-        if self.is_initial_phase() {
-            let road_count = *self.initial_roads.get(&pid).unwrap_or(&0);
-            let settlement_count = *self.initial_settlements.get(&pid).unwrap_or(&0);
-
-            if road_count >= settlement_count {
-                //return Err("You must place a settlement before placing a road.".into());
-            }
-            //*self.initial_settlements.entry(pid).or_insert(0) += 1;
-
-            //*self.initial_settlements.entry(pid).or_insert(0) += 1;
-            //*self.initial_roads.entry(pid).or_insert(0) += 1;
+    pub (crate) fn advance_phase(&mut self) {
+        if self.phase == GamePhase::InitialPlacementRound1 {
+            self.phase = GamePhase::InitialPlacementRound1;
+        } else if self.phase == GamePhase::InitialPlacementRound2 {
+            self.phase = GamePhase::RegularPlay;
         }
+    }
 
-        Ok(())
+    pub (crate) fn get_state(&self) -> GamePhase {
+        self.phase
+    }
+
+    pub (crate) fn start_game(&mut self) {
+        self.phase = GamePhase::InitialPlacementRound1;
     }
 }

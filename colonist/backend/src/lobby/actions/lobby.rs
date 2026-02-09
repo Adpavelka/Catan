@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use actix::{AsyncContext, Context, WrapFuture};
 use log::info;
 use uuid::Uuid;
 use shared::{GamePhase, ServerMessage};
-use crate::game::entities::turn_manager::TurnManager;
 use crate::lobby::{GameInstance, Lobby};
 
 impl Lobby { 
@@ -11,8 +10,8 @@ impl Lobby {
         let can_leave_result = if let Some(game) = self.games.get(&game_id) {
             if !game.player_ids.contains(&pid) {
                 Err("You are not in this game")
-            } else if !matches!(game.phase, GamePhase::WaitingForPlayers) {
-                Err("Cannot leave a game in progress")
+            /* } else if !matches!(game.phase, GamePhase::WaitingForPlayers) {
+                Err("Cannot leave a game in progress")*/
             } else {
                 Ok(())
             }
@@ -89,8 +88,8 @@ impl Lobby {
 
         if is_full {
             if let Some(game) = self.games.get_mut(&game_id) {
-                if game.phase == GamePhase::WaitingForPlayers {
-                    game.phase = GamePhase::InitialPlacementRound1;
+                if game.get_state() == GamePhase::WaitingForPlayers {
+                    game.start_game();
                     info!("Game {} starting!", game_id);
 
                     let first_player = game.player_ids[0];
@@ -112,25 +111,7 @@ impl Lobby {
         let mut player_id_to_slot = HashMap::new();
         player_id_to_slot.insert(pid, 0);
 
-        let mut game = GameInstance {
-            id: gid.clone(),
-            player_ids: vec![pid],
-            player_id_to_slot,
-            turn_manager: TurnManager::new(player_count, pid),
-            max_players: player_count,
-            phase: GamePhase::WaitingForPlayers,
-            initial_settlements_placed: 0,
-            pending_discards: HashSet::new(),
-            seven_roller: None,
-            knight_mover: None,
-            pending_trades: HashMap::new(),
-            next_trade_id: 1,
-            free_roads_remaining: 0,
-            year_of_plenty_pending: None,
-            monopoly_pending: None,
-            initial_roads: HashMap::new(),
-            initial_settlements: HashMap::new(),
-        };
+        let mut game = GameInstance::new(gid.clone(), pid, player_count);
 
         game.turn_manager.players.add_player_with_colour(pid);
 

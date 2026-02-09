@@ -1,34 +1,34 @@
-use crate::lobby::GameInstance;
-use shared::{GamePhase, ServerMessage};
+use crate::{game::entities::game_instance::InitialAction, lobby::GameInstance};
+use shared::ServerMessage;
 use uuid::Uuid;
 
 impl GameInstance
 {
-    pub fn is_initial_phase(&self) -> bool {
-        matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2)
-    }
-
-    pub fn is_second_phase(&self) -> bool {
-        GamePhase::InitialPlacementRound2 == self.phase
-    }
-
     pub fn handle_build_settlement(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
         }
 
-        let is_initial_phase = self.is_initial_phase();
+        if self.is_initial_phase() && self.initial_action != Some(InitialAction::Settlement) {
+            return Err("You must build a road next.".into());
+        }
 
-        self.can_build_settlement_in_phase(pid)?;
+        let is_initial = self.is_initial_phase();
 
-        self.turn_manager.build_settlement((x, y), is_initial_phase)
+        self.turn_manager
+            .build_settlement((x, y), is_initial)
             .map(|_| {
-                if is_initial_phase {
-                    self.initial_settlements_placed += 1;
-                    // Give initial resources for second settlement (round 2 only)
-                    if self.phase == GamePhase::InitialPlacementRound2 {
-                        self.turn_manager.bank.give_initial_settlement_resources(&self.turn_manager.board, pid, (x, y), &mut self.turn_manager.players);
-                    }
+                if self.is_second_phase() {
+                    self.turn_manager.bank.give_initial_settlement_resources(
+                        &self.turn_manager.board,
+                        pid,
+                        (x, y),
+                        &mut self.turn_manager.players,
+                    );
+                }
+
+                if is_initial {
+                    self.initial_action = Some(InitialAction::Road);
                 }
 
                 ServerMessage::Built {
@@ -41,12 +41,11 @@ impl GameInstance
     }
 
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
-        let tm = &mut self.turn_manager;
-        if pid != tm.players.get_current_player().id {
+        if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
         }
 
-        tm.build_city((x, y))
+        self.turn_manager.build_city((x, y))
             .map(|_| {
                 ServerMessage::Built {
                     player_id: pid,
@@ -57,24 +56,31 @@ impl GameInstance
             .map_err(|e| format!("{:?}", e))
     }
 
-    pub fn handle_build_road(&mut self, pid: Uuid, x1: i32, y1: i32) -> Result<ServerMessage, String> {
-        let is_initial_phase = matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2);
-        let is_free_road = self.free_roads_remaining > 0;
+    pub fn handle_build_road(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
+        if pid != self.turn_manager.players.get_current_player().id {
+            return Err("Wait for your turn!".to_string());
+        }
 
-        if pid != self.turn_manager.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
-        self.can_build_road_in_phase(pid)?;
+        if self.is_initial_phase() && self.initial_action != Some(InitialAction::Road) {
+            return Err("You must build a settlement first.".into());
+        }
 
-        // Build road for free if we have free roads from Road Builder card
-        self.turn_manager.build_road((x1, y1), is_initial_phase || is_free_road)
+        let free = self.is_initial_phase() || self.free_roads_remaining > 0;
+
+        self.turn_manager
+            .build_road((x, y), free)
             .map(|_| {
-                // Decrement free roads counter if using Road Builder
-                if is_free_road {
+                if self.is_initial_phase() {
+                    self.initial_action = Some(InitialAction::Settlement);
+                    //self.advance_initial_placement(); // <-- move turn here
+                } else if self.free_roads_remaining > 0 {
                     self.free_roads_remaining -= 1;
                 }
+
                 ServerMessage::Built {
                     player_id: pid,
                     structure_type: "ROAD".into(),
-                    coords: vec![x1, y1],
+                    coords: vec![x, y],
                 }
             })
             .map_err(|e| format!("{:?}", e))

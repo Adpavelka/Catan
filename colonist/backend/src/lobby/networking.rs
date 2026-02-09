@@ -73,7 +73,7 @@ impl Lobby
             your_player_id: pid,
             players,
             board,
-            game_phase: game.phase.clone(),
+            game_phase: game.get_state().clone(),
         };
 
         self.send_server_msg(pid, msg);
@@ -88,7 +88,7 @@ impl Lobby
             player_id: pid,
             players: game.get_all_players_info(),
             board: game.turn_manager.board.to_info(game.turn_manager.robber.get_pos()),
-            game_phase: game.phase.clone(),
+            game_phase: game.get_state().clone(),
             current_turn_player_id: game.turn_manager.players.get_current_player().id,
             robber_pos: game.turn_manager.robber.get_pos(),
             last_dice_roll: Some(last_roll),

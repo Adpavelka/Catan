@@ -1,5 +1,5 @@
 use uuid::Uuid;
-use shared::{ServerMessage, GamePhase, ResourceType};
+use shared::{ServerMessage, ResourceType};
 use shared::ResourceType::{Brick, Ore, Sheep, Wheat, Wood};
 use std::collections::HashSet;
 use crate::game::entities::pending_trade::PendingTrade;
@@ -25,19 +25,17 @@ pub fn handle_bank_trade(
     receive: ResourceType,
     game: &mut GameInstance,
 ) -> Result<ServerMessage, String> {
+    {
+        if pid != game.turn_manager.players.get_current_player().id {
+            return Err("Wait for your turn!".to_string());
+        }
+
+        if game.is_initial_phase() {
+            return Err("Cannot trade during initial placement!".to_string());
+        }
+    }
+
     let tm = &mut game.turn_manager;
-
-    if pid != tm.players.get_current_player().id {
-        return Err("Wait for your turn!".to_string());
-    }
-
-    if matches!(
-        game.phase,
-        GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2
-    ) {
-        return Err("Cannot trade during initial placement!".to_string());
-    }
-
     let player = tm
         .players
         .get(pid)
@@ -76,18 +74,17 @@ pub fn handle_trade_offer(
     request: shared::Resources,
     game: &mut GameInstance,
 ) -> Result<ServerMessage, String> {
+    {
+        if pid != game.turn_manager.players.get_current_player().id {
+            return Err("Wait for your turn!".to_string());
+        }
+
+        if game.is_initial_phase() {
+            return Err("Cannot trade during initial placement!".to_string());
+        }
+    }
+
     let tm = &mut game.turn_manager;
-
-    if pid != tm.players.get_current_player().id {
-        return Err("Wait for your turn!".to_string());
-    }
-
-    if matches!(
-        game.phase,
-        GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2
-    ) {
-        return Err("Cannot trade during initial placement!".to_string());
-    }
 
     let proposer = tm
         .players
