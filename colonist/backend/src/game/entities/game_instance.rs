@@ -9,12 +9,14 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GameInstance {
     pub id: String,
+
     pub player_ids: Vec<Uuid>,  // player IDs in join order
     pub player_id_to_slot: HashMap<Uuid, usize>,  // Maps connection ID to game slot (0-3)
-    pub turn_manager: TurnManager,
     pub max_players: usize,
+
+    pub turn_manager: TurnManager,
     pub phase: GamePhase,
-    pub initial_settlements_placed: usize,  // Track how many initial settlements have been placed
+    
     pub pending_discards: HashSet<Uuid>,  // Players who still need to discard
     pub seven_roller: Option<Uuid>,  // Player who rolled 7 and needs to move robber
     pub knight_mover: Option<Uuid>,  // Player who played a knight and needs to move robber
@@ -26,6 +28,7 @@ pub struct GameInstance {
     #[serde(skip)]
     pub next_trade_id: u64,  // Counter for trade IDs
 
+    pub initial_settlements_placed: usize,  // Track how many initial settlements have been placed
     pub initial_settlements: HashMap<Uuid, usize>,
     pub initial_roads: HashMap<Uuid, usize>,
 }
@@ -43,7 +46,7 @@ impl GameInstance {
                     color: p.colour.to_string(),
                     victory_points: p.get_victory_points(),
                     dev_cards: p.dev_cards.iter().map(|c| c.get_type()).collect(),
-                    ports: p.ports.iter().map(|port| port.into()).collect(),
+                    ports: p.ports.iter().map(|port| port.into()).collect(), // why
                     resources: (&p.resources).into(),
                     knights_played: p.knight_played,
                     roads_count: p.longest_road,
@@ -55,48 +58,48 @@ impl GameInstance {
     }
 
 
+    // jsou tyhle metody vůbec třeba?
+    // co by se stalo bez nich?
+    // nebude mít prostě suroviny ne?
+    // nebo mu to povolí postavit více měst ze začátku?
+    // asi bych radši dal nějaký free counter a dal to do construction jen
     pub fn can_build_settlement_in_phase(&mut self, pid: Uuid) -> Result<(), String> {
-        let count = *self.initial_settlements.get(&pid).unwrap_or(&0);
+        if self.is_initial_phase() {
+            let count = *self.initial_settlements.get(&pid).unwrap_or(&0);
 
-        match self.phase {
-            GamePhase::InitialPlacementRound1 => {
-                // Round 1: Exactly 0 buildings allowed before placement
+            if self.is_second_phase() {
+                if count >= 2 {
+                    return Err("You have already placed your second initial settlement.".into());
+                } else if count < 1 {
+                    return Err("Invalid state: Missing first settlement.".into());
+                }
+            } else {
                 if count >= 1 {
                     return Err("You must place exactly one settlement in the first round.".into());
                 }
             }
-            GamePhase::InitialPlacementRound2 => {
-                // Round 2: Exactly 1 building allowed before placement
-                if count >= 2 {
-                    return Err("You have already placed your second initial settlement.".into());
-                }
-                if count < 1 {
-                    return Err("Invalid state: Missing first settlement.".into());
-                }
-            }
-            _ => {}
+
+            //*self.initial_settlements.entry(pid).or_insert(0) += 1;
         }
 
-        *self.initial_settlements.entry(pid).or_insert(0) += 1;
         Ok(())
     }
 
 
     pub fn can_build_road_in_phase(&mut self, pid: Uuid) -> Result<(), String> {
-        let road_count = *self.initial_roads.get(&pid).unwrap_or(&0);
-        let settlement_count = *self.initial_settlements.get(&pid).unwrap_or(&0);
+        if self.is_initial_phase() {
+            let road_count = *self.initial_roads.get(&pid).unwrap_or(&0);
+            let settlement_count = *self.initial_settlements.get(&pid).unwrap_or(&0);
 
-        match self.phase {
-            GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2 => {
-                if road_count >= settlement_count {
-                    return Err("You must place a settlement before placing a road.".into());
-                }
+            if road_count >= settlement_count {
+                //return Err("You must place a settlement before placing a road.".into());
             }
-            _ => {}
+            //*self.initial_settlements.entry(pid).or_insert(0) += 1;
+
+            //*self.initial_settlements.entry(pid).or_insert(0) += 1;
+            //*self.initial_roads.entry(pid).or_insert(0) += 1;
         }
 
-        *self.initial_settlements.entry(pid).or_insert(0) += 1;
-        *self.initial_roads.entry(pid).or_insert(0) += 1;
         Ok(())
     }
 }

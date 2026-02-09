@@ -21,6 +21,7 @@ pub fn handle_discard_cards(pid: Uuid, resources: shared::Resources, game: &mut 
         Some(player) => {
             if player.resources.can_pay(&discard_set) {
                 player.resources.take_set(&discard_set);
+                // bank trade!!!! collect from player
 
                 game.pending_discards.remove(&pid);
                 let count = resources.brick + resources.lumber + resources.wool + resources.grain + resources.ore;
@@ -63,7 +64,7 @@ pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option
             }
             // If Road Builder was played, the player gets 2 free roads
             if card == shared::DevCardType::RoadBuilding {
-                game.free_roads_remaining = 2;
+                game.free_roads_remaining = 2; // and has two roads
             }
             // If Year of Plenty was played, the player must choose 2 resources
             if card == shared::DevCardType::YearOfPlenty {

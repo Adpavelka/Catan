@@ -261,7 +261,7 @@ impl Bank {
         ratio
     }
 
-    pub fn collect_from_player(&mut self, player_id: Uuid, cost: ResourceSet, players: &mut Players,) -> Result<(), GameError> {
+    pub fn collect_from_player(&mut self, player_id: Uuid, cost: ResourceSet, players: &mut Players) -> Result<(), GameError> {
         self.collect_from_to(
             ResourceEndpoint::Player(player_id),
             ResourceEndpoint::Bank,
@@ -587,7 +587,7 @@ mod tests {
         let pid2 = Uuid::from_u128(2); // nebude existovat
 
         let mut from = Player::new(pid1, "From", 'A');
-        from.add_resource(ResourceType::Brick, 2);
+        from.resources.add(ResourceType::Brick, 2);
 
         let mut players = Players::new(vec![from]);
 

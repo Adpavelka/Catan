@@ -7,58 +7,57 @@ use crate::game::entities::turn_manager::TurnManager;
 use crate::lobby::{GameInstance, Lobby};
 
 impl Lobby { 
-    pub fn handle_leave_game(&mut self, pid: Uuid, game_id: String, ctx: &mut Context<Lobby>) 
-    {
-    let can_leave_result = if let Some(game) = self.games.get(&game_id) {
-        if !game.player_ids.contains(&pid) {
-            Err("You are not in this game")
-        } else if !matches!(game.phase, GamePhase::WaitingForPlayers) {
-            Err("Cannot leave a game in progress")
+    pub fn handle_leave_game(&mut self, pid: Uuid, game_id: String, ctx: &mut Context<Lobby>) {
+        let can_leave_result = if let Some(game) = self.games.get(&game_id) {
+            if !game.player_ids.contains(&pid) {
+                Err("You are not in this game")
+            } else if !matches!(game.phase, GamePhase::WaitingForPlayers) {
+                Err("Cannot leave a game in progress")
+            } else {
+                Ok(())
+            }
         } else {
-            Ok(())
+            Err("Game not found")
+        };
+
+        if let Err(e) = can_leave_result {
+            return self.send_error(pid, e);
         }
-    } else {
-        Err("Game not found")
-    };
 
-    if let Err(e) = can_leave_result {
-        return self.send_error(pid, e);
-    }
+        let mut should_remove_game = false;
+        {
+            if let Some(game) = self.games.get_mut(&game_id) {
+                game.player_ids.retain(|&pid_in_game| pid_in_game != pid);
+                game.player_id_to_slot.remove(&pid);
+                let _ = game.turn_manager.players.remove_player(pid);
 
-    let mut should_remove_game = false;
-    {
-        if let Some(game) = self.games.get_mut(&game_id) {
-            game.player_ids.retain(|&pid_in_game| pid_in_game != pid);
-            game.player_id_to_slot.remove(&pid);
-            let _ = game.turn_manager.players.remove_player(pid);
-
-            if game.player_ids.is_empty() {
-                should_remove_game = true;
+                if game.player_ids.is_empty() {
+                    should_remove_game = true;
+                }
             }
         }
-    }
 
-        self.player_to_game.remove(&pid);
+            self.player_to_game.remove(&pid);
 
-        self.send_server_msg(
-        pid,
-        ServerMessage::Left {
-            player_id: pid,
-            game_id: game_id.clone(),
-        },
-    );
+            self.send_server_msg(
+            pid,
+            ServerMessage::Left {
+                player_id: pid,
+                game_id: game_id.clone(),
+            },
+        );
 
-    if should_remove_game {
-        let gid_for_repo = game_id.clone();
-        let repo = self.repo.clone();
-        self.games.remove(&game_id);
+        if should_remove_game {
+            let gid_for_repo = game_id.clone();
+            let repo = self.repo.clone();
+            self.games.remove(&game_id);
 
-        ctx.spawn(async move {
-            let _ = repo.delete_game_instance(&gid_for_repo).await;
-        }.into_actor(self));
+            ctx.spawn(async move {
+                let _ = repo.delete_game_instance(&gid_for_repo).await;
+            }.into_actor(self));
 
-        info!("Game {} removed as it has no players left", game_id);
-    }
+            info!("Game {} removed as it has no players left", game_id);
+        }
 
         self.broadcast_lobby_status();
     }

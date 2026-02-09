@@ -31,11 +31,13 @@ impl ResourceSet {
         true
     }
 
+    // TODO, private ne?
     pub fn take(&mut self, res: ResourceType, amount: u32) {
         let entry = self.amounts.entry(res).or_insert(0);
         *entry -= amount;
     }
 
+    // TODO, private ne?
     pub fn add(&mut self, res: ResourceType, amount: u32) {
         if res == ResourceType::Desert {
             return;
@@ -55,10 +57,12 @@ impl ResourceSet {
         }
     }
 
+    // TODO, move to player
     pub fn get_cards_total(&self) -> u32 {
         self.amounts.values().sum()
     }
 
+    // TODO, move to player
     pub fn take_random_card(&mut self) -> Option<ResourceType> {
         let total = self.get_cards_total();
         if total == 0 {
@@ -83,9 +87,8 @@ impl ResourceSet {
 
         None
     }
-
-
 }
+
 impl From<&ResourceSet> for Resources {
     fn from(r: &ResourceSet) -> Self {
         Resources {

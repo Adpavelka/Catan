@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use shared::{PlayerInfo, ResourceType, Resources};
+use shared::{PlayerInfo, Resources};
 use crate::errors::GameError;
 use crate::game::entities::board::PortType;
 use crate::game::entities::development_card::DevelopmentCard;
@@ -10,7 +10,7 @@ use crate::game::entities::resources::{ResourceSet};
 pub struct Player {
     pub id: Uuid,
     pub name: String,
-    pub resources: ResourceSet,
+    pub resources: ResourceSet, // TODO Private
     
     pub colour: char,
 
@@ -18,16 +18,16 @@ pub struct Player {
     cities_left: u8,
     roads_left: u8,
 
-    pub dev_cards: Vec<DevelopmentCard>,
+    pub dev_cards: Vec<DevelopmentCard>, // TODO Encapsulate
     pub dev_card_played_this_turn: bool,
-
     pub knight_played: usize,
     pub longest_road: usize,
+
 
     victory_points: u8,
     secret_victory_points: u8,
 
-    pub ports: Vec<PortType>,
+    pub ports: Vec<PortType>, // TODO: why public?
 }
 
 impl Player {
@@ -37,7 +37,7 @@ impl Player {
             name: name.to_string(),
             resources: ResourceSet::new(),
             colour,
-            settlements_left: 5,
+            settlements_left: 5, // TODO: global constants file
             cities_left: 4,
             roads_left: 15,
             dev_cards: Vec::new(),
@@ -53,16 +53,18 @@ impl Player {
     pub fn add_victory_point(&mut self) {
         self.victory_points += 1;
     }
+    
     pub fn add_secret_victory_point(&mut self) {
         self.secret_victory_points += 1;
     }
+
     pub fn get_total_victory_points(&self) -> u8 {
         self.victory_points + self.secret_victory_points
     }
+
     pub fn get_secret_victory_points(&self) -> u8 {
         self.secret_victory_points
     }
-
 
     pub fn remove_victory_point(&mut self) {
         self.victory_points -= 1;
@@ -82,10 +84,6 @@ impl Player {
         }
         self.resources.take_set(cost);
         true
-    }
-
-    pub fn add_resource(&mut self, res: ResourceType, amount: u32) {
-        self.resources.add(res, amount);
     }
 
     fn has_settlement(&self) -> bool {
@@ -194,21 +192,10 @@ mod tests {
     }
 
     #[test]
-    fn add_resource_increases_resources() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
-        p.add_resource(ResourceType::Wood, 3);
-        p.add_resource(ResourceType::Wood, 2);
-        p.add_resource(ResourceType::Ore, 1);
-
-        assert_eq!(p.resources.amount_of(ResourceType::Wood), 5);
-        assert_eq!(p.resources.amount_of(ResourceType::Ore), 1);
-    }
-
-    #[test]
     fn can_pay_and_pay_succeeds_and_deducts_resources() {
         let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
-        p.add_resource(ResourceType::Wood, 2);
-        p.add_resource(ResourceType::Brick, 1);
+        p.resources.add(ResourceType::Wood, 2);
+        p.resources.add(ResourceType::Brick, 1);
 
         let mut cost = ResourceSet::new();
         cost.add(ResourceType::Wood, 2);
@@ -225,7 +212,7 @@ mod tests {
     #[test]
     fn pay_fails_when_cannot_pay_and_changes_nothing() {
         let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
-        p.add_resource(ResourceType::Wood, 1);
+        p.resources.add(ResourceType::Wood, 1);
 
         let mut cost = ResourceSet::new();
         cost.add(ResourceType::Wood, 2);

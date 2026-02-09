@@ -4,13 +4,23 @@ use uuid::Uuid;
 
 impl GameInstance
 {
-    pub fn handle_build_settlement(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
-        let is_initial_phase = matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2);
+    pub fn is_initial_phase(&self) -> bool {
+        matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2)
+    }
 
+    pub fn is_second_phase(&self) -> bool {
+        GamePhase::InitialPlacementRound2 == self.phase
+    }
+
+    pub fn handle_build_settlement(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
         }
+
+        let is_initial_phase = self.is_initial_phase();
+
         self.can_build_settlement_in_phase(pid)?;
+
         self.turn_manager.build_settlement((x, y), is_initial_phase)
             .map(|_| {
                 if is_initial_phase {
@@ -32,7 +42,9 @@ impl GameInstance
 
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         let tm = &mut self.turn_manager;
-        if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
+        if pid != tm.players.get_current_player().id {
+            return Err("Wait for your turn!".to_string());
+        }
 
         tm.build_city((x, y))
             .map(|_| {
