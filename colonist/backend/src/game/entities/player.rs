@@ -58,6 +58,8 @@ impl Player {
         self.secret_victory_points += 1;
     }
 
+
+    // useless????
     pub fn get_total_victory_points(&self) -> u8 {
         self.victory_points + self.secret_victory_points
     }

@@ -65,7 +65,7 @@ impl Lobby
             roads: game.turn_manager.board.edges.iter()
                 .filter_map(|(c, e)| e.owner.map(|owner| shared::BuildingInfo { player_id: owner, x: c.0, y: c.1 }))
                 .collect(),
-            robber_pos: game.turn_manager.robber.get_pos(),
+            robber_pos: game.turn_manager.get_robber_pos(),
             ports: game.turn_manager.board.unique_ports().iter().map(|p| p.into()).collect(),
         };
 
@@ -87,10 +87,10 @@ impl Lobby
         let sync_msg = shared::ServerMessage::FullStateSync {
             player_id: pid,
             players: game.get_all_players_info(),
-            board: game.turn_manager.board.to_info(game.turn_manager.robber.get_pos()),
+            board: game.turn_manager.board.to_info(game.turn_manager.get_robber_pos()),
             game_phase: game.get_state().clone(),
             current_turn_player_id: game.turn_manager.players.get_current_player().id,
-            robber_pos: game.turn_manager.robber.get_pos(),
+            robber_pos: game.turn_manager.get_robber_pos(),
             last_dice_roll: Some(last_roll),
         };
 

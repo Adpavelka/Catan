@@ -19,9 +19,9 @@ pub struct TurnManager {
     pub dice: Dice,
     pub bank: Bank,
     pub board: Board,
-    pub robber: Robber,
     pub players: Players,
 
+    robber: Robber,
     game_over: bool,
     
     pub army_bonus: BiggestArmy, // tohle by taky mělo private ne?
@@ -303,7 +303,7 @@ impl TurnManager {
             .ok_or(GameError::PlayerNotFound)?;
         player.dev_cards.push(card);
         player.dev_card_played_this_turn = true;
-        self.has_player_won(pid); // TODOOOO, win by knight???
+        self.has_player_won(pid);
 
         Ok(())
     }
@@ -353,6 +353,18 @@ impl TurnManager {
         } else {
             0
         }
+    }
+
+    pub fn move_robber(&mut self, coords: Coordinates) -> Result<(), GameError> {
+        if !self.board.vertices.contains_key(&coords) {
+            return Err(GameError::InvalidPosition);
+        }
+
+        self.robber.move_to(coords)
+    }
+
+    pub fn get_robber_pos(&self) -> Coordinates {
+        self.robber.get_pos()
     }
 }
 

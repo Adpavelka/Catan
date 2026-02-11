@@ -17,26 +17,31 @@ pub enum InitialAction {
 pub struct GameInstance {
     pub id: String,
 
+    // TODO: group
     pub player_ids: Vec<Uuid>,  // player IDs in join order
     pub player_id_to_slot: HashMap<Uuid, usize>,  // Maps connection ID to game slot (0-3)
     pub max_players: usize,
-
     pub turn_manager: TurnManager,
+
+    // TODO: better group
     phase: GamePhase,
+    pub initial_action: Option<InitialAction>,
+    pub last_initial_settlement: Option<(i32, i32)>,
     
+    // TODO: group, actions todo class
     pub pending_discards: HashSet<Uuid>,  // Players who still need to discard
     pub seven_roller: Option<Uuid>,  // Player who rolled 7 and needs to move robber
     pub knight_mover: Option<Uuid>,  // Player who played a knight and needs to move robber
-    pub free_roads_remaining: u8,  // Free roads from Road Builder card
+    pub free_roads_remaining: u8,  // Free roads from Road Builder card, shiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiit
     pub year_of_plenty_pending: Option<Uuid>,  // Player who played Year of Plenty and needs to choose resources
     pub monopoly_pending: Option<Uuid>,
+
+    // TODO class, trader?
     #[serde(skip)]
     pub pending_trades: HashMap<u64, PendingTrade>,  // Active trade offers
     #[serde(skip)]
     pub next_trade_id: u64,  // Counter for trade IDs
 
-
-    pub initial_action: Option<InitialAction>,
 }
 
 impl GameInstance {
@@ -52,6 +57,7 @@ impl GameInstance {
 
             turn_manager: TurnManager::new(player_count, creator_pid),
             phase: GamePhase::WaitingForPlayers,
+            last_initial_settlement: None,
 
             pending_discards: HashSet::new(),
             seven_roller: None,
@@ -103,7 +109,7 @@ impl GameInstance {
 
     pub (crate) fn advance_phase(&mut self) {
         if self.phase == GamePhase::InitialPlacementRound1 {
-            self.phase = GamePhase::InitialPlacementRound1;
+            self.phase = GamePhase::InitialPlacementRound2;
         } else if self.phase == GamePhase::InitialPlacementRound2 {
             self.phase = GamePhase::RegularPlay;
         }

@@ -20,8 +20,7 @@ pub fn handle_discard_cards(pid: Uuid, resources: shared::Resources, game: &mut 
     match tm.players.get_mut(pid) {
         Some(player) => {
             if player.resources.can_pay(&discard_set) {
-                player.resources.take_set(&discard_set);
-                // bank trade!!!! collect from player
+                tm.bank.collect_from_player(pid, discard_set, &mut tm.players).unwrap();
 
                 game.pending_discards.remove(&pid);
                 let count = resources.brick + resources.lumber + resources.wool + resources.grain + resources.ore;
@@ -34,15 +33,17 @@ pub fn handle_discard_cards(pid: Uuid, resources: shared::Resources, game: &mut 
                 Err("Not enough resources to discard".to_string())
             }
         }
+
         None => Err("Player not found".to_string())
     }
 }
 
 pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerMessage, String> {
-    let tm = &mut game.turn_manager;
-    if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
+    if pid != game.turn_manager.players.get_current_player().id {
+        return Err("Wait for your turn!".to_string());
+    }
 
-    tm.buy_dev_card()
+    game.turn_manager.buy_dev_card()
         .map(|card_type| {
             ServerMessage::DevCardBought {
                 player_id: pid,
@@ -53,27 +54,32 @@ pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerM
 }
 
 pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option<shared::DevCardTarget>, game: &mut GameInstance) -> Result<ServerMessage, String> {
-    let tm = &mut game.turn_manager;
-    if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
+    if pid != game.turn_manager.players.get_current_player().id {
+        return Err("Wait for your turn!".to_string());
+    }
 
-    tm.play_development_card(card.clone(), target)
+    game.turn_manager.play_development_card(card.clone(), target)
         .map(|_| {
-            // If a knight was played, the player must move the robber
-            if card == shared::DevCardType::Knight {
-                game.knight_mover = Some(pid);
+            match card {
+                shared::DevCardType::Knight => {
+                    game.knight_mover = Some(pid); // If a knight was played, the player must move the robbery
+                }
+
+                shared::DevCardType::RoadBuilding => {
+                    game.free_roads_remaining = 2; // If Road Builder was played, the player gets 2 free roads, shiiiiiiiiiit
+                }
+
+                shared::DevCardType::YearOfPlenty => {
+                    game.year_of_plenty_pending = Some(pid); // If Year of Plenty was played, the player must choose 2 resources
+                }
+
+                shared::DevCardType::Monopoly => {
+                    game.monopoly_pending = Some(pid); // If Monopoly was played, the player must choose a resource type
+                }
+
+                _ => {} // If Vitory_point cannot be played
             }
-            // If Road Builder was played, the player gets 2 free roads
-            if card == shared::DevCardType::RoadBuilding {
-                game.free_roads_remaining = 2; // and has two roads
-            }
-            // If Year of Plenty was played, the player must choose 2 resources
-            if card == shared::DevCardType::YearOfPlenty {
-                game.year_of_plenty_pending = Some(pid);
-            }
-            // If Monopoly was played, the player must choose a resource type
-            if card == shared::DevCardType::Monopoly {
-                game.monopoly_pending = Some(pid);
-            }
+
             ServerMessage::DevCardPlayed {
                 player_id: pid,
                 card_type: card,
@@ -83,14 +89,16 @@ pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option
 }
 
 pub fn handle_move_robber(pid: Uuid, q: i32, r: i32, game: &mut GameInstance) -> Result<ServerMessage, String> {
-    let tm = &mut game.turn_manager;
-    if pid != tm.players.get_current_player().id { return Err("Wait for your turn!".to_string()); }
+    if pid != game.turn_manager.players.get_current_player().id {
+        return Err("Wait for your turn!".to_string());
+    }
 
     // check valid coord?
-    tm.robber.move_to((q, r))
+    game.turn_manager.move_robber((q, r))
         .map(|_| {
             game.seven_roller = None; // Reset seven_roller logic
             game.knight_mover = None; // Reset knight_mover logic
+
             ServerMessage::RobberMoved {
                 player_id: pid,
                 new_q: q,
@@ -153,7 +161,6 @@ pub fn handle_monopoly_choice(
 
     let tm = &mut game.turn_manager;
 
-    // Collect all resources of this type from all other players
     let total_stolen = tm.bank.collect_resource_from_all_to_player(pid, resource, &mut tm.players)
         .map_err(|e| format!("{:?}", e))?;
 

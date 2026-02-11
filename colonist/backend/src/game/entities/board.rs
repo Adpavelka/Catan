@@ -87,7 +87,18 @@ impl Board {
         [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)]
     }
 
-    pub fn get_adjacent_vertices(hex_coord: Coordinates) -> [Coordinates; 6] {
+    pub fn is_edge_touching_vertex(&self, edge_coord: Coordinates, vertex_coord: Coordinates) -> bool {
+        match self.edges.get(&edge_coord) {
+            Some(edge) => {
+                let (a, b) = edge.adjacent_vertices;
+                a == vertex_coord || b == vertex_coord
+            }
+
+            None => false,
+        }
+    }
+
+    pub fn get_adjacent_hexes(hex_coord: Coordinates) -> [Coordinates; 6] {
         let (q, r) = hex_coord;
         let base = (q * 3, r * 3);
         let neighbours = Self::get_hex_neighbours();
@@ -133,14 +144,14 @@ impl Board {
                     coord: hex_coord,
                     resource,
                     number,
-                    adjacent_vertices: Self::get_adjacent_vertices(hex_coord),
+                    adjacent_vertices: Self::get_adjacent_hexes(hex_coord),
                 },
             );
         }
 
 
         for &hex_coord in &hex_coords {
-            let vertices = Self::get_adjacent_vertices(hex_coord);
+            let vertices = Self::get_adjacent_hexes(hex_coord);
 
             for i in 0..6 {
                 let a = vertices[i];
@@ -567,11 +578,11 @@ mod tests {
     }
 
     #[test]
-    fn get_adjacent_vertices_returns_six_unique_coords() {
+    fn get_adjacent_hexes_returns_six_unique_coords() {
         let board = Board::new_standard_board();
         let h = pick_any_hex(&board);
 
-        let vs = Board::get_adjacent_vertices(h);
+        let vs = Board::get_adjacent_hexes(h);
         assert_eq!(vs.len(), 6);
 
         let mut set = std::collections::HashSet::new();
@@ -607,7 +618,7 @@ mod tests {
     fn test_get_neighbor_vertices() {
         let board = Board::new_standard_board();
         let h = *board.hexes.keys().next().unwrap();
-        let neighbors = Board::get_adjacent_vertices(h);
+        let neighbors = Board::get_adjacent_hexes(h);
         assert!(!neighbors.is_empty(), "Hex should have neighbors");
         assert!(neighbors.len() == 6, "Hex should have at most 6 adjacent vertices");
     }
@@ -673,7 +684,7 @@ mod tests {
 
         board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
 
-        for n in Board::get_adjacent_vertices(v) {
+        for n in Board::get_adjacent_hexes(v) {
             if board.vertices.contains_key(&n) {
                 assert!(
                     !board.is_buildable_vertex(n),

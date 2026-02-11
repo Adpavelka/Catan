@@ -261,7 +261,7 @@ impl Handler<ClientActorMessage> for Lobby {
                     if let Some(game) = self.games.get(&gid) {
                         let mut robbable_players = HashSet::new();
                         let adjacent_vertices =
-                            crate::game::entities::board::Board::get_adjacent_vertices((
+                            crate::game::entities::board::Board::get_adjacent_hexes((
                                 *new_q, *new_r,
                             ));
                         for vertex_coord in &adjacent_vertices {
