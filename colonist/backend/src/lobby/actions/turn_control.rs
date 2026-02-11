@@ -10,7 +10,7 @@ impl GameInstance
                 return Err("Wait for your turn!".to_string());
             }
 
-            if self.is_initial_phase() {
+            if self.get_state().is_initial_phase() {
                 return Err("Cannot roll dice during initial placement!".to_string());
             }
         }

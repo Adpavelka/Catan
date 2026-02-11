@@ -264,9 +264,33 @@ pub struct Resources {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum GamePhase {
     WaitingForPlayers,
-    InitialPlacementRound1,
-    InitialPlacementRound2,
+
+    InitialPlacement {
+        round: InitialRound,
+        step: PlacementStep,
+    },
+
     RegularPlay,
+}
+
+impl GamePhase {
+    pub fn is_initial_phase(&self) -> bool {
+        matches!(self, GamePhase::InitialPlacement { .. })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Copy)]
+pub enum InitialRound {
+    First,
+    Second,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Copy)]
+pub enum PlacementStep {
+    BuildSettlement,
+    BuildRoad {
+        settlement: (i32, i32),
+    },
 }
 
 /// Port types for maritime trading

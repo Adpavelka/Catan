@@ -1,5 +1,5 @@
 use leptos::*;
-use shared::{ClientRequest, ServerMessage, Resources, PlayerInfo, HexInfo, BuildingInfo, GamePhase, PortInfo};
+use shared::{BuildingInfo, ClientRequest, GamePhase, HexInfo, InitialRound, PlayerInfo, PortInfo, Resources, ServerMessage};
 use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::Message;
 use futures::{SinkExt, StreamExt};
@@ -151,8 +151,8 @@ impl GameState {
                     }
 
                     let phase_msg = match game_phase {
-                        GamePhase::InitialPlacementRound1 => "Starting initial placement - Round 1!",
-                        GamePhase::InitialPlacementRound2 => "Initial placement - Round 2!",
+                        GamePhase::InitialPlacement {round: InitialRound::First, ..} => "Starting initial placement - Round 1!",
+                        GamePhase::InitialPlacement {round: InitialRound::Second, ..} => "Initial placement - Round 2!",
                         GamePhase::RegularPlay => "Game started!",
                         GamePhase::WaitingForPlayers => "Waiting for players...",
                     };
@@ -254,8 +254,8 @@ impl GameState {
                     self.game_phase.set(new_phase.clone());
 
                     let phase_msg = match new_phase {
-                        GamePhase::InitialPlacementRound1 => "Initial placement - Round 1",
-                        GamePhase::InitialPlacementRound2 => "Initial placement - Round 2",
+                        GamePhase::InitialPlacement {round: InitialRound::First, ..} => "Initial placement - Round 1",
+                        GamePhase::InitialPlacement {round: InitialRound::Second, ..} => "Initial placement - Round 2",
                         GamePhase::RegularPlay => "Regular play started!",
                         GamePhase::WaitingForPlayers => "Waiting for players",
                     };

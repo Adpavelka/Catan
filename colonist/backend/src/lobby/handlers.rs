@@ -147,7 +147,7 @@ impl Handler<ClientActorMessage> for Lobby {
                         let phase_check = self
                             .games
                             .get(&gid)
-                            .map(|g| {g.is_initial_phase()})
+                            .map(|g| {g.get_state().is_initial_phase()})
                             .unwrap_or(false);
                         if phase_check {
                             let transitioned = self.advance_initial_placement(&gid);

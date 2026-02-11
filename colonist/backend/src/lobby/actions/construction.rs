@@ -1,4 +1,5 @@
-use crate::{game::entities::{game_instance::InitialAction}, lobby::GameInstance};
+use crate::game::entities::game_instance::GameInstance;
+
 use shared::ServerMessage;
 use uuid::Uuid;
 
@@ -9,27 +10,20 @@ impl GameInstance
             return Err("Wait for your turn!".to_string());
         }
 
-        if self.is_initial_phase() && self.initial_action != Some(InitialAction::Settlement) {
-            return Err("You must build a road next.".into());
-        }
+        let give_resources = self.validate_and_advance_after_settlement(x, y)?;
 
-        let is_initial = self.is_initial_phase();
+        let is_initial = self.get_state().is_initial_phase();
 
         self.turn_manager
             .build_settlement((x, y), is_initial)
             .map(|_| {
-                if self.is_second_phase() {
+                if give_resources {
                     self.turn_manager.bank.give_initial_settlement_resources(
                         &self.turn_manager.board,
                         pid,
                         (x, y),
                         &mut self.turn_manager.players,
                     );
-                }
-
-                if is_initial {
-                    self.initial_action = Some(InitialAction::Road); // TODO: shit, nemá být tady vůbec
-                    self.last_initial_settlement = Some((x, y));
                 }
 
                 ServerMessage::Built {
@@ -62,29 +56,11 @@ impl GameInstance
             return Err("Wait for your turn!".to_string());
         }
 
-        if self.is_initial_phase() {
-            if self.initial_action != Some(InitialAction::Road) {
-                return Err("You must build a settlement first.".into());
-            }
-            
-            if let Some(hex_coord) = self.last_initial_settlement {
-                if !self.turn_manager.board.is_edge_touching_vertex((x, y), hex_coord) {
-                    return Err("You must build road touching your last settlement built.".into());
-                }
-            }
-        }
-
-        let free = self.is_initial_phase() || self.free_roads_remaining > 0;
+        let free = self.validate_and_advance_after_road((x, y))?;
 
         self.turn_manager
             .build_road((x, y), free)
             .map(|_| {
-                if self.is_initial_phase() {
-                    self.initial_action = Some(InitialAction::Settlement);  // TODO: shit, nemá být tady vůbec
-                } else if self.free_roads_remaining > 0 {
-                    self.free_roads_remaining -= 1;
-                }
-
                 ServerMessage::Built {
                     player_id: pid,
                     structure_type: "ROAD".into(),

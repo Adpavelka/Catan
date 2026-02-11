@@ -1,5 +1,6 @@
 use log::info;
-use crate::{game::entities::game_instance::InitialAction, lobby::Lobby};
+use shared::{GamePhase, InitialRound, PlacementStep};
+use crate::lobby::Lobby;
 
 impl Lobby
 {
@@ -9,32 +10,39 @@ impl Lobby
             None => return false,
         };
 
-        if !game.is_initial_phase() {
+        let (round, step) = match game.get_state() {
+            GamePhase::InitialPlacement { round, step } => (round, step),
+            _ => return false,
+        };
+
+        if !matches!(step, PlacementStep::BuildSettlement) {
             return false;
         }
 
-        if game.is_second_phase() {
-            if game.turn_manager.players.get_current_index() == 0 {
-                info!("Initial placement complete, transitioning to regular play");
 
-                game.advance_phase();
-                game.initial_action = None;
-                game.turn_manager.players.reset_order();
-                return true;
-            } else {
-                game.turn_manager.players.prev_turn();
+        match round {
+            InitialRound::First => {
+                if game.turn_manager.players.get_current_index() + 1 == game.turn_manager.players.len() {
+                    info!("Transitioning to initial placement round 2");
+
+                    game.advance_phase();
+                } else {
+                    game.turn_manager.players.next_turn();
+                }
             }
-        } else {
-            if game.turn_manager.players.get_current_index() + 1 == game.turn_manager.players.len() {
-                info!("Transitioning to initial placement round 2");
 
-                game.advance_phase();
-            } else {
-                game.turn_manager.players.next_turn();
+            InitialRound::Second => {
+                if game.turn_manager.players.get_current_index() == 0 {
+                    info!("Initial placement complete, transitioning to regular play");
+
+                    game.advance_phase();
+                    game.turn_manager.players.reset_order();
+                    return true;
+                } else {
+                    game.turn_manager.players.prev_turn();
+                }
             }
         }
-
-        game.initial_action = Some(InitialAction::Settlement);
 
         info!(
             "Initial placement: Now player {} (slot {})'s turn",

@@ -2,16 +2,9 @@ use crate::game::entities::bonus_points::BonusCard;
 use crate::game::entities::pending_trade::PendingTrade;
 use crate::game::entities::turn_manager::TurnManager;
 use serde::{Deserialize, Serialize};
-use shared::GamePhase;
+use shared::{GamePhase, InitialRound, PlacementStep};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum InitialAction {
-    Settlement,
-    Road,
-}
-
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GameInstance {
@@ -23,10 +16,7 @@ pub struct GameInstance {
     pub max_players: usize,
     pub turn_manager: TurnManager,
 
-    // TODO: better group
     phase: GamePhase,
-    pub initial_action: Option<InitialAction>,
-    pub last_initial_settlement: Option<(i32, i32)>,
     
     // TODO: group, actions todo class
     pub pending_discards: HashSet<Uuid>,  // Players who still need to discard
@@ -56,8 +46,8 @@ impl GameInstance {
             max_players: player_count,
 
             turn_manager: TurnManager::new(player_count, creator_pid),
+
             phase: GamePhase::WaitingForPlayers,
-            last_initial_settlement: None,
 
             pending_discards: HashSet::new(),
             seven_roller: None,
@@ -69,8 +59,6 @@ impl GameInstance {
             free_roads_remaining: 0,
             year_of_plenty_pending: None,
             monopoly_pending: None,
-
-            initial_action: Some(InitialAction::Settlement),
         }
     }
 
@@ -99,27 +87,105 @@ impl GameInstance {
             .collect()
     }
 
-    pub (crate) fn is_initial_phase(&self) -> bool {
-        matches!(self.phase, GamePhase::InitialPlacementRound1 | GamePhase::InitialPlacementRound2)
-    }
-
-    pub (crate) fn is_second_phase(&self) -> bool {
-        GamePhase::InitialPlacementRound2 == self.phase
-    }
-
     pub (crate) fn advance_phase(&mut self) {
-        if self.phase == GamePhase::InitialPlacementRound1 {
-            self.phase = GamePhase::InitialPlacementRound2;
-        } else if self.phase == GamePhase::InitialPlacementRound2 {
-            self.phase = GamePhase::RegularPlay;
-        }
+        self.phase = match self.phase.clone() {
+            GamePhase::InitialPlacement { round, step: _ } => {
+                match round {
+                    InitialRound::First => GamePhase::InitialPlacement {
+                        round: InitialRound::Second,
+                        step: PlacementStep::BuildSettlement,
+                    },
+                    InitialRound::Second => GamePhase::RegularPlay,
+                }
+            }
+            other => other,
+        };
     }
+
 
     pub (crate) fn get_state(&self) -> GamePhase {
         self.phase
     }
 
+
     pub (crate) fn start_game(&mut self) {
-        self.phase = GamePhase::InitialPlacementRound1;
+        self.phase = GamePhase::InitialPlacement {
+            round: InitialRound::First,
+            step: PlacementStep::BuildSettlement,
+        };
     }
+
+
+    pub (crate) fn validate_and_advance_after_road(&mut self, edge: (i32, i32)) -> Result<bool, String> {
+        match self.phase {
+            GamePhase::InitialPlacement { round, step } => {
+                match step {
+                    PlacementStep::BuildRoad { settlement } => {
+                        if !self
+                            .turn_manager
+                            .board
+                            .is_edge_touching_vertex(edge, settlement)
+                        {
+                            return Err(
+                                "You must build road touching your last settlement built."
+                                    .into(),
+                            );
+                        }
+
+                        self.phase = GamePhase::InitialPlacement {
+                            round,
+                            step: PlacementStep::BuildSettlement
+                        };
+
+                        Ok(true)
+                    }
+
+                    PlacementStep::BuildSettlement => {
+                        Err("You must build a settlement first.".into())
+                    }
+                }
+            }
+
+            GamePhase::RegularPlay => {
+                let free = self.free_roads_remaining > 0;
+
+                if free {
+                    self.free_roads_remaining -= 1;
+                }
+
+                Ok(free)
+            }
+
+            GamePhase::WaitingForPlayers => {
+                Err("Game has not started.".into())
+            }
+        }
+    }
+
+
+    pub (crate) fn validate_and_advance_after_settlement(&mut self, x: i32, y: i32) -> Result<bool, String> {
+        match self.phase {
+            GamePhase::InitialPlacement { round, step } => {
+                if step != PlacementStep::BuildSettlement {
+                    return Err("You must build a road next.".into());
+                }
+
+                self.phase = GamePhase::InitialPlacement {
+                    round,
+                    step: PlacementStep::BuildRoad {
+                        settlement: (x, y),
+                    },
+                };
+
+                Ok(true)
+            }
+
+            GamePhase::RegularPlay => Ok(false),
+
+            GamePhase::WaitingForPlayers => {
+                Err("Game has not started.".into())
+            }
+        }
+    }
+
 }

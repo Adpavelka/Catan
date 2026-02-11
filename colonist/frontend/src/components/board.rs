@@ -588,23 +588,24 @@ pub fn Board() -> impl IntoView {
                 // Show initial placement instructions
                 {move || {
                     let phase = move || state.game_phase.get();
-                    match phase() {
-                        shared::GamePhase::InitialPlacementRound1 | shared::GamePhase::InitialPlacementRound2 => {
-                            if is_my_turn() {
-                                view! {
-                                    <div class="text-orange-400 font-bold text-sm bg-orange-900/30 px-4 py-2 rounded-lg border border-orange-700/50">
-                                        "Place 1 settlement, then 1 road"
-                                    </div>
-                                }.into_view()
-                            } else {
-                                view! {
-                                    <div class="text-slate-400 text-sm px-4 py-2">
-                                        "Waiting for other players..."
-                                    </div>
-                                }.into_view()
-                            }
+
+
+                    if phase().is_initial_phase() {
+                        if is_my_turn() {
+                            view! {
+                                <div class="text-orange-400 font-bold text-sm bg-orange-900/30 px-4 py-2 rounded-lg border border-orange-700/50">
+                                    "Place 1 settlement, then 1 road"
+                                </div>
+                            }.into_view()
+                        } else {
+                            view! {
+                                <div class="text-slate-400 text-sm px-4 py-2">
+                                    "Waiting for other players..."
+                                </div>
+                            }.into_view()
                         }
-                        _ => view! { <div></div> }.into_view()
+                    } else {
+                        view! { <div></div> }.into_view()
                     }
                 }}
 
@@ -637,7 +638,7 @@ pub fn Board() -> impl IntoView {
                 // Build buttons during initial placement (show if it's your turn)
                 <Show when=move || {
                     let phase = move || state.game_phase.get();
-                    is_my_turn() && (phase() == shared::GamePhase::InitialPlacementRound1 || phase() == shared::GamePhase::InitialPlacementRound2)
+                    is_my_turn() && phase().is_initial_phase()
                 }>
                     <div class="flex gap-2">
                         <button

@@ -30,7 +30,7 @@ pub fn handle_bank_trade(
             return Err("Wait for your turn!".to_string());
         }
 
-        if game.is_initial_phase() {
+        if game.get_state().is_initial_phase() {
             return Err("Cannot trade during initial placement!".to_string());
         }
     }
@@ -79,7 +79,7 @@ pub fn handle_trade_offer(
             return Err("Wait for your turn!".to_string());
         }
 
-        if game.is_initial_phase() {
+        if game.get_state().is_initial_phase() {
             return Err("Cannot trade during initial placement!".to_string());
         }
     }

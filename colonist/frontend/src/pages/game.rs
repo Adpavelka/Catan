@@ -79,8 +79,7 @@ pub fn GamePage() -> impl IntoView {
                             logging::log!("Current game phase: {:?}", state.game_phase.get());
                             let phase = move || state.game_phase.get();
                             let ws_ready = state.ws_sender.get().is_some();
-                            !ws_ready || !(phase() == shared::GamePhase::InitialPlacementRound1 ||
-                                           phase() == shared::GamePhase::InitialPlacementRound2)
+                            !ws_ready || !phase().is_initial_phase()
                         }
                         on:click=move |_| {
                             logging::log!("Skip setup button clicked");
