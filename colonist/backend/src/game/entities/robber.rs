@@ -22,7 +22,7 @@ impl Robber {
 
     pub fn move_to(&mut self, coords: Coordinates) -> Result<(), GameError> {
         if coords == self.pos {
-            return Err(GameError::InvalidPosition);
+            return Err(GameError::InvalidRobberPosition);
         }
 
         self.pos = coords;

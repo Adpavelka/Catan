@@ -2,8 +2,8 @@ use crate::game::entities::bonus_points::BonusCard;
 use crate::game::entities::pending_trade::PendingTrade;
 use crate::game::entities::turn_manager::TurnManager;
 use serde::{Deserialize, Serialize};
-use shared::{GamePhase, InitialRound, PlacementStep};
-use std::collections::{HashMap, HashSet};
+use shared::{GamePhase, InitialRound, PendingAction, PlacementStep};
+use std::{collections::HashMap, mem};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -17,14 +17,8 @@ pub struct GameInstance {
     pub turn_manager: TurnManager,
 
     phase: GamePhase,
-    
-    // TODO: group, actions todo class
-    pub pending_discards: HashSet<Uuid>,  // Players who still need to discard
-    pub seven_roller: Option<Uuid>,  // Player who rolled 7 and needs to move robber
-    pub knight_mover: Option<Uuid>,  // Player who played a knight and needs to move robber
-    pub free_roads_remaining: u8,  // Free roads from Road Builder card, shiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiit
-    pub year_of_plenty_pending: Option<Uuid>,  // Player who played Year of Plenty and needs to choose resources
-    pub monopoly_pending: Option<Uuid>,
+
+    pub pending_actions: HashMap<Uuid, Vec<PendingAction>>,
 
     // TODO class, trader?
     #[serde(skip)]
@@ -48,17 +42,11 @@ impl GameInstance {
             turn_manager: TurnManager::new(player_count, creator_pid),
 
             phase: GamePhase::WaitingForPlayers,
+            pending_actions: HashMap::new(),
 
-            pending_discards: HashSet::new(),
-            seven_roller: None,
-            knight_mover: None,
 
             pending_trades: HashMap::new(),
             next_trade_id: 1,
-
-            free_roads_remaining: 0,
-            year_of_plenty_pending: None,
-            monopoly_pending: None,
         }
     }
 
@@ -147,11 +135,15 @@ impl GameInstance {
             }
 
             GamePhase::RegularPlay => {
-                let free = self.free_roads_remaining > 0;
+                let pid = self.turn_manager.players.get_current_player().id;
 
-                if free {
-                    self.free_roads_remaining -= 1;
-                }
+                let free = self
+                    .pending_actions
+                    .get(&pid)
+                    .map(|actions| {
+                        actions.iter().any(|a| matches!(a, PendingAction::RoadBuilding { .. }))
+                    })
+                    .unwrap_or(false);
 
                 Ok(free)
             }
@@ -177,7 +169,7 @@ impl GameInstance {
                     },
                 };
 
-                Ok(true)
+                Ok(round == InitialRound::Second)
             }
 
             GamePhase::RegularPlay => Ok(false),
@@ -188,4 +180,45 @@ impl GameInstance {
         }
     }
 
+    pub (crate) fn decrement_road_building(&mut self, pid: Uuid) {
+        if let Some(actions) = self.pending_actions.get_mut(&pid) {
+            if let Some(action) = actions.iter_mut()
+                .find(|a| matches!(a, PendingAction::RoadBuilding { .. })) 
+            {
+                if let PendingAction::RoadBuilding { remaining } = action {
+                    *remaining -= 1;
+
+                    if *remaining == 0 {
+                        self.remove_pending_action(
+                            pid,
+                            PendingAction::RoadBuilding { remaining: 0 }
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+
+    pub fn add_pending_action(&mut self, pid: Uuid, action: PendingAction) {
+        self.pending_actions.entry(pid).or_default().push(action);
+    }
+
+    pub fn remove_pending_action(&mut self, pid: Uuid, action: PendingAction) {
+        if let Some(actions) = self.pending_actions.get_mut(&pid) {
+            let target = mem::discriminant(&action);
+
+            actions.retain(|a| mem::discriminant(a) != target);
+            
+            if actions.is_empty() {
+                self.pending_actions.remove(&pid);
+            }
+        }
+    }
+
+    pub fn has_pending_action(&self, pid: Uuid, action: PendingAction) -> bool {
+        self.pending_actions
+            .get(&pid)
+            .map_or(false, |actions| actions.contains(&action))
+    }
 }

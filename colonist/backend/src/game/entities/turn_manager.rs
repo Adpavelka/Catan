@@ -301,7 +301,7 @@ impl TurnManager {
             .players
             .get_mut(pid)
             .ok_or(GameError::PlayerNotFound)?;
-        player.dev_cards.push(card);
+
         player.dev_card_played_this_turn = true;
         self.has_player_won(pid);
 
@@ -356,7 +356,7 @@ impl TurnManager {
     }
 
     pub fn move_robber(&mut self, coords: Coordinates) -> Result<(), GameError> {
-        if !self.board.vertices.contains_key(&coords) {
+        if !self.board.hexes.contains_key(&coords) {
             return Err(GameError::InvalidPosition);
         }
 

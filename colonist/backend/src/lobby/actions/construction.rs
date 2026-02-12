@@ -35,6 +35,7 @@ impl GameInstance
             .map_err(|e| format!("{:?}", e))
     }
 
+
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
@@ -51,6 +52,7 @@ impl GameInstance
             .map_err(|e| format!("{:?}", e))
     }
 
+
     pub fn handle_build_road(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
@@ -60,14 +62,16 @@ impl GameInstance
 
         self.turn_manager
             .build_road((x, y), free)
-            .map(|_| {
-                ServerMessage::Built {
-                    player_id: pid,
-                    structure_type: "ROAD".into(),
-                    coords: vec![x, y],
-                }
-            })
-            .map_err(|e| format!("{:?}", e))
-    }
+            .map_err(|e| format!("{:?}", e))?;
 
+        if free {
+            self.decrement_road_building(pid);
+        }
+
+        Ok(ServerMessage::Built {
+            player_id: pid,
+            structure_type: "ROAD".into(),
+            coords: vec![x, y],
+        })
+    }
 }

@@ -1,7 +1,7 @@
 use actix::{AsyncContext, Context, WrapFuture};
 use log::{error, info, warn};
+use shared::PendingAction;
 use uuid::Uuid;
-use shared::ServerMessage::MustMoveRobber;
 use crate::lobby::Lobby;
 use crate::network::message::ServerMessage;
 use crate::game::entities::bonus_points::BonusCard;
@@ -99,8 +99,19 @@ impl Lobby
             self.send_secret_victory_points_to_player(pid, &game_id.to_string());
         }
 
-        if game.seven_roller == Some(pid) {
-            self.send_server_msg(pid, MustMoveRobber { player_id: pid });
+        let must_move_robber = game
+            .pending_actions
+            .get(&pid)
+            .map_or(false, |actions| {
+                actions.contains(&PendingAction::MoveRobber)
+                    || actions.contains(&PendingAction::PlayKnight)
+            });
+
+        if must_move_robber {
+            self.send_server_msg(
+                pid,
+                shared::ServerMessage::MustMoveRobber { player_id: pid },
+            );
         }
     }
     
@@ -140,7 +151,7 @@ impl Lobby
             self.broadcast_to_game(gid, msg);
         }
     }
-    pub fn send_secret_victory_points_to_player(&self, pid: Uuid, gid: &String) {
+    pub fn send_secret_victory_points_to_player(&self, pid: Uuid, gid: &str) {
         if let Some(game) = self.games.get(gid) {
             let points = game.turn_manager.player_secret_victory_points(pid);
             let msg = shared::ServerMessage::PlayerSecretVictoryPointsUpdated {

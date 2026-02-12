@@ -42,7 +42,7 @@ impl Bank {
         for _ in 0..5 {
             dev_cards.push(DevelopmentCard::VictoryPoint(DevCardState::new()));
         }
-        for _ in 0..2 {
+        for _ in 0..2000 {
             dev_cards.push(DevelopmentCard::RoadBuilder(DevCardState::new()));
         }
         for _ in 0..2 {

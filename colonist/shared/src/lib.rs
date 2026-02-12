@@ -231,7 +231,11 @@ pub enum ServerMessage {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DevCardType {
-    Knight, VictoryPoint, RoadBuilding, Monopoly, YearOfPlenty,
+    Knight,
+    VictoryPoint,
+    RoadBuilding,
+    Monopoly,
+    YearOfPlenty,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -292,6 +296,20 @@ pub enum PlacementStep {
         settlement: (i32, i32),
     },
 }
+
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingAction {
+    Discard,                    // player must discard cards
+    MoveRobber,                  // player must move robber
+    PlayKnight,                  // player played knight, needs to move robber
+    RoadBuilding { remaining: u8 }, // player has free roads
+    YearOfPlenty,                // player must pick 2 resources
+    Monopoly,                    // player must pick a resource type
+}
+
+
 
 /// Port types for maritime trading
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
