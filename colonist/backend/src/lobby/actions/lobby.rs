@@ -62,7 +62,7 @@ impl Lobby {
     }
 
     pub fn handle_join_game(&mut self, pid: Uuid, game_id: String, ctx: &mut Context<Lobby>) {
-        let (is_full, already_in) = {
+        let (is_full, missing) = {
             let Some(game) = self.games.get_mut(&game_id) else {
                 return self.send_error(pid, "Game not found");
             };
@@ -81,7 +81,7 @@ impl Lobby {
             (game.turn_manager.players.len() >= game.max_players, missing)
         };
 
-        if !already_in {
+        if missing {
             self.player_to_game.insert(pid, game_id.clone());
         }
 
