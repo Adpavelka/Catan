@@ -72,7 +72,6 @@ impl Lobby {
 
             let missing = game.turn_manager.players.get(pid).is_none();
             if missing {
-                let slot = game.turn_manager.players.len();
                 game.turn_manager.players.add_player_with_colour(pid);
             }
 
