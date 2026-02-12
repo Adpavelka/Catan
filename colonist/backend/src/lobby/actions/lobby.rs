@@ -27,7 +27,6 @@ impl Lobby {
         {
             if let Some(game) = self.games.get_mut(&game_id) {
                 game.turn_manager.players.remove_player(pid).unwrap();
-                game.player_id_to_slot.remove(&pid);
                 let _ = game.turn_manager.players.remove_player(pid);
 
                 if game.turn_manager.players.len() == 0 {
@@ -74,7 +73,6 @@ impl Lobby {
             let missing = game.turn_manager.players.get(pid).is_none();
             if missing {
                 let slot = game.turn_manager.players.len();
-                game.player_id_to_slot.insert(pid, slot);
                 game.turn_manager.players.add_player_with_colour(pid);
             }
 

@@ -10,8 +10,7 @@ use uuid::Uuid;
 pub struct GameInstance {
     pub id: String,
 
-    // TODO: group
-    pub player_id_to_slot: HashMap<Uuid, usize>,  // Maps connection ID to game slot (0-3)
+    // TODO: min player count, option to start before max lobby
     pub max_players: usize,
     pub turn_manager: TurnManager,
 
@@ -34,7 +33,6 @@ impl GameInstance {
 
         Self {
             id: gid,
-            player_id_to_slot,
             max_players: player_count,
 
             turn_manager: TurnManager::new(player_count, creator_pid),
