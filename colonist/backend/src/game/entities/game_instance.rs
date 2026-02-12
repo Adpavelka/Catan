@@ -11,7 +11,6 @@ pub struct GameInstance {
     pub id: String,
 
     // TODO: group
-    pub player_ids: Vec<Uuid>,  // player IDs in join order
     pub player_id_to_slot: HashMap<Uuid, usize>,  // Maps connection ID to game slot (0-3)
     pub max_players: usize,
     pub turn_manager: TurnManager,
@@ -35,7 +34,6 @@ impl GameInstance {
 
         Self {
             id: gid,
-            player_ids: vec![creator_pid],
             player_id_to_slot,
             max_players: player_count,
 
@@ -52,27 +50,31 @@ impl GameInstance {
 
 
     pub fn get_all_players_info(&self) -> Vec<shared::PlayerInfo> {
-        self.player_ids.iter()
-            .filter_map(|&pid| self.turn_manager.players.get(pid).map(|p| (pid, p)))
-            .map(|(pid, p)| {
-                let has_longest_road = self.turn_manager.road_bonus.holder() == Some(pid);
-                let has_largest_army = self.turn_manager.army_bonus.holder() == Some(pid);
+        let mut infos = Vec::new();
 
-                shared::PlayerInfo {
-                    player_id: pid,
-                    name: p.name.clone(),
-                    color: p.colour.to_string(),
-                    victory_points: p.get_victory_points(),
-                    dev_cards: p.dev_cards.iter().map(|c| c.get_type()).collect(),
-                    ports: p.ports.iter().map(|port| port.into()).collect(), // why
-                    resources: (&p.resources).into(),
-                    knights_played: p.knight_played,
-                    roads_count: p.longest_road,
-                    has_longest_road,
-                    has_largest_army,
-                }
-            })
-            .collect()
+        for i in 0..self.turn_manager.players.len() {
+            let player = self.turn_manager.players.get_by_index(i).unwrap();
+            let pid = player.id;
+
+            let has_longest_road = self.turn_manager.road_bonus.holder() == Some(pid);
+            let has_largest_army = self.turn_manager.army_bonus.holder() == Some(pid);
+
+            infos.push(shared::PlayerInfo {
+                player_id: pid,
+                name: player.name.clone(),
+                color: player.colour.to_string(),
+                victory_points: player.get_victory_points(),
+                dev_cards: player.dev_cards.iter().map(|c| c.get_type()).collect(),
+                ports: player.ports.iter().map(|port| port.into()).collect(),
+                resources: (&player.resources).into(),
+                knights_played: player.knight_played,
+                roads_count: player.longest_road,
+                has_longest_road,
+                has_largest_army,
+            });
+        }
+
+        infos
     }
 
     pub (crate) fn advance_phase(&mut self) {

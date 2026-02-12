@@ -8,7 +8,7 @@ use crate::lobby::{GameInstance, Lobby};
 impl Lobby { 
     pub fn handle_leave_game(&mut self, pid: Uuid, game_id: String, ctx: &mut Context<Lobby>) {
         let can_leave_result = if let Some(game) = self.games.get(&game_id) {
-            if !game.player_ids.contains(&pid) {
+            if game.turn_manager.players.get(pid).is_none() {
                 Err("You are not in this game")
             /* } else if !matches!(game.phase, GamePhase::WaitingForPlayers) {
                 Err("Cannot leave a game in progress")*/
@@ -26,11 +26,11 @@ impl Lobby {
         let mut should_remove_game = false;
         {
             if let Some(game) = self.games.get_mut(&game_id) {
-                game.player_ids.retain(|&pid_in_game| pid_in_game != pid);
+                game.turn_manager.players.remove_player(pid).unwrap();
                 game.player_id_to_slot.remove(&pid);
                 let _ = game.turn_manager.players.remove_player(pid);
 
-                if game.player_ids.is_empty() {
+                if game.turn_manager.players.len() == 0 {
                     should_remove_game = true;
                 }
             }
@@ -67,19 +67,18 @@ impl Lobby {
                 return self.send_error(pid, "Game not found");
             };
 
-            if game.player_ids.len() >= game.max_players && !game.player_ids.contains(&pid) {
+            if game.turn_manager.players.len() >= game.max_players && game.turn_manager.players.get(pid).is_none() {
                 return self.send_error(pid, "Game is full");
             }
 
-            let already_in = game.player_ids.contains(&pid);
-            if !already_in {
-                let slot = game.player_ids.len();
+            let missing = game.turn_manager.players.get(pid).is_none();
+            if missing {
+                let slot = game.turn_manager.players.len();
                 game.player_id_to_slot.insert(pid, slot);
-                game.player_ids.push(pid);
                 game.turn_manager.players.add_player_with_colour(pid);
             }
 
-            (game.player_ids.len() >= game.max_players, already_in)
+            (game.turn_manager.players.len() >= game.max_players, missing)
         };
 
         if !already_in {
@@ -92,7 +91,7 @@ impl Lobby {
                     game.start_game();
                     info!("Game {} starting!", game_id);
 
-                    let first_player = game.player_ids[0];
+                    let first_player = game.turn_manager.players.get_by_index(0).unwrap().id;
                     self.send_server_msg(pid, ServerMessage::NextTurn { player_id: first_player });
                 }
             }

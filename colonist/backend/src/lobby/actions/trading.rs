@@ -157,7 +157,7 @@ pub fn handle_trade_response(
         let eligible_count = if trade.target_player_id.is_some() {
             1
         } else {
-            game.player_ids.len() - 1
+            game.turn_manager.players.len() - 1
         };
 
         let declined_count = game

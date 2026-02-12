@@ -31,9 +31,11 @@ impl Lobby {
 
         for inst in recovered_games {
             let gid = inst.id.clone();
-            for pid in &inst.player_ids {
-                player_to_game.insert(*pid, gid.clone());
+
+            for idx in 0..inst.turn_manager.players.len() {
+                player_to_game.insert(inst.turn_manager.players.get_by_index(idx).unwrap().id, gid.clone());
             }
+
             games.insert(gid, inst);
         }
 

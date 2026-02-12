@@ -28,8 +28,8 @@ impl Lobby
         if let Some(game) = self.games.get(game_id) {
             if let Ok(json_string) = serde_json::to_string(&msg) {
                 let actix_msg = ServerMessage(json_string);
-                for pid in &game.player_ids {
-                    if let Some(addr) = self.sessions.get(pid) {
+                for idx in 0..game.turn_manager.players.len() {
+                    if let Some(addr) = self.sessions.get(&game.turn_manager.players.get_by_index(idx).unwrap().id) {
                         let _ = addr.do_send(actix_msg.clone());
                     }
                 }
@@ -40,7 +40,7 @@ impl Lobby
     pub fn broadcast_lobby_status(&self) {
         info!("Broadcasting lobby status to all players");
         let games_data: Vec<(String, usize, usize)> = self.games.iter()
-            .map(|(gid, game)| (gid.clone(), game.player_ids.len(), game.max_players))
+            .map(|(gid, game)| (gid.clone(), game.turn_manager.players.len(), game.max_players))
             .collect();
 
         let lobby_update = shared::ServerMessage::LobbyUpdate { games: games_data };
@@ -51,10 +51,11 @@ impl Lobby
     fn send_game_started(&self, pid: Uuid, game_id: &str) {
         let Some(game) = self.games.get(game_id) else { return };
 
-        let players: Vec<shared::PlayerInfo> = game.player_ids.iter()
-            .filter_map(|&id| game.turn_manager.players.get(id))
+        let players: Vec<shared::PlayerInfo> = (0..game.turn_manager.players.len())
+            .filter_map(|i| game.turn_manager.players.get_by_index(i))
             .map(|p| p.into())
             .collect();
+
 
         let board = shared::BoardState {
             hexes: game.turn_manager.board.hexes.iter().map(|(c, h)| shared::HexInfo {
@@ -123,23 +124,23 @@ impl Lobby
     pub(crate) fn broadcast_resource_updates(&mut self, gid: &str) {
     let Some(game) = self.games.get(gid) else { return };
 
-    for &pid in &game.player_ids {
-        if let Some(player) = game.turn_manager.players.get(pid) {
+    for idx in 0..game.turn_manager.players.len() {
+        if let Some(player) = game.turn_manager.players.get_by_index(idx) {
             let res: shared::Resources = (&player.resources).into();
-            info!("Sending resource update to pid {}: {:?}", pid, res);
+            info!("Sending resource update to pid {}: {:?}", player.id, res);
             let msg = shared::ServerMessage::ResourceUpdate {
-                player_id: pid,
+                player_id: player.id,
                 resources: res,
             };
-            self.send_server_msg(pid, msg);
+            self.send_server_msg(player.id, msg);
         }
         }
     }
 
     pub(crate) fn broadcast_players_update(&self, gid: &str) {
         if let Some(game) = self.games.get(gid) {
-            let players: Vec<shared::PlayerInfo> = game.player_ids.iter()
-                .filter_map(|&pid| game.turn_manager.players.get(pid).map(|p| (pid, p)))
+            let players: Vec<shared::PlayerInfo> = (0..game.turn_manager.players.len())
+                .filter_map(|i| game.turn_manager.players.get_by_index(i).map(|p| (p.id, p)))
                 .map(|(pid, p)| {
                     let mut info = shared::PlayerInfo::from(p);
                     info.has_longest_road = game.turn_manager.road_bonus.holder() == Some(pid);
@@ -171,8 +172,12 @@ impl Lobby
         }
     }
     pub fn refresh_game_for_all(&mut self, gid: &str) {
-        let player_ids: Vec<Uuid> = self.games.get(gid)
-            .map(|g| g.player_ids.clone())
+        let player_ids: Vec<Uuid> = self.games
+            .get(gid)
+            .map(|g| (0..g.turn_manager.players.len())
+                .filter_map(|i| g.turn_manager.players.get_by_index(i).map(|p| p.id))
+                .collect()
+            )
             .unwrap_or_default();
 
         for pid in player_ids {

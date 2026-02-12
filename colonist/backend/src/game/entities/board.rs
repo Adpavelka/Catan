@@ -210,21 +210,24 @@ impl Board {
     fn random_layout() -> (Vec<ResourceType>, Vec<u8>) {
         let (mut resources, mut numbers) = Self::test_layout();
 
-        resources.pop();
-        numbers.pop();
+        //#[cfg(not(test))]
+        {
+            use rand::seq::SliceRandom;
+            use rand::thread_rng;
 
-        #[cfg(not(test))]
-        let mut rng = rand::thread_rng();
-        #[cfg(not(test))]
-        resources.shuffle(&mut rng);
-        #[cfg(not(test))]
-        numbers.shuffle(&mut rng);
+            let mut rng = thread_rng();
 
-        resources.push(ResourceType::Desert);
-        numbers.push(0);
+            let mut combined: Vec<(ResourceType, u8)> = resources.into_iter().zip(numbers.into_iter()).collect();
+            combined.shuffle(&mut rng);
+
+            let (res, nums): (Vec<_>, Vec<_>) = combined.into_iter().unzip();
+            resources = res;
+            numbers = nums;
+        }
 
         (resources, numbers)
     }
+
 
     fn add_ports(&mut self) {
         use PortType::*;
