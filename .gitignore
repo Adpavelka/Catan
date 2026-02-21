@@ -106,3 +106,8 @@ Cargo.lock
 *.pdb
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,jetbrains+all
+# The built frontend bundle, including its copy of the artwork in
+# dist/assets. `trunk build` regenerates every byte of it; the originals
+# live in colonist/frontend/assets. A tracked copy is a 10MB diff on
+# every rebuild and nothing reads it - the backend serves no static files.
+colonist/frontend/dist/
