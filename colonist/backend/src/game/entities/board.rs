@@ -564,20 +564,17 @@ mod tests {
         assert_eq!(resources.len(), 19);
         assert_eq!(numbers.len(), 19);
 
-        let desert_count = resources.iter().filter(|&&r| r == ResourceType::Desert).count();
-        assert_eq!(desert_count, 1);
-        assert_eq!(*numbers.last().unwrap(), 0);
-    }
+        let desert_indices: Vec<usize> = resources
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| **r == ResourceType::Desert)
+            .map(|(i, _)| i)
+            .collect();
 
-    #[test]
-    fn random_layout_returns_19_items_and_includes_desert_and_zero_end() {
-        let (resources, numbers) = Board::random_layout();
-        assert_eq!(resources.len(), 19);
-        assert_eq!(numbers.len(), 19);
+        assert_eq!(desert_indices.len(), 1, "There must be exactly one desert");
 
-        let desert_count = resources.iter().filter(|&&r| r == ResourceType::Desert).count();
-        assert_eq!(desert_count, 1);
-        assert_eq!(*numbers.last().unwrap(), 0);
+        let desert_index = desert_indices[0];
+        assert_eq!(numbers[desert_index], 0, "Desert must have number 0");
     }
 
     #[test]

@@ -284,16 +284,23 @@ impl TurnManager {
             }
         }
 
+        let current_player = self.players.get_current_player().clone(); 
+
         let mut card = {
             let player = self
                 .players
                 .get_mut(pid)
                 .ok_or(GameError::PlayerNotFound)?;
+
             let idx = player
                 .dev_cards
                 .iter()
-                .position(|c| c.get_type() == card_type && c.can_play())
+                .position(|c| {
+                    c.get_type() == card_type &&
+                    c.can_play(&current_player)
+                })
                 .ok_or(GameError::InvalidAction)?;
+
             player.dev_cards.remove(idx)
         };
 

@@ -1,3 +1,4 @@
+use crate::game::entities::player::Player;
 use crate::game::entities::{bonus_points::BonusCard, resources::ResourceSet};
 use crate::game::entities::turn_manager::TurnManager;
 use shared::{DevCardTarget, DevCardType, ResourceType};
@@ -56,10 +57,11 @@ impl DevelopmentCard {
         cost
     }
 
-    pub fn can_play(&self) -> bool {
+    pub fn can_play(&self, player: &Player) -> bool {
         match self {
             Self::VictoryPoint(_) => false, // Victory Point cards are never playable - they automatically count as VP
-            Self::Knight(s) | Self::RoadBuilder(s) | Self::YearOfPlenty(s) | Self::Monopoly(s) => s.can_play(),
+            Self::Knight(s) | Self::YearOfPlenty(s) | Self::Monopoly(s) => s.can_play(),
+            Self::RoadBuilder(s) => s.can_play() && player.can_play_road_builder(),
         }
     }
 
@@ -71,7 +73,7 @@ impl DevelopmentCard {
     }
 
     pub fn play(&mut self, game: &mut TurnManager, _target: &Option<DevCardTarget>) {
-        if !self.can_play() {
+        if !self.can_play(&game.players.get_current_player()) {
             return;
         }
 
@@ -117,11 +119,17 @@ impl DevelopmentCard {
 #[cfg(test)]
 mod tests {
     use shared::DevCardType;
+    use uuid::Uuid;
 
     use crate::game::entities::development_card::{
         DevelopmentCard, DevCardState,
     };
+    use crate::game::entities::player::Player;
     use crate::game::entities::resources::ResourceType;
+
+    fn dummy_player() -> Player {
+        Player::new(Uuid::new_v4(), "Test".into(), 'c')
+    }
 
     #[test]
     fn dev_card_trait_cost_is_standard_cost() {
@@ -152,43 +160,58 @@ mod tests {
     }
 
     #[test]
-    fn knight_glyph_and_can_play_follows_state() {
+    fn knight_can_play_follows_state() {
         let mut k = DevelopmentCard::new(DevCardType::Knight);
-        assert!(!k.can_play(), "bought_this_turn should block play");
+        let player = dummy_player();
+
+        assert!(!k.can_play(&player), "bought_this_turn should block play");
 
         k.next_turn();
-        assert!(k.can_play());
+        assert!(k.can_play(&player));
     }
 
+
     #[test]
-    fn victory_point_glyph_and_can_play_follows_state() {
+    fn victory_point_can_play_follows_state() {
         let mut v = DevelopmentCard::new(DevCardType::VictoryPoint);
-        assert!(!v.can_play());
+        let player = dummy_player();
+
+        assert!(!v.can_play(&player));
         v.next_turn();
-        assert!(!v.can_play(), "victory points cannot be played");
+        assert!(!v.can_play(&player), "victory points cannot be played");
     }
 
+
     #[test]
-    fn road_builder_glyph_and_can_play_follows_state() {
+    fn road_builder_can_play_follows_state() {
         let mut r = DevelopmentCard::new(DevCardType::RoadBuilding);
-        assert!(!r.can_play());
+        let player = dummy_player();
+
+        assert!(!r.can_play(&player));
         r.next_turn();
-        assert!(r.can_play());
+        assert!(r.can_play(&player));
     }
 
+
     #[test]
-    fn year_of_plenty_glyph_and_can_play_follows_state() {
+    fn year_of_plenty_can_play_follows_state() {
         let mut y = DevelopmentCard::new(DevCardType::YearOfPlenty);
-        assert!(!y.can_play());
+        let player = dummy_player();
+
+        assert!(!y.can_play(&player));
         y.next_turn();
-        assert!(y.can_play());
+        assert!(y.can_play(&player));
     }
 
+
     #[test]
-    fn monopoly_glyph_and_can_play_follows_state() {
+    fn monopoly_can_play_follows_state() {
         let mut m = DevelopmentCard::new(DevCardType::Monopoly);
-        assert!(!m.can_play());
+        let player = dummy_player();
+
+        assert!(!m.can_play(&player));
         m.next_turn();
-        assert!(m.can_play());
+        assert!(m.can_play(&player));
     }
+
 }

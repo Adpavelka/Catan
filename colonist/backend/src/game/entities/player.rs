@@ -58,6 +58,9 @@ impl Player {
         self.secret_victory_points += 1;
     }
 
+    pub fn can_play_road_builder(&self) -> bool {
+        self.roads_left >= 2
+    }
 
     // useless????
     pub fn get_total_victory_points(&self) -> u8 {
