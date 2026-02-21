@@ -62,7 +62,9 @@ impl GameInstance
             }
         }
 
-        // TODO: also that dice was rolled...
+        if !self.turn_manager.dice.was_dice_rolled() {
+            return Err("Cannot end turn without rolling dices.".into());
+        }
 
         self.turn_manager.end_turn();
 

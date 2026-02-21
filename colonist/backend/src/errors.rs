@@ -12,6 +12,7 @@ pub enum GameError {
     InvalidRobberPosition,
     InvalidAction,
     TradeNotFound,
+    UnauthorizedDiceThrow,
     UnauthorizedTrade,
     TradeWithSelf,
 }
@@ -28,6 +29,7 @@ impl fmt::Display for GameError {
             GameError::InvalidRobberPosition => "You cannot place robber on the same spot",
             GameError::InvalidAction => "Invalid action",
             GameError::TradeNotFound => "Trade not found",
+            GameError::UnauthorizedDiceThrow => "Cannot roll multiple times in one turn",
             GameError::UnauthorizedTrade => "Unauthorized trade",
             GameError::TradeWithSelf => "Cannot trade with self",
             GameError::BankOutOfResources => "Bank not enough resources",

@@ -54,7 +54,7 @@ impl TurnManager {
             return Err(GameError::InvalidAction);
         }
 
-        let roll_value = self.dice.roll();
+        let roll_value = self.dice.roll()?;
         info!(
             "Player {} rolled: {}",
             self.players.get_current_index(), roll_value
@@ -86,6 +86,8 @@ impl TurnManager {
         }
 
         self.players.next_turn();
+
+        self.dice.next_turn();
 
         info!(
             "Player {}'s turn started.",

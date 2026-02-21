@@ -46,10 +46,10 @@ impl Players {
         }
 
         let all_colors = vec![
-            ('b', "Player1"),
-            ('r', "Player2"),
-            ('g', "Player3"),
-            ('w', "Player4")
+            ('b', "Steve"),
+            ('r', "Bob"),
+            ('g', "Kevin"),
+            ('w', "George")
         ];
 
         let taken_colors: Vec<char> = self.players.iter()
