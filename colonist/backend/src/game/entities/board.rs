@@ -207,25 +207,33 @@ impl Board {
         (resources, numbers)
     }
 
+    /// Resources and number tokens are shuffled *independently*. Shuffling them
+    /// as fixed pairs would weld each resource to the same numbers in every
+    /// game, permanently making some resources richer than others.
+    ///
+    /// The desert is the only hex with no token, so it is set aside and dropped
+    /// back into a random slot together with its 0.
     fn random_layout() -> (Vec<ResourceType>, Vec<u8>) {
-        let (mut resources, mut numbers) = Self::test_layout();
+        use rand::seq::SliceRandom;
+        use rand::{thread_rng, Rng};
 
-        //#[cfg(not(test))]
-        {
-            use rand::seq::SliceRandom;
-            use rand::thread_rng;
+        let (resources, numbers) = Self::test_layout();
+        let mut rng = thread_rng();
 
-            let mut rng = thread_rng();
+        let mut land: Vec<ResourceType> = resources
+            .into_iter()
+            .filter(|resource| *resource != ResourceType::Desert)
+            .collect();
+        let mut tokens: Vec<u8> = numbers.into_iter().filter(|number| *number != 0).collect();
 
-            let mut combined: Vec<(ResourceType, u8)> = resources.into_iter().zip(numbers.into_iter()).collect();
-            combined.shuffle(&mut rng);
+        land.shuffle(&mut rng);
+        tokens.shuffle(&mut rng);
 
-            let (res, nums): (Vec<_>, Vec<_>) = combined.into_iter().unzip();
-            resources = res;
-            numbers = nums;
-        }
+        let desert_slot = rng.gen_range(0..=land.len());
+        land.insert(desert_slot, ResourceType::Desert);
+        tokens.insert(desert_slot, 0);
 
-        (resources, numbers)
+        (land, tokens)
     }
 
 
@@ -751,6 +759,84 @@ mod tests {
 
         assert!(board.is_edge_connected_to_player(e_coord, pid5));
         assert!(!board.is_edge_connected_to_player(e_coord, pid6));
+    }
+
+    /// Regression test: resources and numbers used to be shuffled as fixed
+    /// pairs, so e.g. Ore was the poorest resource in literally every game.
+    #[test]
+    fn resource_number_pairing_varies_between_games() {
+        use std::collections::{HashMap, HashSet};
+
+        let fingerprint = || {
+            let board = Board::new_standard_board();
+            let mut by_resource: HashMap<String, Vec<u8>> = HashMap::new();
+            for hex in board.hexes.values() {
+                by_resource
+                    .entry(format!("{:?}", hex.resource))
+                    .or_default()
+                    .push(hex.number);
+            }
+            let mut rows: Vec<String> = by_resource
+                .into_iter()
+                .map(|(resource, mut numbers)| {
+                    numbers.sort();
+                    format!("{resource}{numbers:?}")
+                })
+                .collect();
+            rows.sort();
+            rows.join("|")
+        };
+
+        let seen: HashSet<String> = (0..25).map(|_| fingerprint()).collect();
+
+        assert!(
+            seen.len() > 1,
+            "every board handed the same numbers to the same resources"
+        );
+    }
+
+    #[test]
+    fn every_board_keeps_one_desert_with_no_number() {
+        for _ in 0..25 {
+            let board = Board::new_standard_board();
+
+            let deserts: Vec<_> = board
+                .hexes
+                .values()
+                .filter(|hex| hex.resource == ResourceType::Desert)
+                .collect();
+
+            assert_eq!(deserts.len(), 1, "there must be exactly one desert");
+            assert_eq!(deserts[0].number, 0, "the desert must have no number token");
+
+            assert!(
+                board
+                    .hexes
+                    .values()
+                    .filter(|hex| hex.resource != ResourceType::Desert)
+                    .all(|hex| hex.number != 0 && hex.number != 7),
+                "every land hex needs a real token and 7 is never a token"
+            );
+        }
+    }
+
+    #[test]
+    fn every_board_uses_the_standard_token_multiset() {
+        let mut expected = vec![2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
+        expected.sort();
+
+        for _ in 0..10 {
+            let board = Board::new_standard_board();
+            let mut tokens: Vec<u8> = board
+                .hexes
+                .values()
+                .map(|hex| hex.number)
+                .filter(|number| *number != 0)
+                .collect();
+            tokens.sort();
+
+            assert_eq!(tokens, expected);
+        }
     }
 
     /// Two distinct edges sharing a vertex, plus that vertex.
