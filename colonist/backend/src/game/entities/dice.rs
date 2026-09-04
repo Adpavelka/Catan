@@ -44,4 +44,10 @@ impl Dice {
     pub fn was_dice_rolled(&self) -> bool {
         self.thrown
     }
+
+    /// `None` until somebody actually rolls, so clients do not show a phantom
+    /// roll of (0, 0) at the start of a turn.
+    pub fn last_roll(&self) -> Option<(u8, u8)> {
+        self.thrown.then(|| self.values())
+    }
 }

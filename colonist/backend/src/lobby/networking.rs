@@ -70,11 +70,15 @@ impl Lobby
             ports: game.turn_manager.board.unique_ports().iter().map(|p| p.into()).collect(),
         };
 
+        let (your_resources, your_dev_cards) = Self::private_hand(game, pid);
+
         let msg = shared::ServerMessage::GameStarted {
             your_player_id: pid,
             players,
             board,
             game_phase: game.get_state().clone(),
+            your_resources,
+            your_dev_cards,
         };
 
         self.send_server_msg(pid, msg);
@@ -83,7 +87,8 @@ impl Lobby
     pub(crate) fn send_full_sync(&mut self, pid: Uuid, game_id: &str) {
         let Some(game) = self.games.get(game_id) else { return };
 
-        let last_roll = game.turn_manager.dice.values();
+        let last_dice_roll = game.turn_manager.dice.last_roll();
+        let (your_resources, your_dev_cards) = Self::private_hand(game, pid);
 
         let sync_msg = shared::ServerMessage::FullStateSync {
             player_id: pid,
@@ -92,7 +97,9 @@ impl Lobby
             game_phase: game.get_state().clone(),
             current_turn_player_id: game.turn_manager.players.get_current_player().id,
             robber_pos: game.turn_manager.get_robber_pos(),
-            last_dice_roll: Some(last_roll),
+            last_dice_roll,
+            your_resources,
+            your_dev_cards,
         };
 
         self.send_server_msg(pid, sync_msg);
@@ -184,6 +191,20 @@ impl Lobby
             self.send_game_started(pid, gid);
         }
     }
+    /// A player's own hand. Only ever sent to that player.
+    fn private_hand(game: &GameInstance, pid: Uuid) -> (shared::Resources, Vec<shared::DevCardType>) {
+        game.turn_manager
+            .players
+            .get(pid)
+            .map(|player| {
+                (
+                    (&player.resources).into(),
+                    player.dev_cards.iter().map(|card| card.get_type()).collect(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
     fn get_buildings(&self, game: &GameInstance, get_settlements: bool) -> Vec<shared::BuildingInfo> {
         game.turn_manager.board.vertices.iter()
             .filter_map(|(coord, vertex)| {

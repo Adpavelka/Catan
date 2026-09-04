@@ -83,6 +83,16 @@ pub struct GameState {
     pub winner_player_id: RwSignal<Option<Uuid>>,
 }
 
+pub fn card_label(card: &shared::DevCardType) -> &'static str {
+    match card {
+        shared::DevCardType::Knight => "Knight",
+        shared::DevCardType::VictoryPoint => "Victory Point",
+        shared::DevCardType::RoadBuilding => "Road Building",
+        shared::DevCardType::Monopoly => "Monopoly",
+        shared::DevCardType::YearOfPlenty => "Year of Plenty",
+    }
+}
+
 impl GameState {
     pub fn send(&self, req: ClientRequest) {
         if let Some(tx) = self.ws_sender.get_untracked() {
@@ -121,7 +131,7 @@ impl GameState {
                         }
                     });
                 }
-                ServerMessage::GameStarted { your_player_id, players, board, game_phase } => {
+                ServerMessage::GameStarted { your_player_id, players, board, game_phase, your_resources, your_dev_cards } => {
                     logging::log!("Game started! Your ID: {}, Phase: {:?}", your_player_id, game_phase);
                     self.player_id.set(Some(your_player_id));
                     self.players.set(players.clone());
@@ -145,10 +155,11 @@ impl GameState {
                         logging::log!("  Your ID: {}", your_player_id);
                         logging::log!("========================");
 
-                        // Initial resources are empty, will be updated via ResourceUpdate
-                        self.my_dev_cards.set(my_player.dev_cards.clone());
                         self.my_ports.set(my_player.ports.clone());
                     }
+
+                    self.my_resources.set(your_resources);
+                    self.my_dev_cards.set(your_dev_cards);
 
                     let phase_msg = match game_phase {
                         GamePhase::InitialPlacement {round: InitialRound::First, ..} => "Starting initial placement - Round 1!",
@@ -190,10 +201,14 @@ impl GameState {
                         self.my_resources.set(resources.clone());
                     }
 
-                    // Update resources in players vector
+                    // Only ever our own hand; the roster carries counts only.
                     self.players.update(|players| {
                         if let Some(player) = players.iter_mut().find(|p| p.player_id == player_id) {
-                            player.resources = resources;
+                            player.resource_count = resources.brick
+                                + resources.lumber
+                                + resources.wool
+                                + resources.grain
+                                + resources.ore;
                         }
                     });
                 }
@@ -272,18 +287,12 @@ impl GameState {
 
                     self.messages.update(|m| m.push(format!("{}: {}", player_name, text)));
                 }
-                ServerMessage::DevCardBought { player_id, card_type } => {
-                    logging::log!("Player {} bought dev card: {:?}", player_id, card_type);
+                ServerMessage::DevCardBought { player_id } => {
+                    logging::log!("Player {} bought a dev card", player_id);
 
-                    // If it's me, add to my cards
-                    if Some(player_id) == self.player_id.get_untracked() {
-                        self.my_dev_cards.update(|cards| cards.push(card_type.clone()));
-                    }
-
-                    // Update player's dev_cards in the players list
                     self.players.update(|players| {
                         if let Some(player) = players.iter_mut().find(|p| p.player_id == player_id) {
-                            player.dev_cards.push(card_type.clone());
+                            player.dev_card_count += 1;
                         }
                     });
 
@@ -293,15 +302,13 @@ impl GameState {
                         .map(|p| p.name.clone())
                         .unwrap_or_else(|| format!("Player {}", player_id));
 
-                    let card_name = match card_type {
-                        shared::DevCardType::Knight => "Knight",
-                        shared::DevCardType::VictoryPoint => "Victory Point",
-                        shared::DevCardType::RoadBuilding => "Road Building",
-                        shared::DevCardType::Monopoly => "Monopoly",
-                        shared::DevCardType::YearOfPlenty => "Year of Plenty",
-                    };
-
-                    self.messages.update(|m| m.push(format!("{} bought a {} card", player_name, card_name)));
+                    self.messages.update(|m| m.push(format!("{} bought a development card", player_name)));
+                }
+                ServerMessage::DevCardDrawn { card_type } => {
+                    // Private: only we are told which card we drew.
+                    let card_name = card_label(&card_type);
+                    self.my_dev_cards.update(|cards| cards.push(card_type));
+                    self.messages.update(|m| m.push(format!("You drew a {} card", card_name)));
                 }
                 ServerMessage::DevCardPlayed { player_id, card_type } => {
                     logging::log!("Player {} played dev card: {:?}", player_id, card_type);
@@ -315,12 +322,9 @@ impl GameState {
                         });
                     }
 
-                    // Update player's dev_cards in the players list
                     self.players.update(|players| {
                         if let Some(player) = players.iter_mut().find(|p| p.player_id == player_id) {
-                            if let Some(pos) = player.dev_cards.iter().position(|c| c == &card_type) {
-                                player.dev_cards.remove(pos);
-                            }
+                            player.dev_card_count = player.dev_card_count.saturating_sub(1);
                         }
                     });
 
@@ -460,29 +464,8 @@ impl GameState {
 
                     if Some(player_id) == me {
                         self.year_of_plenty_pending.set(false);
-                
-                        self.players.update(|players| {
-                            if let Some(p) = players.iter_mut().find(|p| p.player_id == player_id) {
-                                match resource1 {
-                                    shared::ResourceType::Brick => p.resources.brick += 1,
-                                    shared::ResourceType::Wood => p.resources.lumber += 1,
-                                    shared::ResourceType::Sheep => p.resources.wool += 1,
-                                    shared::ResourceType::Wheat => p.resources.grain += 1,
-                                    shared::ResourceType::Ore => p.resources.ore += 1,
-                                    shared::ResourceType::Desert => {}
-                                }
-                                match resource2 {
-                                    shared::ResourceType::Brick => p.resources.brick += 1,
-                                    shared::ResourceType::Wood => p.resources.lumber += 1,
-                                    shared::ResourceType::Sheep => p.resources.wool += 1,
-                                    shared::ResourceType::Wheat => p.resources.grain += 1,
-                                    shared::ResourceType::Ore => p.resources.ore += 1,
-                                    shared::ResourceType::Desert => {}
-                                }
-                            }
-                        });
                     }
-                
+
                     let player_name = self.players.get_untracked()
                         .iter()
                         .find(|p| p.player_id == player_id)
@@ -673,6 +656,8 @@ impl GameState {
                     current_turn_player_id,
                     robber_pos,
                     last_dice_roll,
+                    your_resources,
+                    your_dev_cards,
                 } => {
                     logging::log!("Full state sync received for player {}", player_id);
                     self.player_id.set(Some(player_id));
@@ -686,14 +671,11 @@ impl GameState {
                     self.game_phase.set(game_phase.clone());
                     self.current_turn_player.set(current_turn_player_id);
                     if let Some(my_player) = players.iter().find(|p| p.player_id == player_id) {
-                        self.my_dev_cards.set(my_player.dev_cards.clone());
                         self.my_ports.set(my_player.ports.clone());
                     }
                     self.messages.update(|m| m.push("Game state synchronized.".to_string()));
-                    self.my_resources.set(players.iter()
-                        .find(|p| p.player_id == player_id)
-                        .map(|p| p.resources.clone())
-                        .unwrap_or_default());
+                    self.my_resources.set(your_resources);
+                    self.my_dev_cards.set(your_dev_cards);
                     self.last_dice_roll.set(last_dice_roll);
                 }
                 ServerMessage::PlayerWon {

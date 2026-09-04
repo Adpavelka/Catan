@@ -215,8 +215,23 @@ impl Lobby {
         }
 
 
-        if let ServerMessage::DevCardBought {card_type: shared::DevCardType::VictoryPoint, ..} = msg {
-            self.send_secret_victory_points_to_player(pid, gid);
+        // The card a player drew is theirs alone to see.
+        if let ServerMessage::DevCardBought { player_id } = msg {
+            let drawn = self
+                .games
+                .get(gid)
+                .and_then(|game| game.turn_manager.players.get(*player_id))
+                .and_then(|player| player.dev_cards.last())
+                .map(|card| card.get_type());
+
+            if let Some(card_type) = drawn {
+                let is_victory_point = card_type == shared::DevCardType::VictoryPoint;
+                self.send_server_msg(*player_id, ServerMessage::DevCardDrawn { card_type });
+
+                if is_victory_point {
+                    self.send_secret_victory_points_to_player(*player_id, gid);
+                }
+            }
         }
     }
 

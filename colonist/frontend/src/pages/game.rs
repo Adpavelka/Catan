@@ -130,10 +130,7 @@ pub fn GamePage() -> impl IntoView {
                                             move |players| {
                                                 players.iter()
                                                     .find(|p| p.player_id == player_id)
-                                                    .map(|p| {
-                                                        let r = &p.resources;
-                                                        (r.brick + r.lumber + r.wool + r.grain + r.ore) as i32
-                                                    })
+                                                    .map(|p| p.resource_count as i32)
                                                     .unwrap_or(0)
                                             }
                                         );
@@ -143,7 +140,7 @@ pub fn GamePage() -> impl IntoView {
                                             move |players| {
                                                 players.iter()
                                                     .find(|p| p.player_id == player_id)
-                                                    .map(|p| p.dev_cards.len() as i32)
+                                                    .map(|p| p.dev_card_count as i32)
                                                     .unwrap_or(0)
                                             }
                                         );

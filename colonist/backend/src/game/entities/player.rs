@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use shared::{PlayerInfo, Resources};
+use shared::PlayerInfo;
 use crate::errors::GameError;
 use crate::game::entities::board::PortType;
 use crate::game::entities::development_card::DevelopmentCard;
@@ -145,9 +145,9 @@ impl From<&Player> for PlayerInfo {
             name: p.name.clone(),
             color: p.colour.to_string(),
             victory_points: p.get_victory_points(),
-            dev_cards: p.dev_cards.iter().map(|c| c.get_type()).collect(),
             ports: p.ports.iter().map(|port| port.into()).collect(),
-            resources: Resources::from(&p.resources),
+            resource_count: p.resources.get_cards_total() as u8,
+            dev_card_count: p.dev_cards.len(),
             knights_played: p.knight_played,
             roads_count: p.longest_road,
             has_longest_road: false,  // Cannot determine without TurnManager context

@@ -85,6 +85,9 @@ pub enum ServerMessage {
         players: Vec<PlayerInfo>,
         board: BoardState,
         game_phase: GamePhase,
+        /// Your own hand. Never carries another player's cards.
+        your_resources: Resources,
+        your_dev_cards: Vec<DevCardType>,
     },
     /// Update all players' info (victory points, dev cards, etc)
     PlayersUpdate {
@@ -121,8 +124,13 @@ pub enum ServerMessage {
         player_id: Uuid,
         text: String,
     },
+    /// Public: somebody bought a development card. Which card it was is sent
+    /// only to the buyer, as `DevCardDrawn`.
     DevCardBought {
         player_id: Uuid,
+    },
+    /// Private to the buyer: the card they just drew.
+    DevCardDrawn {
         card_type: DevCardType,
     },
     DevCardPlayed {
@@ -221,6 +229,9 @@ pub enum ServerMessage {
         current_turn_player_id: Uuid,
         robber_pos: (i32, i32),
         last_dice_roll: Option<(u8, u8)>,
+        /// Your own hand. Never carries another player's cards.
+        your_resources: Resources,
+        your_dev_cards: Vec<DevCardType>,
     },
     PlayerWon { player_id: Uuid, secret_victory_points: u8 },
     PlayerSecretVictoryPointsUpdated{secret_victory_points: i32},
@@ -341,16 +352,24 @@ pub struct BoardInfo{
     pub ports: Vec<PortInfo>
 }
 
+/// What every player is allowed to know about another player.
+///
+/// Hands are hidden information in Catan, so this deliberately carries only
+/// *counts* of resource and development cards. The cards themselves are sent
+/// to their owner alone, via `ResourceUpdate` / `DevCardDrawn` / the
+/// `your_resources` and `your_dev_cards` fields of the state messages.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct PlayerInfo {
     pub player_id: Uuid,
     pub name: String,
     pub color: String,
     pub victory_points: u8,
-    pub dev_cards: Vec<DevCardType>,
     /// Ports this player has access to (from settlements/cities on port vertices)
     pub ports: Vec<PortType>,
-    pub resources: Resources,
+    /// How many resource cards they hold - never which ones.
+    pub resource_count: u8,
+    /// How many development cards they hold - never which ones.
+    pub dev_card_count: usize,
     pub knights_played: usize,
     pub roads_count: usize,
     pub has_longest_road: bool,

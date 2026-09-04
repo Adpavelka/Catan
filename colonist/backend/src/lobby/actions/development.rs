@@ -44,13 +44,9 @@ pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerM
         return Err("Wait for your turn!".to_string());
     }
 
+    // The card itself is private; only the buyer is told which one it was.
     game.turn_manager.buy_dev_card()
-        .map(|card_type| {
-            ServerMessage::DevCardBought {
-                player_id: pid,
-                card_type,
-            }
-        })
+        .map(|_| ServerMessage::DevCardBought { player_id: pid })
         .map_err(|e| e.to_string())
 }
 
