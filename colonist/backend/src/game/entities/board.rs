@@ -352,26 +352,24 @@ impl Board {
         let vertices = [edge.adjacent_vertices.0, edge.adjacent_vertices.1];
 
         vertices.iter().any(|&vcoord| {
-            if let Some(v) = self.vertices.get(&vcoord) {
-                if let Some(id) = v.owner {
-                    if id == player_id { 
-                        return true;
-                    }
-                }
+            let Some(v) = self.vertices.get(&vcoord) else {
+                return false;
+            };
 
-                if v.adjacent_edges.iter().any(|&ek| {
-                    if let Some(e) = self.edges.get(&ek) {
-                        if let Some(id) = e.owner {
-                            return id == player_id;
-                        }
-                    }
-                    false
-                }) {
-                    return true;
-                }
+            // Your own building at the junction always connects.
+            if v.owner == Some(player_id) {
+                return true;
             }
 
-            false
+            // An opponent's settlement or city cuts the network at this
+            // junction, so roads may not be continued through it.
+            if v.building.is_some() {
+                return false;
+            }
+
+            v.adjacent_edges.iter().any(|ek| {
+                self.edges.get(ek).and_then(|e| e.owner) == Some(player_id)
+            })
         })
     }
 
@@ -753,6 +751,60 @@ mod tests {
 
         assert!(board.is_edge_connected_to_player(e_coord, pid5));
         assert!(!board.is_edge_connected_to_player(e_coord, pid6));
+    }
+
+    /// Two distinct edges sharing a vertex, plus that vertex.
+    fn two_edges_sharing_a_vertex(board: &Board) -> (Coordinates, Coordinates, Coordinates) {
+        board
+            .edges
+            .iter()
+            .find_map(|(&e1, edge)| {
+                let v = edge.adjacent_vertices.0;
+                board.edges.iter().find_map(|(&e2, other)| {
+                    let touches =
+                        other.adjacent_vertices.0 == v || other.adjacent_vertices.1 == v;
+                    if e2 != e1 && touches { Some((e1, v, e2)) } else { None }
+                })
+            })
+            .expect("expected two edges sharing a vertex")
+    }
+
+    /// Regression test: a road used to be extendable straight through an
+    /// opponent's settlement, which by the rules severs the network.
+    #[test]
+    fn road_cannot_be_extended_through_an_opponent_building() {
+        let mut board = Board::new_standard_board();
+        let me = Uuid::from_u128(1);
+        let opponent = Uuid::from_u128(2);
+
+        let (e1, shared_vertex, e2) = two_edges_sharing_a_vertex(&board);
+
+        board.build_edge(me, e1, EdgeBuilding::Road);
+        assert!(
+            board.is_edge_connected_to_player(e2, me),
+            "an open junction should connect my two edges"
+        );
+
+        board.build_vertex(opponent, shared_vertex, VertexBuilding::Settlement);
+
+        assert!(
+            !board.is_edge_connected_to_player(e2, me),
+            "an opponent's building must cut the road network at that junction"
+        );
+    }
+
+    /// My own building must not block me.
+    #[test]
+    fn road_can_be_extended_through_my_own_building() {
+        let mut board = Board::new_standard_board();
+        let me = Uuid::from_u128(1);
+
+        let (e1, shared_vertex, e2) = two_edges_sharing_a_vertex(&board);
+
+        board.build_edge(me, e1, EdgeBuilding::Road);
+        board.build_vertex(me, shared_vertex, VertexBuilding::Settlement);
+
+        assert!(board.is_edge_connected_to_player(e2, me));
     }
 
     #[test]
