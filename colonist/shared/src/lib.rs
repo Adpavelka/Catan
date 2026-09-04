@@ -18,6 +18,8 @@ pub enum ClientRequest {
     {
         game_id: String,
     },
+    /// Keep-alive. Carries no game meaning.
+    Ping,
     RollDice,
     EndTurn,
     BuildSettlement { x: i32, y: i32 },
@@ -119,8 +121,8 @@ pub enum ServerMessage {
     Built {
         player_id: Uuid,
         #[serde(rename = "type")]
-        structure_type: String,
-        coords: Vec<i32>,
+        structure_type: StructureType,
+        coords: (i32, i32),
     },
     NextTurn {
         player_id: Uuid,
@@ -245,6 +247,26 @@ pub enum ServerMessage {
     PlayerSecretVictoryPointsUpdated{secret_victory_points: i32},
 
     Left { player_id: Uuid, game_id: String },
+}
+
+/// What was just built. An enum rather than a string: the initial-placement
+/// state machine branches on this, and a typo there would silently break setup.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum StructureType {
+    Settlement,
+    City,
+    Road,
+}
+
+impl StructureType {
+    pub fn label(&self) -> &'static str {
+        match self {
+            StructureType::Settlement => "settlement",
+            StructureType::City => "city",
+            StructureType::Road => "road",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

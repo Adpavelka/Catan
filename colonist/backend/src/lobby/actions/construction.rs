@@ -1,6 +1,6 @@
 use crate::game::entities::game_instance::GameInstance;
 
-use shared::{GamePhase, ServerMessage};
+use shared::{GamePhase, ServerMessage, StructureType};
 use uuid::Uuid;
 
 impl GameInstance
@@ -34,8 +34,8 @@ impl GameInstance
 
         Ok(ServerMessage::Built {
             player_id: pid,
-            structure_type: "SETTLEMENT".into(),
-            coords: vec![x, y],
+            structure_type: StructureType::Settlement,
+            coords: (x, y),
         })
     }
 
@@ -53,8 +53,8 @@ impl GameInstance
             .map(|_| {
                 ServerMessage::Built {
                     player_id: pid,
-                    structure_type: "CITY".into(),
-                    coords: vec![x, y],
+                    structure_type: StructureType::City,
+                    coords: (x, y),
                 }
             })
             .map_err(|e| e.to_string())
@@ -80,8 +80,8 @@ impl GameInstance
 
         Ok(ServerMessage::Built {
             player_id: pid,
-            structure_type: "ROAD".into(),
-            coords: vec![x, y],
+            structure_type: StructureType::Road,
+            coords: (x, y),
         })
     }
 }

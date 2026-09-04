@@ -3,7 +3,7 @@ use crate::network::message::{Authenticate, Authenticated, ClientActorMessage, C
 use actions::handle_game_request;
 use actix::prelude::*;
 use log::{error, info};
-use shared::{ClientRequest, GamePhase, PendingAction, ServerMessage};
+use shared::{ClientRequest, GamePhase, PendingAction, ServerMessage, StructureType};
 use uuid::Uuid;
 
 impl Handler<Authenticate> for Lobby {
@@ -175,8 +175,8 @@ impl Lobby {
     }
 
     fn handle_initial_phase_transition(&mut self, gid: &str, msg: &ServerMessage) {
-        if let ServerMessage::Built { structure_type, .. } = msg {
-            if structure_type == "ROAD" {
+        if let ServerMessage::Built { structure_type: StructureType::Road, .. } = msg {
+            {
                 let phase_check = self
                     .games
                     .get(gid)

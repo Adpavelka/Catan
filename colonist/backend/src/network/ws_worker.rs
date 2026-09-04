@@ -81,11 +81,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsWorker {
             }
             Ok(ws::Message::Text(text)) => {
                 self.hb = Instant::now();
-                if text.contains("\"Ping\"") || text == "ping" {
-                    return;
-                }
                 let m_req: Result<ClientRequest, _> = serde_json::from_str(&text);
                 match m_req {
+                    Ok(ClientRequest::Ping) => {}
                     Ok(req) => {
                         self.lobby_addr.do_send(ClientActorMessage {
                             player_id: self.id,

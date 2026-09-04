@@ -222,18 +222,18 @@ impl GameState {
                     });
                 }
                 ServerMessage::Built { player_id, structure_type, coords } => {
-                    logging::log!("Player {} built {} at {:?}", player_id, structure_type, coords);
+                    logging::log!("Player {} built {:?} at {:?}", player_id, structure_type, coords);
 
                     let building = BuildingInfo {
                         player_id,
-                        x: coords[0],
-                        y: coords[1],
+                        x: coords.0,
+                        y: coords.1,
                     };
 
-                    match structure_type.as_str() {
-                        "SETTLEMENT" => self.settlements.update(|s| s.push(building)),
-                        "CITY" => self.cities.update(|c| c.push(building)),
-                        "ROAD" => {
+                    match structure_type {
+                        shared::StructureType::Settlement => self.settlements.update(|s| s.push(building)),
+                        shared::StructureType::City => self.cities.update(|c| c.push(building)),
+                        shared::StructureType::Road => {
                             self.roads.update(|r| r.push(building));
                             // If it's me and I was using free roads, decrement the counter
                             if Some(player_id) == self.player_id.get_untracked() {
@@ -248,7 +248,6 @@ impl GameState {
                                 }
                             }
                         }
-                        _ => {}
                     }
 
                     let player_name = self.players.get_untracked()
@@ -257,7 +256,7 @@ impl GameState {
                         .map(|p| p.name.clone())
                         .unwrap_or_else(|| format!("Player {}", player_id));
 
-                    self.messages.update(|m| m.push(format!("{} built a {}", player_name, structure_type.to_lowercase())));
+                    self.messages.update(|m| m.push(format!("{} built a {}", player_name, structure_type.label())));
                 }
                 ServerMessage::NextTurn { player_id } => {
                     logging::log!("Next turn: Player {}", player_id);
