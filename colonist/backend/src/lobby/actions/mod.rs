@@ -23,6 +23,8 @@ pub fn handle_lobby_action(
         }
 
         ClientRequest::GetLobbyList => lobby.broadcast_lobby_status(),
+
+        ClientRequest::StartGame { game_id } => lobby.handle_start_game(pid, game_id, ctx),
         _ => {}
     }
 }

@@ -49,6 +49,10 @@ pub enum ClientRequest {
         message: String,
     },
     GetLobbyList,
+    /// Start a game that has reached the minimum player count but is not full.
+    StartGame {
+        game_id: String,
+    },
     MoveRobber {
         q: i32,
         r: i32,

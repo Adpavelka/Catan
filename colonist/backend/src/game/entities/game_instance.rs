@@ -10,7 +10,6 @@ use uuid::Uuid;
 pub struct GameInstance {
     pub id: String,
 
-    // TODO: min player count, option to start before max lobby
     pub max_players: usize,
     pub turn_manager: TurnManager,
 
@@ -18,16 +17,26 @@ pub struct GameInstance {
 
     pub pending_actions: HashMap<Uuid, Vec<PendingAction>>,
 
-    // TODO class, trader?
-    #[serde(skip)]
+    #[serde(default)]
     pub pending_trades: HashMap<u64, PendingTrade>,  // Active trade offers
-    #[serde(skip)]
+    #[serde(default = "first_trade_id")]
     pub next_trade_id: u64,  // Counter for trade IDs
 
     /// Wall-clock seconds since the epoch when this game last saw activity.
     /// Used to evict abandoned games; `0` means "never touched".
     #[serde(default)]
     pub last_activity_secs: u64,
+}
+
+/// Catan needs at least three players; below that the trading and robber
+/// rules stop making sense.
+pub const MIN_PLAYERS: usize = 3;
+
+/// Trade offers older than this are treated as withdrawn.
+pub const TRADE_LIFETIME_SECS: u64 = 120;
+
+fn first_trade_id() -> u64 {
+    1
 }
 
 /// Seconds since the Unix epoch. Saturates rather than panicking if the clock
@@ -260,6 +269,20 @@ impl GameInstance {
         }
     }
 
+    /// Forgets offers nobody answered in time, so they cannot be accepted
+    /// hours later against a hand that has completely changed.
+    pub fn expire_stale_trades(&mut self) {
+        let now = now_secs();
+        self.pending_trades
+            .retain(|_, trade| now.saturating_sub(trade.created_at_secs) <= TRADE_LIFETIME_SECS);
+    }
+
+    /// Whether there are enough players seated to begin.
+    pub fn can_start(&self) -> bool {
+        self.get_state() == GamePhase::WaitingForPlayers
+            && self.turn_manager.players.len() >= MIN_PLAYERS
+    }
+
     pub fn touch(&mut self) {
         self.last_activity_secs = now_secs();
     }
@@ -307,6 +330,75 @@ mod tests {
             .collect();
         coords.sort();
         coords[0]
+    }
+
+    #[test]
+    fn a_game_cannot_start_below_the_minimum_player_count() {
+        let creator = Uuid::from_u128(1);
+        let mut game = GameInstance::new("test".into(), creator, 4);
+        assert!(!game.can_start(), "one player is not enough");
+
+        game.turn_manager.players.add_player_with_colour(Uuid::from_u128(2));
+        assert!(!game.can_start(), "two players is still not enough");
+
+        game.turn_manager.players.add_player_with_colour(Uuid::from_u128(3));
+        assert!(game.can_start(), "three players may start without filling the table");
+
+        game.start_game();
+        assert!(!game.can_start(), "an already started game cannot start again");
+    }
+
+    #[test]
+    fn stale_trade_offers_expire() {
+        use crate::game::entities::pending_trade::PendingTrade;
+        use std::collections::HashSet;
+
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 3);
+
+        let mut offer = |id: u64, age: u64| {
+            game.pending_trades.insert(id, PendingTrade {
+                offer_id: id,
+                proposer_id: Uuid::from_u128(1),
+                target_player_id: None,
+                offering: Default::default(),
+                requesting: Default::default(),
+                declined_by: HashSet::new(),
+                created_at_secs: now_secs().saturating_sub(age),
+            });
+        };
+        offer(1, 0);
+        offer(2, TRADE_LIFETIME_SECS + 60);
+
+        game.expire_stale_trades();
+
+        assert!(game.pending_trades.contains_key(&1), "a fresh offer survives");
+        assert!(!game.pending_trades.contains_key(&2), "an old offer is withdrawn");
+    }
+
+    /// Trades used to be dropped entirely on save/load, and the id counter
+    /// restarted at 0.
+    #[test]
+    fn trades_survive_a_save_and_reload() {
+        use crate::game::entities::pending_trade::PendingTrade;
+        use std::collections::HashSet;
+
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 3);
+        game.next_trade_id = 7;
+        game.pending_trades.insert(6, PendingTrade {
+            offer_id: 6,
+            proposer_id: Uuid::from_u128(1),
+            target_player_id: None,
+            offering: Default::default(),
+            requesting: Default::default(),
+            declined_by: HashSet::new(),
+            created_at_secs: now_secs(),
+        });
+
+        let json = serde_json::to_value(&game).unwrap();
+        let restored: GameInstance = serde_json::from_value(json).unwrap();
+
+        assert!(restored.pending_trades.contains_key(&6));
+        assert_eq!(restored.next_trade_id, 7);
     }
 
     #[test]

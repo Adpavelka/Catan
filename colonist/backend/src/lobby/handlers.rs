@@ -90,7 +90,9 @@ impl Handler<ClientActorMessage> for Lobby {
         match msg.req {
             ClientRequest::CreateGame { .. }
             | ClientRequest::JoinGame { .. }
-            | ClientRequest::GetLobbyList | ClientRequest::LeaveGame {..} => {
+            | ClientRequest::GetLobbyList
+            | ClientRequest::StartGame { .. }
+            | ClientRequest::LeaveGame {..} => {
                 actions::handle_lobby_action(self, pid, msg.req, ctx);
                 return;
             }

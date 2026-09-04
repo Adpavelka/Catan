@@ -83,17 +83,7 @@ impl Lobby {
         }
 
         if is_full {
-            if let Some(game) = self.games.get_mut(&game_id) {
-                if game.get_state() == GamePhase::WaitingForPlayers {
-                    game.start_game();
-                    info!("Game {} starting!", game_id);
-
-                    if let Some(first_player) = game.turn_manager.players.get_by_index(0) {
-                        let player_id = first_player.id;
-                        self.send_server_msg(pid, ServerMessage::NextTurn { player_id });
-                    }
-                }
-            }
+            self.begin_game(&game_id);
         }
 
         self.save_game_async(&game_id, ctx);
@@ -102,6 +92,52 @@ impl Lobby {
         self.broadcast_lobby_status();
     }
     
+    /// Start a game early, once the minimum player count is met. Any player in
+    /// the lobby may trigger it - waiting for a full table can mean waiting
+    /// forever.
+    pub fn handle_start_game(&mut self, pid: Uuid, game_id: String, ctx: &mut Context<Lobby>) {
+        let Some(game) = self.games.get(&game_id) else {
+            return self.send_error(pid, "Game not found");
+        };
+
+        if game.turn_manager.players.get(pid).is_none() {
+            return self.send_error(pid, "You are not in this game");
+        }
+
+        if game.get_state() != GamePhase::WaitingForPlayers {
+            return self.send_error(pid, "This game has already started");
+        }
+
+        if !game.can_start() {
+            return self.send_error(
+                pid,
+                &format!("Need at least {} players to start", crate::game::entities::game_instance::MIN_PLAYERS),
+            );
+        }
+
+        self.begin_game(&game_id);
+        self.save_game_async(&game_id, ctx);
+        self.refresh_game_for_all(&game_id);
+        self.broadcast_lobby_status();
+    }
+
+    fn begin_game(&mut self, game_id: &str) {
+        let first_player = {
+            let Some(game) = self.games.get_mut(game_id) else { return };
+            if game.get_state() != GamePhase::WaitingForPlayers {
+                return;
+            }
+
+            game.start_game();
+            info!("Game {} starting!", game_id);
+            game.turn_manager.players.get_by_index(0).map(|p| p.id)
+        };
+
+        if let Some(player_id) = first_player {
+            self.broadcast_to_game(game_id, ServerMessage::NextTurn { player_id });
+        }
+    }
+
     pub fn handle_create_game(&mut self, pid: Uuid, player_count: usize, ctx: &mut Context<Lobby>) {
         let gid = Uuid::new_v4().to_string()[..6].to_string();
         info!("Creating game {} for player {}", gid, pid);

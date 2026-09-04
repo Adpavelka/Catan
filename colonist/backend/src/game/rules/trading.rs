@@ -104,6 +104,7 @@ impl GameInstance {
             offering: offer.clone(),
             requesting: request.clone(),
             declined_by: HashSet::new(),
+            created_at_secs: crate::game::entities::game_instance::now_secs(),
         };
 
         self.pending_trades.insert(offer_id, pending_trade);
@@ -122,6 +123,8 @@ impl GameInstance {
         offer_id: u64,
         accept: bool,
     ) -> Result<ServerMessage, String> {
+        self.expire_stale_trades();
+
         let trade = self.pending_trades.get(&offer_id).cloned();
         let tm = &mut self.turn_manager;
 
