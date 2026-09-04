@@ -20,7 +20,9 @@ pub fn handle_discard_cards(pid: Uuid, resources: shared::Resources, game: &mut 
     match tm.players.get_mut(pid) {
         Some(player) => {
             if player.resources.can_pay(&discard_set) {
-                tm.bank.collect_from_player(pid, discard_set, &mut tm.players).unwrap();
+                tm.bank
+                    .collect_from_player(pid, discard_set, &mut tm.players)
+                    .map_err(|e| e.to_string())?;
 
                 game.remove_pending_action(pid, PendingAction::Discard);
 

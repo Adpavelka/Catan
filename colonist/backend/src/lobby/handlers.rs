@@ -43,8 +43,8 @@ impl Handler<Connect> for Lobby {
 
         self.sessions.insert(pid, msg.addr);
         if let Some(game_id) = self.player_to_game.get(&pid).cloned() {
-            if self.games.contains_key(&game_id) {
-                if self.games.get(&game_id).unwrap().turn_manager.game_over() {
+            if let Some(game) = self.games.get(&game_id) {
+                if game.turn_manager.game_over() {
                     error!(
                         "Player {} attempted to reconnect to game {} which is over",
                         pid, game_id
@@ -101,8 +101,12 @@ impl Handler<ClientActorMessage> for Lobby {
             Some(id) => id.clone(),
             None => return self.send_error(pid, "You are not in a game"),
         };
-        if self.games.get_mut(&gid).unwrap().turn_manager.game_over() {
-            return self.send_error(pid, "Game is already over");
+        match self.games.get(&gid) {
+            Some(game) if game.turn_manager.game_over() => {
+                return self.send_error(pid, "Game is already over");
+            }
+            None => return self.send_error(pid, "Game not found"),
+            _ => {}
         }
 
         let action_result = if let Some(game) = self.games.get_mut(&gid) {
@@ -122,6 +126,9 @@ impl Handler<ClientActorMessage> for Lobby {
 
 impl Lobby {
     fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>) {
+        if let Some(game) = self.games.get_mut(gid) {
+            game.touch();
+        }
         self.handle_victory_if_needed(gid);
         self.save_game_async(gid, ctx);
         self.broadcast_to_game(gid, msg.clone());

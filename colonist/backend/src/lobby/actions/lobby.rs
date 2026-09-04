@@ -88,8 +88,10 @@ impl Lobby {
                     game.start_game();
                     info!("Game {} starting!", game_id);
 
-                    let first_player = game.turn_manager.players.get_by_index(0).unwrap().id;
-                    self.send_server_msg(pid, ServerMessage::NextTurn { player_id: first_player });
+                    if let Some(first_player) = game.turn_manager.players.get_by_index(0) {
+                        let player_id = first_player.id;
+                        self.send_server_msg(pid, ServerMessage::NextTurn { player_id });
+                    }
                 }
             }
         }

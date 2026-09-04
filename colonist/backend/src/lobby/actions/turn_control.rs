@@ -22,9 +22,9 @@ impl GameInstance
                     self.add_pending_action(pid, PendingAction::MoveRobber);
 
                     for idx in 0..self.turn_manager.players.len() {
-                        let player = self.turn_manager.players.get_by_index(idx).unwrap();
+                        let Some(player) = self.turn_manager.players.get_by_index(idx) else { continue };
                         let total = player.resources.get_cards_total();
-                        
+
                         if total > 7 {
                             self.add_pending_action(player.id, PendingAction::Discard);
                             discards_count += 1;

@@ -29,7 +29,8 @@ impl Lobby
             if let Ok(json_string) = serde_json::to_string(&msg) {
                 let actix_msg = ServerMessage(json_string);
                 for idx in 0..game.turn_manager.players.len() {
-                    if let Some(addr) = self.sessions.get(&game.turn_manager.players.get_by_index(idx).unwrap().id) {
+                    let Some(player) = game.turn_manager.players.get_by_index(idx) else { continue };
+                    if let Some(addr) = self.sessions.get(&player.id) {
                         let _ = addr.do_send(actix_msg.clone());
                     }
                 }

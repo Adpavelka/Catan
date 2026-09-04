@@ -24,6 +24,19 @@ pub struct GameInstance {
     #[serde(skip)]
     pub next_trade_id: u64,  // Counter for trade IDs
 
+    /// Wall-clock seconds since the epoch when this game last saw activity.
+    /// Used to evict abandoned games; `0` means "never touched".
+    #[serde(default)]
+    pub last_activity_secs: u64,
+}
+
+/// Seconds since the Unix epoch. Saturates rather than panicking if the clock
+/// is somehow before the epoch.
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 impl GameInstance {
@@ -40,6 +53,7 @@ impl GameInstance {
 
             pending_trades: HashMap::new(),
             next_trade_id: 1,
+            last_activity_secs: now_secs(),
         }
     }
 
@@ -246,6 +260,14 @@ impl GameInstance {
         }
     }
 
+    pub fn touch(&mut self) {
+        self.last_activity_secs = now_secs();
+    }
+
+    pub fn idle_for_secs(&self) -> u64 {
+        now_secs().saturating_sub(self.last_activity_secs)
+    }
+
     pub fn has_pending_action(&self, pid: Uuid, action: PendingAction) -> bool {
         self.pending_actions
             .get(&pid)
@@ -285,6 +307,30 @@ mod tests {
             .collect();
         coords.sort();
         coords[0]
+    }
+
+    #[test]
+    fn touch_resets_the_idle_clock() {
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 2);
+
+        // Pretend the game has been sitting untouched for two hours.
+        game.last_activity_secs = now_secs().saturating_sub(7200);
+        assert!(game.idle_for_secs() >= 7200);
+
+        game.touch();
+        assert!(game.idle_for_secs() < 5, "touch should reset the idle clock");
+    }
+
+    /// Games persisted before activity tracking existed must still load.
+    #[test]
+    fn missing_activity_timestamp_defaults_instead_of_failing() {
+        let game = GameInstance::new("test".into(), Uuid::from_u128(1), 2);
+        let mut json = serde_json::to_value(&game).unwrap();
+        json.as_object_mut().unwrap().remove("last_activity_secs");
+
+        let restored: GameInstance =
+            serde_json::from_value(json).expect("older saves must still deserialize");
+        assert_eq!(restored.last_activity_secs, 0);
     }
 
     /// Stealing used to be completely unvalidated: anyone could rob anyone,

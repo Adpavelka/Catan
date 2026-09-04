@@ -65,16 +65,21 @@ impl GameRepository {
     }
 
     pub async fn load_all_active(&self) -> Result<Vec<GameInstance>, Box<dyn std::error::Error>> {
-        let rows = sqlx::query("SELECT state_json FROM games WHERE status != 'FINISHED'")
+        let rows = sqlx::query("SELECT id, state_json FROM games WHERE status != 'FINISHED'")
             .fetch_all(&self.pool)
             .await?;
 
+        // A single unreadable row - an old schema, a hand-edited blob - must
+        // not cost us every other game on the server.
         let mut instances = Vec::new();
         for row in rows {
+            let id: String = row.get("id");
             let json_value: Value = row.get("state_json");
 
-            let inst: GameInstance = serde_json::from_value(json_value)?;
-            instances.push(inst);
+            match serde_json::from_value::<GameInstance>(json_value) {
+                Ok(inst) => instances.push(inst),
+                Err(e) => log::warn!("Skipping unreadable game {}: {}", id, e),
+            }
         }
         Ok(instances)
     }
