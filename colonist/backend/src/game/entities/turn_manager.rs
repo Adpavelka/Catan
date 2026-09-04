@@ -56,7 +56,9 @@ impl TurnManager {
     }
 
 
-    pub fn next_turn(&mut self) -> Result<((u8, u8), Vec<(Uuid, shared::ResourceType, u32)>), GameError> {
+    /// Rolls for the current player and pays out production. Despite the old
+    /// name this does *not* advance the turn - `end_turn` does that.
+    pub fn roll_dice(&mut self) -> Result<((u8, u8), Vec<(Uuid, shared::ResourceType, u32)>), GameError> {
         if self.game_over {
             return Err(GameError::InvalidAction);
         }
@@ -513,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn next_turn_fails_when_game_over() {
+    fn roll_dice_fails_when_game_over() {
         let mut tm = make_tm(3);
         let pid = tm.players.get_current_player().id;
 
@@ -525,7 +527,7 @@ mod tests {
         }
 
         tm.check_for_winner();
-        let res = tm.next_turn();
+        let res = tm.roll_dice();
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }

@@ -51,7 +51,7 @@ pub fn handle_buy_dev_card(pid: Uuid, game: &mut GameInstance) -> Result<ServerM
                 card_type,
             }
         })
-        .map_err(|e| format!("{:?}", e))
+        .map_err(|e| e.to_string())
 }
 
 pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option<shared::DevCardTarget>, game: &mut GameInstance) -> Result<ServerMessage, String> {
@@ -93,7 +93,7 @@ pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option
                 card_type: card,
             }
         })
-        .map_err(|e| format!("{:?}", e))
+        .map_err(|e| e.to_string())
 }
 
 pub fn handle_move_robber(pid: Uuid, q: i32, r: i32, game: &mut GameInstance) -> Result<ServerMessage, String> {
@@ -182,7 +182,7 @@ pub fn handle_year_of_plenty_choice(pid: Uuid, resource1: shared::ResourceType, 
 
     tm.bank
         .trade_with_bank(pid, ResourceSet::new(), gain, &mut tm.players, false)
-        .map_err(|e| format!("{:?}", e))?;
+        .map_err(|e| e.to_string())?;
 
     game.remove_pending_action(pid, PendingAction::YearOfPlenty);
 
@@ -206,7 +206,7 @@ pub fn handle_monopoly_choice(pid: Uuid, resource: shared::ResourceType, game: &
 
     let total_stolen = tm.bank
         .collect_resource_from_all_to_player(pid, resource, &mut tm.players)
-        .map_err(|e| format!("{:?}", e))?;
+        .map_err(|e| e.to_string())?;
 
     game.remove_pending_action(pid, PendingAction::Monopoly);
 

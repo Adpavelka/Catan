@@ -13,7 +13,7 @@ impl GameInstance
             return Err("Cannot roll dice during initial placement!".to_string());
         }
 
-        self.turn_manager.next_turn()
+        self.turn_manager.roll_dice()
             .map(|((d1, d2), _)| {
                 let roll = d1 + d2;
                 let mut discards_count = 0;
@@ -39,7 +39,7 @@ impl GameInstance
                     discards_pending: discards_count,
                 }
             })
-            .map_err(|e| format!("{:?}", e))
+            .map_err(|e| e.to_string())
     }
 
 

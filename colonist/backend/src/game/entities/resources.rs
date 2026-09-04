@@ -31,10 +31,20 @@ impl ResourceSet {
         true
     }
 
-    // TODO, private ne?
+    /// Removes up to `amount`. Saturating rather than wrapping: an unchecked
+    /// subtraction here panics in debug and silently mints ~4 billion cards in
+    /// release. Callers are still expected to `can_pay` first.
     pub fn take(&mut self, res: ResourceType, amount: u32) {
         let entry = self.amounts.entry(res).or_insert(0);
-        *entry -= amount;
+        if amount > *entry {
+            log::warn!(
+                "Tried to take {} {:?} but only {} held; clamping to 0",
+                amount,
+                res,
+                entry
+            );
+        }
+        *entry = entry.saturating_sub(amount);
     }
 
     // TODO, private ne?
@@ -135,6 +145,18 @@ mod tests {
         rs.add(ResourceType::Brick, 4);
         rs.take(ResourceType::Brick, 2);
         assert_eq!(rs.amount_of(ResourceType::Brick), 2);
+    }
+
+    /// Overdrawing must not wrap around into a huge balance.
+    #[test]
+    fn take_more_than_held_clamps_to_zero() {
+        let mut rs = ResourceSet::new();
+        rs.add(ResourceType::Brick, 2);
+
+        rs.take(ResourceType::Brick, 5);
+
+        assert_eq!(rs.amount_of(ResourceType::Brick), 0);
+        assert_eq!(rs.get_cards_total(), 0);
     }
 
     #[test]

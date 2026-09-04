@@ -257,6 +257,7 @@ impl GameInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::GameError;
 
     fn started_game() -> (GameInstance, Uuid) {
         let pid = Uuid::from_u128(1);
@@ -356,7 +357,11 @@ mod tests {
         let err = game
             .handle_build_settlement(pid, 9999, 9999)
             .expect_err("a nonexistent vertex must be rejected");
-        assert!(err.contains("InvalidPosition"), "unexpected error: {err}");
+        assert_eq!(
+            err,
+            GameError::InvalidPosition.to_string(),
+            "players should see the readable message, not the Debug form"
+        );
 
         assert_eq!(
             game.get_state(),

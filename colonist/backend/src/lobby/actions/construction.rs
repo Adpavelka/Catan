@@ -19,7 +19,7 @@ impl GameInstance
         // next to a settlement that was never built.
         self.turn_manager
             .build_settlement((x, y), is_initial)
-            .map_err(|e| format!("{:?}", e))?;
+            .map_err(|e| e.to_string())?;
 
         self.advance_after_settlement(x, y);
 
@@ -57,7 +57,7 @@ impl GameInstance
                     coords: vec![x, y],
                 }
             })
-            .map_err(|e| format!("{:?}", e))
+            .map_err(|e| e.to_string())
     }
 
 
@@ -70,7 +70,7 @@ impl GameInstance
 
         self.turn_manager
             .build_road((x, y), free)
-            .map_err(|e| format!("{:?}", e))?;
+            .map_err(|e| e.to_string())?;
 
         self.advance_after_road();
 

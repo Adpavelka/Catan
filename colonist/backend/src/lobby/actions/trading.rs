@@ -53,7 +53,7 @@ pub fn handle_bank_trade(
         if tm.bank.validate_bank_trade(player, &gives, &takes).is_ok() {
             tm.bank
                 .trade_with_bank(pid, gives, takes, &mut tm.players, true)
-                .map_err(|e| format!("{:?}", e))?;
+                .map_err(|e| e.to_string())?;
 
             return Ok(ServerMessage::BankTradeCompleted {
                 player_id: pid,
@@ -205,7 +205,7 @@ pub fn handle_trade_response(
             &proposer_gives,
             &mut tm.players
         )
-        .map_err(|e| format!("{:?}", e))?;
+        .map_err(|e| e.to_string())?;
 
     tm.bank
         .collect_from_player_to_player(
@@ -214,7 +214,7 @@ pub fn handle_trade_response(
             &accepter_gives,
             &mut tm.players
         )
-        .map_err(|e| format!("{:?}", e))?;
+        .map_err(|e| e.to_string())?;
 
     game.pending_trades.remove(&offer_id);
 

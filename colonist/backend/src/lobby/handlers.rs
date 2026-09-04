@@ -94,7 +94,7 @@ impl Handler<ClientActorMessage> for Lobby {
 impl Lobby {
     fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>) {
         self.handle_victory_if_needed(gid);
-        self.persist_game(gid, ctx);
+        self.save_game_async(gid, ctx);
         self.broadcast_to_game(gid, msg.clone());
         self.handle_post_message_effects(pid, gid, &msg);
     }
@@ -108,18 +108,6 @@ impl Lobby {
             secret_victory_points: game.turn_manager.player_secret_victory_points(winner),
         };
         self.broadcast_to_game(gid, victory_msg);
-    }
-
-    fn persist_game(&self, gid: &str, ctx: &mut Context<Self>) {
-        let repo = self.repo.clone();
-        if let Some(instance) = self.games.get(gid).cloned() {
-            ctx.spawn(
-                async move {
-                    let _ = repo.save_game_instance(&instance).await;
-                }
-                .into_actor(self),
-            );
-        }
     }
 
     fn handle_post_message_effects(&mut self, pid: Uuid, gid: &str, msg: &ServerMessage) {
@@ -233,53 +221,35 @@ impl Lobby {
     }
 
     fn handle_discard_flow(&mut self, gid: &str, msg: &ServerMessage) {
-        match msg {
-            ServerMessage::DiceRolled { dice_1, dice_2, .. } if dice_1 + dice_2 == 7 => {
-                if let Some(game) = self.games.get(gid) {
-                    for (player_id, actions) in &game.pending_actions {
-                        if actions.contains(&PendingAction::Discard) {
-                            if let Some(player) = game.turn_manager.players.get(*player_id) {
-                                let total = player.resources.get_cards_total();
-                                let count = (total / 2) as usize;
+        // A 7 opens the discard round; each completed discard may still leave
+        // others outstanding. Both cases just re-prompt whoever still owes cards.
+        let prompt_needed = match msg {
+            ServerMessage::DiceRolled { dice_1, dice_2, .. } => dice_1 + dice_2 == 7,
+            ServerMessage::CardsDiscarded { .. } => true,
+            _ => false,
+        };
 
-                                self.send_server_msg(
-                                    *player_id,
-                                    ServerMessage::MustDiscardCards {
-                                        player_id: *player_id,
-                                        count,
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+        if !prompt_needed {
+            return;
+        }
 
-            ServerMessage::CardsDiscarded { .. } => {
-                // If someone just discarded, check if other players still need to discard
-                if let Some(game) = self.games.get(gid) {
-                    for (player_id, actions) in &game.pending_actions {
-                        if actions.contains(&PendingAction::Discard) {
-                            if let Some(player) = game.turn_manager.players.get(*player_id) {
-                                let total = player.resources.get_cards_total();
-                                let count = (total / 2) as usize;
+        let Some(game) = self.games.get(gid) else { return };
 
-                                self.send_server_msg(
-                                    *player_id,
-                                    ServerMessage::MustDiscardCards {
-                                        player_id: *player_id,
-                                        count,
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+        let outstanding: Vec<(Uuid, usize)> = game
+            .pending_actions
+            .iter()
+            .filter(|(_, actions)| actions.contains(&PendingAction::Discard))
+            .filter_map(|(player_id, _)| {
+                let player = game.turn_manager.players.get(*player_id)?;
+                Some((*player_id, (player.resources.get_cards_total() / 2) as usize))
+            })
+            .collect();
 
-            _ => {
-                // Other messages are ignored
-            }
+        for (player_id, count) in outstanding {
+            self.send_server_msg(
+                player_id,
+                ServerMessage::MustDiscardCards { player_id, count },
+            );
         }
     }
 
