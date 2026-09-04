@@ -429,7 +429,7 @@ mod tests {
     /// corner of one chosen hex, and returns that hex's number and resource.
     fn board_with_settlements_on_one_hex(
         settlers: &[Uuid],
-    ) -> (Board, Robber, u8, ResourceType) {
+    ) -> (Board, Robber, Coordinates, u8, ResourceType) {
         let mut board = Board::new();
 
         let (coord, number, resource, corners) = board
@@ -458,14 +458,14 @@ mod tests {
         }
 
         let robber = Robber::new(&board);
-        (board, robber, number, resource)
+        (board, robber, coord, number, resource)
     }
 
     /// A lone claimant takes whatever the bank has left, even if it is short.
     #[test]
     fn bank_shortfall_pays_a_sole_claimant_the_remainder() {
         let only = pid(1);
-        let (mut board, robber, number, resource) =
+        let (mut board, robber, _, number, resource) =
             board_with_settlements_on_one_hex(&[only]);
 
         // Upgrade to a city so the player is owed 2 but the bank holds only 1.
@@ -499,7 +499,7 @@ mod tests {
     fn bank_shortfall_pays_nobody_when_several_players_claim() {
         let a = pid(1);
         let b = pid(2);
-        let (board, robber, number, resource) = board_with_settlements_on_one_hex(&[a, b]);
+        let (board, robber, _, number, resource) = board_with_settlements_on_one_hex(&[a, b]);
 
         let mut bank = Bank::new();
         let mut players = players(vec![Player::new(a, "A", 'A'), Player::new(b, "B", 'B')]);
@@ -541,85 +541,38 @@ mod tests {
 
     #[test]
     fn give_resources_for_roll_pays_settlement() {
-        let mut bank = Bank::new();
-        let mut board = Board::new();
-
         let player_id = pid(1);
-        let mut players = players(vec![
-            Player::new(player_id, "A", 'A')
-        ]);
+        let (board, robber, _, number, resource) =
+            board_with_settlements_on_one_hex(&[player_id]);
 
-        let (_, dice, res, vertex) = {
-            let hex = board.hexes.values()
-                .find(|h| h.resource != ResourceType::Desert)
-                .unwrap();
-            (hex.coord, hex.number, hex.resource, hex.adjacent_vertices[0])
-        };
+        let mut bank = Bank::new();
+        let mut players = players(vec![Player::new(player_id, "A", 'A')]);
 
-        let v = board.vertices.get_mut(&vertex).unwrap();
-        v.owner = Some(player_id);
-        v.building = Some(VertexBuilding::Settlement);
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
 
-        let robber = Robber::new(&board);
-
-        let before = players
-            .get(player_id)
-            .unwrap()
-            .resources
-            .amount_of(res);
-
-        let distributed = bank.give_resources_for_roll(
-            &board,
-            dice,
-            &robber,
-            &mut players,
+        assert_eq!(distributed, vec![(player_id, resource, 1)]);
+        assert_eq!(
+            players.get(player_id).unwrap().resources.amount_of(resource),
+            1
         );
-
-        let after = players
-            .get(player_id)
-            .unwrap()
-            .resources
-            .amount_of(res);
-
-        assert_eq!(after - before, 1);
-        assert_eq!(distributed, vec![(player_id, res, 1)]);
     }
-
 
     #[test]
     fn give_resources_for_roll_blocked_by_robber() {
-        let mut bank = Bank::new();
-        let mut board = Board::new();
-
         let player_id = pid(1);
-        let mut players = players(vec![
-            Player::new(player_id, "A", 'A')
-        ]);
+        let (board, mut robber, hex_coord, number, resource) =
+            board_with_settlements_on_one_hex(&[player_id]);
 
-        let (hex_coord, dice, res, vertex) = {
-            let hex = board.hexes.values()
-                .find(|h| h.resource != ResourceType::Desert)
-                .unwrap();
-            (hex.coord, hex.number, hex.resource, hex.adjacent_vertices[0])
-        };
+        let mut bank = Bank::new();
+        let mut players = players(vec![Player::new(player_id, "A", 'A')]);
 
-        let v = board.vertices.get_mut(&vertex).unwrap();
-        v.owner = Some(player_id);
-        v.building = Some(VertexBuilding::Settlement);
-
-        let mut robber = Robber::new(&board);
         robber.move_to(hex_coord).unwrap();
 
-        let distributed = bank.give_resources_for_roll(
-            &board,
-            dice,
-            &robber,
-            &mut players,
-        );
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
 
-        assert!(distributed.is_empty());
+        assert!(distributed.is_empty(), "the robber blocks this hex");
         assert_eq!(
-            players.get(player_id).unwrap().resources.amount_of(res),
+            players.get(player_id).unwrap().resources.amount_of(resource),
             0
         );
     }

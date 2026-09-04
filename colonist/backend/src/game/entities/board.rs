@@ -547,6 +547,26 @@ mod tests {
         *board.edges.keys().min().expect("board must have edges")
     }
 
+    /// The vertices one edge away from `v`. Note this is *not*
+    /// `get_adjacent_hexes(v)`: that maps a **hex** coordinate to its corners,
+    /// and feeding it a vertex coordinate yields unrelated points.
+    fn vertex_neighbours(board: &Board, v: Coordinates) -> Vec<Coordinates> {
+        let Some(vertex) = board.vertices.get(&v) else {
+            return Vec::new();
+        };
+
+        vertex
+            .adjacent_edges
+            .iter()
+            .filter_map(|e| board.edges.get(e))
+            .map(|edge| {
+                let (a, b) = edge.adjacent_vertices;
+                if a == v { b } else { a }
+            })
+            .filter(|n| board.vertices.contains_key(n))
+            .collect()
+    }
+
     fn pick_buildable_vertex(board: &Board) -> Coordinates {
         *board
             .vertices
@@ -633,17 +653,31 @@ mod tests {
     #[test]
     fn test_buildable_vertex_rule() {
         let mut board = Board::new_standard_board();
-        let v = *board.vertices.keys().next().unwrap();
+        let v = pick_buildable_vertex(&board);
 
         assert!(board.is_buildable_vertex(v));
 
         board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
 
-        let v1 = (v.0, v.1 + 1);
-        let v2 = (v.0 + 1, v.1);
+        // The occupied vertex and each of its real neighbours are now blocked,
+        // but a vertex two edges away is still fair game.
+        assert!(!board.is_buildable_vertex(v));
 
-        assert!(!board.is_buildable_vertex(v1));
-        assert!(!board.is_buildable_vertex(v2));
+        let neighbours = vertex_neighbours(&board, v);
+        for n in &neighbours {
+            assert!(!board.is_buildable_vertex(*n), "{n:?} is one edge away");
+        }
+
+        let two_away = neighbours
+            .iter()
+            .flat_map(|n| vertex_neighbours(&board, *n))
+            .find(|c| *c != v && !neighbours.contains(c))
+            .expect("expected a vertex two edges away");
+
+        assert!(
+            board.is_buildable_vertex(two_away),
+            "{two_away:?} is two edges away and should stay buildable"
+        );
     }
 
     #[test]
@@ -690,13 +724,14 @@ mod tests {
 
         board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
 
-        for n in Board::get_adjacent_hexes(v) {
-            if board.vertices.contains_key(&n) {
-                assert!(
-                    !board.is_buildable_vertex(n),
-                    "neighbor {n:?} should be blocked by distance rule"
-                );
-            }
+        let neighbours = vertex_neighbours(&board, v);
+        assert!(!neighbours.is_empty(), "a vertex must have neighbours");
+
+        for n in neighbours {
+            assert!(
+                !board.is_buildable_vertex(n),
+                "neighbor {n:?} should be blocked by distance rule"
+            );
         }
     }
 
