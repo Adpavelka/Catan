@@ -201,20 +201,33 @@ mod tests {
     #[test]
     fn available_colours_shrink_as_players_are_seated() {
         let mut players = Players::new(Vec::new());
-        assert_eq!(players.available_colours().len(), 4);
+        assert_eq!(players.available_colours().len(), PlayerColour::ALL.len());
 
         players.seat(pid(1), "a", PlayerColour::Blue).unwrap();
-        assert_eq!(players.available_colours(), vec![
-            PlayerColour::Red,
-            PlayerColour::Green,
-            PlayerColour::Yellow,
-        ]);
-
         players.seat(pid(2), "b", PlayerColour::Green).unwrap();
-        assert_eq!(players.available_colours(), vec![
-            PlayerColour::Red,
-            PlayerColour::Yellow,
-        ]);
+
+        let free = players.available_colours();
+        assert_eq!(free.len(), PlayerColour::ALL.len() - 2);
+        assert!(!free.contains(&PlayerColour::Blue));
+        assert!(!free.contains(&PlayerColour::Green));
+        assert!(free.contains(&PlayerColour::Red));
+    }
+
+    /// The palette is bigger than the table, so a joining player always has
+    /// something to choose from rather than being handed the last one left.
+    #[test]
+    fn a_full_table_still_leaves_colours_unclaimed() {
+        let mut players = Players::new(Vec::new());
+
+        for (n, colour) in PlayerColour::ALL.iter().take(4).enumerate() {
+            players.seat(pid(n as u128 + 1), "x", *colour).unwrap();
+        }
+
+        assert_eq!(players.len(), 4);
+        assert!(
+            !players.available_colours().is_empty(),
+            "the palette should outnumber the seats"
+        );
     }
 
     #[test]

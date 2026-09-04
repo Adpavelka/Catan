@@ -90,13 +90,15 @@ pub(crate) fn player_color_hex(colour: PlayerColour) -> &'static str {
 }
 
 // Get player color (for rendering buildings)
-fn player_color(player_id: Uuid, state: &GameState) -> String {
-    // Look up the player's actual color from the players list
+/// The player's colour as a literal hex, applied via the SVG `fill` attribute.
+/// Deliberately not a Tailwind class: those only exist if Tailwind happens to
+/// scan the file the string literal lives in.
+fn player_color(player_id: Uuid, state: &GameState) -> &'static str {
     state.players.get_untracked()
         .iter()
         .find(|p| p.player_id == player_id)
-        .map(|p| p.colour.fill_class().to_string())
-        .unwrap_or_else(|| "fill-purple-500".to_string())
+        .map(|p| p.colour.hex())
+        .unwrap_or("#a855f7")
 }
 
 // Calculate vertex positions for a hex (matches backend logic)
@@ -795,7 +797,8 @@ fn Settlement(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
             // House shape (scaled up for better visibility)
             <polygon
                 points="0,-12 9,0 9,12 -9,12 -9,0"
-                class=format!("{} stroke-black stroke-2", color)
+                fill=color
+                class="stroke-black stroke-2"
             />
         </g>
     }
@@ -814,14 +817,16 @@ fn City(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
                 y="-6"
                 width="24"
                 height="18"
-                class=format!("{} stroke-black stroke-2", color)
+                fill=color
+                class="stroke-black stroke-2"
             />
             <rect
                 x="-4"
                 y="-18"
                 width="8"
                 height="12"
-                class=format!("{} stroke-black stroke-2", color)
+                fill=color
+                class="stroke-black stroke-2"
             />
         </g>
     }
@@ -839,7 +844,9 @@ fn Road(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
                 y1="0"
                 x2="15"
                 y2="0"
-                class=format!("{} stroke-4", color.replace("fill", "stroke"))
+                stroke=color
+                stroke-width="4"
+                stroke-linecap="round"
             />
         </g>
     }

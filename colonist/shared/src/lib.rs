@@ -281,8 +281,10 @@ pub struct SeatRequest {
     pub colour: PlayerColour,
 }
 
-/// The player palette. One colour per player, so there are exactly as many
-/// colours as there are seats.
+/// The player palette. Deliberately larger than the number of seats, so a
+/// joining player has a real choice rather than being handed the last colour
+/// left over. Hues are kept well apart from each other; the board's own greens,
+/// yellows and oranges are handled by the black outline on every building.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PlayerColour {
@@ -290,14 +292,22 @@ pub enum PlayerColour {
     Red,
     Green,
     Yellow,
+    Purple,
+    Cyan,
+    Pink,
+    White,
 }
 
 impl PlayerColour {
-    pub const ALL: [PlayerColour; 4] = [
+    pub const ALL: [PlayerColour; 8] = [
         PlayerColour::Blue,
         PlayerColour::Red,
         PlayerColour::Green,
         PlayerColour::Yellow,
+        PlayerColour::Purple,
+        PlayerColour::Cyan,
+        PlayerColour::Pink,
+        PlayerColour::White,
     ];
 
     /// Longest name the server will keep; anything more is truncated.
@@ -309,25 +319,25 @@ impl PlayerColour {
             PlayerColour::Red => "Red",
             PlayerColour::Green => "Green",
             PlayerColour::Yellow => "Yellow",
+            PlayerColour::Purple => "Purple",
+            PlayerColour::Cyan => "Cyan",
+            PlayerColour::Pink => "Pink",
+            PlayerColour::White => "White",
         }
     }
 
+    /// The one place a player colour is turned into pixels. Used directly as
+    /// an SVG `fill`, so it does not depend on a CSS class being generated.
     pub fn hex(&self) -> &'static str {
         match self {
             PlayerColour::Blue => "#3b82f6",
             PlayerColour::Red => "#ef4444",
             PlayerColour::Green => "#22c55e",
             PlayerColour::Yellow => "#eab308",
-        }
-    }
-
-    /// Tailwind `fill-*` class, for the SVG board.
-    pub fn fill_class(&self) -> &'static str {
-        match self {
-            PlayerColour::Blue => "fill-blue-500",
-            PlayerColour::Red => "fill-red-500",
-            PlayerColour::Green => "fill-green-500",
-            PlayerColour::Yellow => "fill-yellow-500",
+            PlayerColour::Purple => "#a855f7",
+            PlayerColour::Cyan => "#06b6d4",
+            PlayerColour::Pink => "#ec4899",
+            PlayerColour::White => "#e2e8f0",
         }
     }
 
@@ -338,6 +348,10 @@ impl PlayerColour {
             PlayerColour::Red => "Bob",
             PlayerColour::Green => "Kevin",
             PlayerColour::Yellow => "George",
+            PlayerColour::Purple => "Wanda",
+            PlayerColour::Cyan => "Cyrus",
+            PlayerColour::Pink => "Rosa",
+            PlayerColour::White => "Pearl",
         }
     }
 }

@@ -31,8 +31,15 @@ pub struct GameInstance {
 /// Catan needs at least three players; below that the trading and robber
 /// rules stop making sense.
 pub const MIN_PLAYERS: usize = 3;
-/// There are only four player colours, so four is a hard ceiling.
+/// The base game seats four. Going beyond this is not just a matter of having
+/// more colours: the 5-6 player extension needs a larger board, a deeper
+/// resource bank and the special building phase, none of which exist here.
 pub const MAX_PLAYERS: usize = 4;
+
+const _: () = assert!(
+    shared::PlayerColour::ALL.len() >= MAX_PLAYERS,
+    "every seat must be able to claim a distinct colour",
+);
 
 /// Trade offers older than this are treated as withdrawn.
 pub const TRADE_LIFETIME_SECS: u64 = 120;
@@ -350,7 +357,7 @@ mod tests {
 
     /// Seating must report failure rather than silently dropping the player.
     #[test]
-    fn seating_fails_once_every_colour_is_taken() {
+    fn seating_rejects_a_colour_another_player_holds() {
         let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 4, "Tester", shared::PlayerColour::Blue);
 
         // The creator already took Blue.
@@ -365,7 +372,6 @@ mod tests {
                 .expect("a free colour must be seatable");
         }
         assert_eq!(game.turn_manager.players.len(), 4);
-        assert!(game.available_colours().is_empty());
 
         let err = game
             .turn_manager
