@@ -31,7 +31,7 @@ pub fn MainMenu() -> impl IntoView {
                 </div>
             </Show>
 
-x            <div class="p-10 bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl text-center space-y-8 w-full max-w-md relative overflow-hidden">
+            <div class="p-10 bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl text-center space-y-8 w-full max-w-md relative overflow-hidden">
                 <div class="absolute -top-10 -right-10 w-32 h-32 bg-orange-600/10 rounded-full blur-3xl"></div>
 
                 <h1 class="text-6xl font-black text-orange-600 italic tracking-tighter drop-shadow-sm">"COLONIST"</h1>

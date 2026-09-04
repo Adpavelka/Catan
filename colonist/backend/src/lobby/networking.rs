@@ -4,8 +4,6 @@ use shared::PendingAction;
 use uuid::Uuid;
 use crate::lobby::Lobby;
 use crate::network::message::ServerMessage;
-use crate::game::entities::bonus_points::BonusCard;
-use crate::game::entities::building::VertexBuilding;
 use crate::game::entities::game_instance::GameInstance;
 
 impl Lobby
@@ -52,23 +50,16 @@ impl Lobby
     fn send_game_started(&self, pid: Uuid, game_id: &str) {
         let Some(game) = self.games.get(game_id) else { return };
 
-        let players: Vec<shared::PlayerInfo> = (0..game.turn_manager.players.len())
-            .filter_map(|i| game.turn_manager.players.get_by_index(i))
-            .map(|p| p.into())
-            .collect();
+        let players = game.get_all_players_info();
 
-
+        let info = game.turn_manager.board.to_info(game.turn_manager.get_robber_pos());
         let board = shared::BoardState {
-            hexes: game.turn_manager.board.hexes.iter().map(|(c, h)| shared::HexInfo {
-                q: c.0, r: c.1, resource: h.resource, number: h.number
-            }).collect(),
-            settlements: self.get_buildings(&game, true),
-            cities: self.get_buildings(&game, false),
-            roads: game.turn_manager.board.edges.iter()
-                .filter_map(|(c, e)| e.owner.map(|owner| shared::BuildingInfo { player_id: owner, x: c.0, y: c.1 }))
-                .collect(),
-            robber_pos: game.turn_manager.get_robber_pos(),
-            ports: game.turn_manager.board.unique_ports().iter().map(|p| p.into()).collect(),
+            hexes: info.hexes,
+            settlements: info.settlements,
+            cities: info.cities,
+            roads: info.roads,
+            robber_pos: info.robber_pos,
+            ports: info.ports,
         };
 
         let (your_resources, your_dev_cards) = Self::private_hand(game, pid);
@@ -147,19 +138,13 @@ impl Lobby
 
     pub(crate) fn broadcast_players_update(&self, gid: &str) {
         if let Some(game) = self.games.get(gid) {
-            let players: Vec<shared::PlayerInfo> = (0..game.turn_manager.players.len())
-                .filter_map(|i| game.turn_manager.players.get_by_index(i).map(|p| (p.id, p)))
-                .map(|(pid, p)| {
-                    let mut info = shared::PlayerInfo::from(p);
-                    info.has_longest_road = game.turn_manager.road_bonus.holder() == Some(pid);
-                    info.has_largest_army = game.turn_manager.army_bonus.holder() == Some(pid);
-                    info
-                })
-                .collect();
-            let msg = shared::ServerMessage::PlayersUpdate { players };
+            let msg = shared::ServerMessage::PlayersUpdate {
+                players: game.get_all_players_info(),
+            };
             self.broadcast_to_game(gid, msg);
         }
     }
+
     pub fn send_secret_victory_points_to_player(&self, pid: Uuid, gid: &str) {
         if let Some(game) = self.games.get(gid) {
             let points = game.turn_manager.player_secret_victory_points(pid);
@@ -204,25 +189,6 @@ impl Lobby
                 )
             })
             .unwrap_or_default()
-    }
-
-    fn get_buildings(&self, game: &GameInstance, get_settlements: bool) -> Vec<shared::BuildingInfo> {
-        game.turn_manager.board.vertices.iter()
-            .filter_map(|(coord, vertex)| {
-                let building = vertex.building.as_ref()?;
-                let owner = vertex.owner?;
-                let is_city = matches!(building, VertexBuilding::City);
-                if get_settlements != is_city {
-                    Some(shared::BuildingInfo {
-                        player_id: owner,
-                        x: coord.0,
-                        y: coord.1,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
     }
 
 }

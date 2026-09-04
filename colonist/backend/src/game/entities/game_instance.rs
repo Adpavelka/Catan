@@ -67,32 +67,19 @@ impl GameInstance {
     }
 
 
+    /// The public roster, with the bonus-card flags filled in. This is the one
+    /// place `PlayerInfo` is built; `From<&Player>` cannot know who holds the
+    /// bonus cards, so it is not used directly.
     pub fn get_all_players_info(&self) -> Vec<shared::PlayerInfo> {
-        let mut infos = Vec::new();
-
-        for i in 0..self.turn_manager.players.len() {
-            let player = self.turn_manager.players.get_by_index(i).unwrap();
-            let pid = player.id;
-
-            let has_longest_road = self.turn_manager.road_bonus.holder() == Some(pid);
-            let has_largest_army = self.turn_manager.army_bonus.holder() == Some(pid);
-
-            infos.push(shared::PlayerInfo {
-                player_id: pid,
-                name: player.name.clone(),
-                color: player.colour.to_string(),
-                victory_points: player.get_victory_points(),
-                ports: player.ports.iter().map(|port| port.into()).collect(),
-                resource_count: player.resources.get_cards_total() as u8,
-                dev_card_count: player.dev_cards.len(),
-                knights_played: player.knight_played,
-                roads_count: player.longest_road,
-                has_longest_road,
-                has_largest_army,
-            });
-        }
-
-        infos
+        (0..self.turn_manager.players.len())
+            .filter_map(|i| self.turn_manager.players.get_by_index(i))
+            .map(|player| {
+                let mut info = shared::PlayerInfo::from(player);
+                info.has_longest_road = self.turn_manager.road_bonus.holder() == Some(player.id);
+                info.has_largest_army = self.turn_manager.army_bonus.holder() == Some(player.id);
+                info
+            })
+            .collect()
     }
 
     pub (crate) fn advance_phase(&mut self) {

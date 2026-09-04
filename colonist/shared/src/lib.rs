@@ -43,8 +43,6 @@ pub enum ClientRequest {
     CancelTrade {
         offer_id: u64,
     },
-    ShowMap,
-    RequestResources,
     Chat {
         message: String,
     },
@@ -74,8 +72,6 @@ pub enum ClientRequest {
     MonopolyChoice {
         resource: ResourceType,
     },
-    /// DEBUG: Auto-complete initial placement phase for all players
-    DebugAutoInitialPlacement,
 }
 
 #[derive(Debug, Serialize, Clone, Deserialize)]
