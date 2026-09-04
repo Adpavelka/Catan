@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 mod handlers;
-pub mod actions;
+mod actions;
 mod networking;
 mod game_logic;
 

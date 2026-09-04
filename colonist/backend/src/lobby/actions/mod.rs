@@ -3,11 +3,7 @@ use actix::prelude::Context;
 use shared::{ClientRequest, ServerMessage};
 use uuid::Uuid;
 
-pub mod construction;
-pub mod development;
 mod lobby;
-pub mod trading;
-pub mod turn_control;
 
 pub fn handle_lobby_action(
     lobby: &mut Lobby,
@@ -44,32 +40,26 @@ pub fn handle_game_request(
         ClientRequest::BuildCity { x, y } => game.handle_build_city(pid, x, y),
         ClientRequest::BuildRoad { x1, y1 } => game.handle_build_road(pid, x1, y1),
 
-        ClientRequest::BankTrade { give, receive } => {
-            trading::handle_bank_trade(pid, give, receive, game)
-        }
+        ClientRequest::BankTrade { give, receive } => game.handle_bank_trade(pid, give, receive),
         ClientRequest::TradeOffer {
             target_player_id,
             offer,
             request,
-        } => trading::handle_trade_offer(pid, target_player_id, offer, request, game),
+        } => game.handle_trade_offer(pid, target_player_id, offer, request),
         ClientRequest::TradeResponse { offer_id, accept } => {
-            trading::handle_trade_response(pid, offer_id, accept, game)
+            game.handle_trade_response(pid, offer_id, accept)
         }
-        ClientRequest::CancelTrade { offer_id } => {
-            trading::handle_cancel_trade(pid, offer_id, game)
-        }
+        ClientRequest::CancelTrade { offer_id } => game.handle_cancel_trade(pid, offer_id),
 
-        ClientRequest::DiscardCards { resources } => {
-            development::handle_discard_cards(pid, resources, game)
+        ClientRequest::DiscardCards { resources } => game.handle_discard_cards(pid, resources),
+        ClientRequest::BuyDevelopmentCard => game.handle_buy_dev_card(pid),
+        ClientRequest::PlayDevCard { card, target } => game.handle_play_dev_card(pid, card, target),
+        ClientRequest::MoveRobber { q, r } => game.handle_move_robber(pid, q, r),
+        ClientRequest::StealFromPlayer { victim_id } => game.handle_steal_from_player(pid, victim_id),
+        ClientRequest::YearOfPlentyChoice { resource1, resource2 } => {
+            game.handle_year_of_plenty_choice(pid, resource1, resource2)
         }
-        ClientRequest::BuyDevelopmentCard => development::handle_buy_dev_card(pid, game),
-        ClientRequest::PlayDevCard { card, target } => {
-            development::handle_play_dev_card(pid, card, target, game)
-        }
-        ClientRequest::MoveRobber { q, r } => development::handle_move_robber(pid, q, r, game),
-        ClientRequest::StealFromPlayer { victim_id } => development::handle_steal_from_player(pid, victim_id, game),
-        ClientRequest::YearOfPlentyChoice { resource1, resource2 } => development::handle_year_of_plenty_choice(pid, resource1, resource2, game),
-        ClientRequest::MonopolyChoice { resource } => development::handle_monopoly_choice(pid, resource, game),
+        ClientRequest::MonopolyChoice { resource } => game.handle_monopoly_choice(pid, resource),
 
         ClientRequest::Chat { message } => Ok(ServerMessage::ChatMessage {
             player_id: pid,

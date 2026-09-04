@@ -1,6 +1,6 @@
 use uuid::Uuid;
 use shared::{GamePhase, PendingAction, ServerMessage};
-use crate::lobby::GameInstance;
+use crate::game::entities::game_instance::GameInstance;
 
 impl GameInstance
 {

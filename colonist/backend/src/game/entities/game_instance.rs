@@ -338,7 +338,6 @@ mod tests {
     #[test]
     fn stealing_requires_having_moved_the_robber() {
         use crate::game::entities::building::VertexBuilding;
-        use crate::lobby::actions::development::handle_steal_from_player;
 
         let thief = Uuid::from_u128(1);
         let victim = Uuid::from_u128(2);
@@ -367,27 +366,27 @@ mod tests {
 
         // No robber move has happened, so there is nothing to cash in.
         assert!(
-            handle_steal_from_player(thief, victim, &mut game).is_err(),
+            game.handle_steal_from_player(thief, victim).is_err(),
             "stealing without moving the robber must be refused"
         );
 
         // A player who is not on turn may never steal, even once it is unlocked.
         game.add_pending_action(thief, PendingAction::Steal);
         assert!(
-            handle_steal_from_player(outsider, victim, &mut game).is_err(),
+            game.handle_steal_from_player(outsider, victim).is_err(),
             "a player who is not on turn must not be able to steal"
         );
 
         // A victim with nothing next to the robber is not a legal target.
         assert!(
-            handle_steal_from_player(thief, outsider, &mut game).is_err(),
+            game.handle_steal_from_player(thief, outsider).is_err(),
             "a player with no building by the robber must not be robbable"
         );
 
         // The legal steal works exactly once.
-        assert!(handle_steal_from_player(thief, victim, &mut game).is_ok());
+        assert!(game.handle_steal_from_player(thief, victim).is_ok());
         assert!(
-            handle_steal_from_player(thief, victim, &mut game).is_err(),
+            game.handle_steal_from_player(thief, victim).is_err(),
             "the steal must be consumed, not repeatable"
         );
     }
