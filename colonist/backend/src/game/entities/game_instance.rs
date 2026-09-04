@@ -104,9 +104,14 @@ impl GameInstance {
     }
 
 
-    pub (crate) fn validate_and_advance_after_road(&mut self, edge: (i32, i32)) -> Result<bool, String> {
+    /// Checks whether a road may be placed on `edge` right now. Purely a read:
+    /// the phase is only advanced afterwards, by `advance_after_road`, once the
+    /// placement has actually succeeded.
+    ///
+    /// Returns whether the road is free (initial placement, or a Road Building card).
+    pub (crate) fn validate_road_placement(&self, edge: (i32, i32)) -> Result<bool, String> {
         match self.phase {
-            GamePhase::InitialPlacement { round, step } => {
+            GamePhase::InitialPlacement { step, .. } => {
                 match step {
                     PlacementStep::BuildRoad { settlement } => {
                         if !self
@@ -119,11 +124,6 @@ impl GameInstance {
                                     .into(),
                             );
                         }
-
-                        self.phase = GamePhase::InitialPlacement {
-                            round,
-                            step: PlacementStep::BuildSettlement
-                        };
 
                         Ok(true)
                     }
@@ -155,19 +155,34 @@ impl GameInstance {
     }
 
 
-    pub (crate) fn validate_and_advance_after_settlement(&mut self, x: i32, y: i32) -> Result<bool, String> {
+    /// Advances the initial-placement step after a road was successfully built.
+    /// No-op outside initial placement.
+    pub (crate) fn advance_after_road(&mut self) {
+        if let GamePhase::InitialPlacement {
+            round,
+            step: PlacementStep::BuildRoad { .. },
+        } = self.phase
+        {
+            self.phase = GamePhase::InitialPlacement {
+                round,
+                step: PlacementStep::BuildSettlement,
+            };
+        }
+    }
+
+
+    /// Checks whether a settlement may be placed right now. Purely a read: the
+    /// phase is only advanced afterwards, by `advance_after_settlement`, once
+    /// the placement has actually succeeded.
+    ///
+    /// Returns whether the settlement should yield its starting resources
+    /// (second round of initial placement).
+    pub (crate) fn validate_settlement_placement(&self) -> Result<bool, String> {
         match self.phase {
             GamePhase::InitialPlacement { round, step } => {
                 if step != PlacementStep::BuildSettlement {
                     return Err("You must build a road next.".into());
                 }
-
-                self.phase = GamePhase::InitialPlacement {
-                    round,
-                    step: PlacementStep::BuildRoad {
-                        settlement: (x, y),
-                    },
-                };
 
                 Ok(round == InitialRound::Second)
             }
@@ -177,6 +192,24 @@ impl GameInstance {
             GamePhase::WaitingForPlayers => {
                 Err("Game has not started.".into())
             }
+        }
+    }
+
+
+    /// Records the settlement just built as the anchor the next road must touch.
+    /// No-op outside initial placement.
+    pub (crate) fn advance_after_settlement(&mut self, x: i32, y: i32) {
+        if let GamePhase::InitialPlacement {
+            round,
+            step: PlacementStep::BuildSettlement,
+        } = self.phase
+        {
+            self.phase = GamePhase::InitialPlacement {
+                round,
+                step: PlacementStep::BuildRoad {
+                    settlement: (x, y),
+                },
+            };
         }
     }
 
@@ -220,5 +253,129 @@ impl GameInstance {
         self.pending_actions
             .get(&pid)
             .map_or(false, |actions| actions.contains(&action))
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn started_game() -> (GameInstance, Uuid) {
+        let pid = Uuid::from_u128(1);
+        let mut game = GameInstance::new("test".into(), pid, 1);
+        game.start_game();
+        (game, pid)
+    }
+
+    /// A buildable vertex that is far enough from `avoid` to satisfy the
+    /// distance-two rule.
+    fn free_vertex(game: &GameInstance, avoid: Option<(i32, i32)>) -> (i32, i32) {
+        let board = &game.turn_manager.board;
+        let mut coords: Vec<_> = board
+            .vertices
+            .keys()
+            .copied()
+            .filter(|c| board.is_buildable_vertex(*c))
+            .filter(|c| match avoid {
+                Some(a) => {
+                    let dist = (c.0 - a.0).abs() + (c.1 - a.1).abs();
+                    dist > 6
+                }
+                None => true,
+            })
+            .collect();
+        coords.sort();
+        coords[0]
+    }
+
+    /// A rejected settlement must leave the phase untouched, so the player can
+    /// simply click somewhere else. Regression test: the phase used to advance
+    /// before the placement was validated, which deadlocked initial placement.
+    #[test]
+    fn rejected_settlement_leaves_phase_unchanged() {
+        let (mut game, pid) = started_game();
+        let phase_before = game.get_state();
+
+        let err = game
+            .handle_build_settlement(pid, 9999, 9999)
+            .expect_err("a nonexistent vertex must be rejected");
+        assert!(err.contains("InvalidPosition"), "unexpected error: {err}");
+
+        assert_eq!(
+            game.get_state(),
+            phase_before,
+            "a rejected settlement must not advance the placement step"
+        );
+
+        let good = free_vertex(&game, None);
+        game.handle_build_settlement(pid, good.0, good.1)
+            .expect("a legal settlement must still be accepted afterwards");
+    }
+
+    /// A rejected road must not advance the step back to BuildSettlement,
+    /// which would let the player place a second settlement in one round.
+    #[test]
+    fn rejected_road_leaves_phase_unchanged() {
+        let (mut game, pid) = started_game();
+
+        let settlement = free_vertex(&game, None);
+        game.handle_build_settlement(pid, settlement.0, settlement.1)
+            .unwrap();
+
+        let phase_before = game.get_state();
+        assert!(matches!(
+            phase_before,
+            GamePhase::InitialPlacement {
+                step: PlacementStep::BuildRoad { .. },
+                ..
+            }
+        ));
+
+        game.handle_build_road(pid, 9999, 9999)
+            .expect_err("a nonexistent edge must be rejected");
+
+        assert_eq!(
+            game.get_state(),
+            phase_before,
+            "a rejected road must not advance the placement step"
+        );
+    }
+
+    /// The second settlement is bound only by the distance-two rule; it does
+    /// not have to touch the road placed in the first round.
+    #[test]
+    fn second_settlement_need_not_touch_existing_road() {
+        let (mut game, pid) = started_game();
+
+        let first = free_vertex(&game, None);
+        game.handle_build_settlement(pid, first.0, first.1).unwrap();
+
+        let road = *game
+            .turn_manager
+            .board
+            .vertices
+            .get(&first)
+            .unwrap()
+            .adjacent_edges
+            .iter()
+            .next()
+            .unwrap();
+        game.handle_build_road(pid, road.0, road.1).unwrap();
+
+        // Single-player game, so we are now in round two on the same player.
+        game.advance_phase();
+
+        let far = free_vertex(&game, Some(first));
+        assert!(
+            !game
+                .turn_manager
+                .board
+                .is_vertex_connected_to_player(far, pid),
+            "test vertex should not be connected to the player's road"
+        );
+
+        game.handle_build_settlement(pid, far.0, far.1)
+            .expect("an unconnected settlement is legal during initial placement");
     }
 }

@@ -10,29 +10,33 @@ impl GameInstance
             return Err("Wait for your turn!".to_string());
         }
 
-        let give_resources = self.validate_and_advance_after_settlement(x, y)?;
+        let give_resources = self.validate_settlement_placement()?;
 
         let is_initial = self.get_state().is_initial_phase();
 
+        // Only advance the phase once the placement has actually succeeded,
+        // otherwise a rejected click would leave the game waiting for a road
+        // next to a settlement that was never built.
         self.turn_manager
             .build_settlement((x, y), is_initial)
-            .map(|_| {
-                if give_resources {
-                    self.turn_manager.bank.give_initial_settlement_resources(
-                        &self.turn_manager.board,
-                        pid,
-                        (x, y),
-                        &mut self.turn_manager.players,
-                    );
-                }
+            .map_err(|e| format!("{:?}", e))?;
 
-                ServerMessage::Built {
-                    player_id: pid,
-                    structure_type: "SETTLEMENT".into(),
-                    coords: vec![x, y],
-                }
-            })
-            .map_err(|e| format!("{:?}", e))
+        self.advance_after_settlement(x, y);
+
+        if give_resources {
+            self.turn_manager.bank.give_initial_settlement_resources(
+                &self.turn_manager.board,
+                pid,
+                (x, y),
+                &mut self.turn_manager.players,
+            );
+        }
+
+        Ok(ServerMessage::Built {
+            player_id: pid,
+            structure_type: "SETTLEMENT".into(),
+            coords: vec![x, y],
+        })
     }
 
 
@@ -58,11 +62,13 @@ impl GameInstance
             return Err("Wait for your turn!".to_string());
         }
 
-        let free = self.validate_and_advance_after_road((x, y))?;
+        let free = self.validate_road_placement((x, y))?;
 
         self.turn_manager
             .build_road((x, y), free)
             .map_err(|e| format!("{:?}", e))?;
+
+        self.advance_after_road();
 
         if free {
             self.decrement_road_building(pid);
