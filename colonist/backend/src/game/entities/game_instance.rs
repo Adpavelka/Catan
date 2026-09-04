@@ -28,9 +28,6 @@ pub struct GameInstance {
 
 impl GameInstance {
     pub fn new(gid: String, creator_pid: Uuid, player_count: usize) -> Self {
-        let mut player_id_to_slot = HashMap::new();
-        player_id_to_slot.insert(creator_pid, 0);
-
         Self {
             id: gid,
             max_players: player_count,

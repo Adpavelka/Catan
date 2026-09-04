@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use actix::{AsyncContext, Context, WrapFuture};
 use log::info;
 use uuid::Uuid;
@@ -104,12 +103,8 @@ impl Lobby {
         let gid = Uuid::new_v4().to_string()[..6].to_string();
         info!("Creating game {} for player {}", gid, pid);
 
-        let mut player_id_to_slot = HashMap::new();
-        player_id_to_slot.insert(pid, 0);
-
-        let mut game = GameInstance::new(gid.clone(), pid, player_count);
-
-        game.turn_manager.players.add_player_with_colour(pid);
+        // GameInstance::new already seats the creator.
+        let game = GameInstance::new(gid.clone(), pid, player_count);
 
         self.games.insert(gid.clone(), game);
         self.player_to_game.insert(pid, gid.clone());

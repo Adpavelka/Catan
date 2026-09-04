@@ -4,7 +4,6 @@ use crate::game::entities::board::{Board, Coordinates};
 use crate::game::entities::bonus_points::{BiggestArmy, BonusCard, LongestRoad};
 use crate::game::entities::development_card::DevelopmentCard;
 use crate::game::entities::dice::Dice;
-use crate::game::entities::player::Player;
 use crate::game::entities::players::Players;
 use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::robber::Robber;
@@ -30,10 +29,13 @@ pub struct TurnManager {
 
 impl TurnManager {
     pub fn new(player_count: usize, first_player_id:Uuid) -> TurnManager {
-        let first_player = Player::new(first_player_id, "Player 1", 'b');
-
         let board = Board::new();
         let robber = Robber::new(&board);
+
+        // The creator joins through the same path as everyone else, so they get
+        // a name and colour from the shared pool rather than a hardcoded one.
+        let mut players = Players::new(Vec::new());
+        players.add_player_with_colour(first_player_id);
 
         info!("New game initialized for {} players", player_count);
 
@@ -45,7 +47,7 @@ impl TurnManager {
             robber,
             army_bonus: BiggestArmy::new(),
             road_bonus: LongestRoad::new(),
-            players: Players::new(vec![first_player.clone()]),
+            players,
         }
     }
 
