@@ -286,6 +286,65 @@ mod tests {
         coords[0]
     }
 
+    /// Stealing used to be completely unvalidated: anyone could rob anyone,
+    /// at any time, as often as they liked.
+    #[test]
+    fn stealing_requires_having_moved_the_robber() {
+        use crate::game::entities::building::VertexBuilding;
+        use crate::lobby::actions::development::handle_steal_from_player;
+
+        let thief = Uuid::from_u128(1);
+        let victim = Uuid::from_u128(2);
+        let outsider = Uuid::from_u128(3);
+
+        let mut game = GameInstance::new("test".into(), thief, 3);
+        game.turn_manager.players.add_player_with_colour(victim);
+        game.turn_manager.players.add_player_with_colour(outsider);
+        game.start_game();
+        game.advance_phase();
+        game.advance_phase(); // RegularPlay
+
+        // Give the victim something worth taking, and a settlement next to the robber.
+        game.turn_manager
+            .players
+            .get_mut(victim)
+            .unwrap()
+            .resources
+            .add(crate::game::entities::resources::ResourceType::Wood, 3);
+
+        let robber_hex = game.turn_manager.get_robber_pos();
+        let corner = crate::game::entities::board::Board::get_adjacent_hexes(robber_hex)[0];
+        game.turn_manager
+            .board
+            .build_vertex(victim, corner, VertexBuilding::Settlement);
+
+        // No robber move has happened, so there is nothing to cash in.
+        assert!(
+            handle_steal_from_player(thief, victim, &mut game).is_err(),
+            "stealing without moving the robber must be refused"
+        );
+
+        // A player who is not on turn may never steal, even once it is unlocked.
+        game.add_pending_action(thief, PendingAction::Steal);
+        assert!(
+            handle_steal_from_player(outsider, victim, &mut game).is_err(),
+            "a player who is not on turn must not be able to steal"
+        );
+
+        // A victim with nothing next to the robber is not a legal target.
+        assert!(
+            handle_steal_from_player(thief, outsider, &mut game).is_err(),
+            "a player with no building by the robber must not be robbable"
+        );
+
+        // The legal steal works exactly once.
+        assert!(handle_steal_from_player(thief, victim, &mut game).is_ok());
+        assert!(
+            handle_steal_from_player(thief, victim, &mut game).is_err(),
+            "the steal must be consumed, not repeatable"
+        );
+    }
+
     /// A rejected settlement must leave the phase untouched, so the player can
     /// simply click somewhere else. Regression test: the phase used to advance
     /// before the placement was validated, which deadlocked initial placement.

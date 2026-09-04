@@ -107,6 +107,12 @@ pub fn handle_move_robber(pid: Uuid, q: i32, r: i32, game: &mut GameInstance) ->
             game.remove_pending_action(pid, PendingAction::MoveRobber);
             game.remove_pending_action(pid, PendingAction::PlayKnight);
 
+            // Moving the robber is what earns the single steal, and only if
+            // somebody is actually sitting on the new hex.
+            if !game.turn_manager.robbable_players(pid).is_empty() {
+                game.add_pending_action(pid, PendingAction::Steal);
+            }
+
             Ok(ServerMessage::RobberMoved {
                 player_id: pid,
                 new_q: q,
@@ -121,17 +127,35 @@ pub fn handle_move_robber(pid: Uuid, q: i32, r: i32, game: &mut GameInstance) ->
 }
 
 pub fn handle_steal_from_player(pid: Uuid, victim_id: Uuid, game: &mut GameInstance) -> Result<ServerMessage, String> {
-    let tm = &mut game.turn_manager;
+    if pid != game.turn_manager.players.get_current_player().id {
+        return Err("Wait for your turn!".to_string());
+    }
 
-    tm.steal_card(pid, victim_id)
-        .map(|resource| {
-            ServerMessage::PlayerRobbed {
-                thief_id: pid,
-                victim_id,
-                resource,
-            }
-        })
-        .map_err(|e| format!("{:?}", e))
+    // Stealing is only unlocked by moving the robber, and only once.
+    if !game.has_pending_action(pid, PendingAction::Steal) {
+        return Err("You are not allowed to steal right now.".to_string());
+    }
+
+    if victim_id == pid {
+        return Err("You cannot steal from yourself".to_string());
+    }
+
+    if !game.turn_manager.robbable_players(pid).contains(&victim_id) {
+        return Err("That player has no building next to the robber.".to_string());
+    }
+
+    let resource = game
+        .turn_manager
+        .steal_card(pid, victim_id)
+        .map_err(|e| e.to_string())?;
+
+    game.remove_pending_action(pid, PendingAction::Steal);
+
+    Ok(ServerMessage::PlayerRobbed {
+        thief_id: pid,
+        victim_id,
+        resource,
+    })
 }
 
 pub fn handle_year_of_plenty_choice(pid: Uuid, resource1: shared::ResourceType, resource2: shared::ResourceType, game: &mut GameInstance) -> Result<ServerMessage, String> {

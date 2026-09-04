@@ -307,6 +307,7 @@ pub enum PendingAction {
     RoadBuilding { remaining: u8 }, // player has free roads
     YearOfPlenty,                // player must pick 2 resources
     Monopoly,                    // player must pick a resource type
+    Steal,                       // player moved the robber and may rob one victim
 }
 
 

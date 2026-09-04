@@ -5,7 +5,6 @@ use actix::prelude::*;
 use log::{error, info};
 use shared::{ClientRequest, GamePhase, PendingAction, ServerMessage};
 use uuid::Uuid;
-use std::collections::HashSet;
 
 impl Handler<Connect> for Lobby {
     type Result = ();
@@ -287,24 +286,9 @@ impl Lobby {
 
 
     fn handle_robber_flow(&mut self, pid: Uuid, gid: &str, msg: &ServerMessage) {
-        if let ServerMessage::RobberMoved { new_q, new_r, .. } = msg {
+        if let ServerMessage::RobberMoved { .. } = msg {
             if let Some(game) = self.games.get(gid) {
-
-                let mut robbable_players = HashSet::new();
-                let adjacent =
-                    crate::game::entities::board::Board::get_adjacent_hexes((*new_q, *new_r));
-
-                for vertex_coord in &adjacent {
-                    if let Some(vertex) = game.turn_manager.board.vertices.get(vertex_coord) {
-                        if vertex.building.is_some() {
-                            if let Some(owner_id) = vertex.owner {
-                                if owner_id != pid {
-                                    robbable_players.insert(owner_id);
-                                }
-                            }
-                        }
-                    }
-                }
+                let robbable_players = game.turn_manager.robbable_players(pid);
 
                 self.send_server_msg(
                     pid,

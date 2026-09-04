@@ -9,6 +9,7 @@ use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::robber::Robber;
 use log::info;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use uuid::Uuid;
 use crate::game::entities::building::EdgeBuilding::Road;
 use crate::game::entities::building::VertexBuilding::{City, Settlement};
@@ -377,6 +378,26 @@ impl TurnManager {
 
     pub fn get_robber_pos(&self) -> Coordinates {
         self.robber.get_pos()
+    }
+
+    /// Everyone except `thief_id` with a settlement or city on a corner of the
+    /// hex the robber currently occupies. These are the only legal steal targets.
+    pub fn robbable_players(&self, thief_id: Uuid) -> HashSet<Uuid> {
+        let mut victims = HashSet::new();
+
+        for vertex_coord in Board::get_adjacent_hexes(self.get_robber_pos()) {
+            let Some(vertex) = self.board.vertices.get(&vertex_coord) else { continue };
+            if vertex.building.is_none() {
+                continue;
+            }
+            if let Some(owner) = vertex.owner {
+                if owner != thief_id {
+                    victims.insert(owner);
+                }
+            }
+        }
+
+        victims
     }
 }
 
