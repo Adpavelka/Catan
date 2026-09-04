@@ -1,10 +1,39 @@
 use super::{Lobby, actions};
-use crate::network::message::{ClientActorMessage, Connect, Disconnect};
+use crate::network::message::{Authenticate, Authenticated, ClientActorMessage, Connect, Disconnect};
 use actions::handle_game_request;
 use actix::prelude::*;
 use log::{error, info};
 use shared::{ClientRequest, GamePhase, PendingAction, ServerMessage};
 use uuid::Uuid;
+
+impl Handler<Authenticate> for Lobby {
+    type Result = MessageResult<Authenticate>;
+
+    fn handle(&mut self, msg: Authenticate, ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(token) = msg.token {
+            if let Some(player_id) = self.tokens.get(&token) {
+                return MessageResult(Authenticated { player_id: *player_id, token });
+            }
+            info!("Rejected unknown session token; issuing a fresh identity");
+        }
+
+        let token = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        self.tokens.insert(token, player_id);
+
+        let repo = self.repo.clone();
+        ctx.spawn(
+            async move {
+                if let Err(e) = repo.save_session(token, player_id).await {
+                    error!("Failed to persist session: {}", e);
+                }
+            }
+            .into_actor(self),
+        );
+
+        MessageResult(Authenticated { player_id, token })
+    }
+}
 
 impl Handler<Connect> for Lobby {
     type Result = ();

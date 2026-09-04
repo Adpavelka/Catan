@@ -16,6 +16,9 @@ pub struct Lobby {
     pub sessions: HashMap<Uuid, Recipient<ServerMessage>>,
     pub games: HashMap<String, GameInstance>,
     pub player_to_game: HashMap<Uuid, String>,
+    /// Session token -> player identity. A connection is only that player if
+    /// it presents the matching token.
+    pub tokens: HashMap<Uuid, Uuid>,
     pub repo: GameRepository, // Repository for persisting game instances
 }
 
@@ -25,7 +28,11 @@ impl Actor for Lobby {
 
 impl Lobby {
 
-    pub fn new(repo: GameRepository, recovered_games: Vec<GameInstance>) -> Self {
+    pub fn new(
+        repo: GameRepository,
+        recovered_games: Vec<GameInstance>,
+        recovered_tokens: Vec<(Uuid, Uuid)>,
+    ) -> Self {
         let mut games = HashMap::new();
         let mut player_to_game = HashMap::new();
 
@@ -43,6 +50,7 @@ impl Lobby {
             sessions: HashMap::new(),
             games,
             player_to_game,
+            tokens: recovered_tokens.into_iter().collect(),
             repo, // Store the repository for future persistence calls
         }
     }

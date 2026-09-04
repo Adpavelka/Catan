@@ -12,14 +12,16 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct WsWorker {
     pub id: Uuid,
+    pub token: Uuid,
     pub lobby_addr: Addr<Lobby>,
     pub hb: Instant,
 }
 
 impl WsWorker {
-    pub fn new(player_id: Uuid, lobby: Addr<Lobby>) -> Self {
+    pub fn new(player_id: Uuid, token: Uuid, lobby: Addr<Lobby>) -> Self {
         Self {
             id: player_id,
+            token,
             lobby_addr: lobby,
             hb: Instant::now(),
         }
@@ -43,6 +45,17 @@ impl Actor for WsWorker {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
+
+        // Hand the client its credential before anything else, so it can
+        // reclaim this identity after a reload.
+        let session = shared::ServerMessage::Session {
+            player_id: self.id,
+            token: self.token,
+        };
+        if let Ok(json) = serde_json::to_string(&session) {
+            ctx.text(json);
+        }
+
         let addr = ctx.address();
         self.lobby_addr.do_send(Connect {
             addr: addr.recipient(),

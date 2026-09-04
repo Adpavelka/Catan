@@ -76,6 +76,14 @@ pub enum ClientRequest {
 #[serde(tag = "event", content = "data")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ServerMessage {
+    /// Sent immediately on connect. `token` is the client's credential: it is
+    /// issued by the server, and is the only thing that proves which player
+    /// this connection is. Clients must persist it and send it back on
+    /// reconnect. `player_id` is public and proves nothing on its own.
+    Session {
+        player_id: Uuid,
+        token: Uuid,
+    },
     Joined {
         player_id: Uuid,
         game_id: String,

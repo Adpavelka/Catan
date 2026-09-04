@@ -112,6 +112,15 @@ impl GameState {
                     logging::log!("Lobbies updated: {:?}", games);
                     self.lobby_games.set(games);
                 }
+                ServerMessage::Session { player_id, token } => {
+                    logging::log!("Session established for player {}", player_id);
+                    self.player_id.set(Some(player_id));
+
+                    // Persist the credential so a reload reclaims this seat.
+                    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                        let _ = storage.set_item("catan_session_token", &token.to_string());
+                    }
+                }
                 ServerMessage::Joined { game_id, .. } => {
                     self.game_id.set(Some(game_id));
                     self.is_in_game.set(true);
@@ -754,18 +763,13 @@ impl GameState {
 }
 
 pub fn provide_game_state() {
-    let player_id_to_use = (|| {
+    // The server decides who we are; all we may do is present a token it
+    // issued us earlier. A missing or stale token simply gets a new identity.
+    let saved_token = (|| {
         let window = web_sys::window()?;
         let storage = window.local_storage().ok()??;
-        if let Ok(Some(id_str)) = storage.get_item("catan_player_id") {
-            if let Ok(parsed) = Uuid::parse_str(&id_str) {
-                return Some(parsed);
-            }
-        }
-        let new_id = Uuid::new_v4();
-        let _ = storage.set_item("catan_player_id", &new_id.to_string());
-        Some(new_id)
-    })().unwrap_or_else(Uuid::new_v4);
+        storage.get_item("catan_session_token").ok().flatten()
+    })();
     let state = GameState {
         // Lobby state
         messages: create_rw_signal(Vec::new()),
@@ -777,7 +781,7 @@ pub fn provide_game_state() {
 
         // Game state
         game_id: create_rw_signal(None),
-        player_id: create_rw_signal(Some(player_id_to_use)),
+        player_id: create_rw_signal(None),
         players: create_rw_signal(Vec::new()),
         current_turn_player: create_rw_signal(Uuid::nil()),
         my_resources: create_rw_signal(Resources::default()),
@@ -824,7 +828,10 @@ pub fn provide_game_state() {
 
     let state_clone = state;
     spawn_local(async move {
-        let ws_url = format!("ws://127.0.0.1:8080/ws?id={}", player_id_to_use);
+        let ws_url = match saved_token {
+            Some(token) => format!("ws://127.0.0.1:8080/ws?token={}", token),
+            None => "ws://127.0.0.1:8080/ws".to_string(),
+        };
         logging::log!("Connecting to WebSocket at {}", ws_url);
         match WebSocket::open(&ws_url) {
             Ok(ws) => {

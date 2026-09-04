@@ -25,3 +25,15 @@ pub struct ClientActorMessage {
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
 pub struct ServerMessage(pub String); 
+/// Resolve a client-supplied session token to a player identity, minting a new
+/// one when the client has no valid token.
+#[derive(Message)]
+#[rtype(result = "Authenticated")]
+pub struct Authenticate {
+    pub token: Option<Uuid>,
+}
+
+pub struct Authenticated {
+    pub player_id: Uuid,
+    pub token: Uuid,
+}
