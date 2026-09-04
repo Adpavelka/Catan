@@ -2,7 +2,7 @@ use leptos::*;
 use uuid::Uuid;
 use crate::components::board::{player_color_hex, Board};
 use crate::state::GameState;
-use shared::ClientRequest;
+use shared::{ClientRequest, GamePhase};
 
 #[component]
 pub fn GamePage() -> impl IntoView {
@@ -60,6 +60,24 @@ pub fn GamePage() -> impl IntoView {
                     </div>
                 </div>
                 <div class="flex items-center gap-4">
+                    // Offered while the table is short of a full house, so a
+                    // game of three does not wait forever for a fourth.
+                    <Show when=move || {
+                        state.game_phase.get() == GamePhase::WaitingForPlayers
+                            && state.players.get().len() >= 3
+                    }>
+                        <button
+                            class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold transition-all shadow-lg active:scale-95 text-xs"
+                            on:click=move |_| {
+                                if let Some(game_id) = state.game_id.get() {
+                                    state.send(ClientRequest::StartGame { game_id });
+                                }
+                            }
+                        >
+                            "START NOW"
+                        </button>
+                    </Show>
+
                     <button
                     class="bg-red-900/40 hover:bg-red-700 text-red-200 px-4 py-2 rounded-lg font-bold transition-all border border-red-800/50 active:scale-95 text-xs"
                     on:click=move |_| {

@@ -40,9 +40,11 @@ impl Players {
         self.order.push(id);
     }
 
-    pub fn add_player_with_colour(&mut self, player_id: Uuid) {
+    /// Seats a player with a free colour. Returns false when every colour is
+    /// taken, in which case nothing is added.
+    pub fn add_player_with_colour(&mut self, player_id: Uuid) -> bool {
         if self.players.contains_key(&player_id) {
-            return;
+            return true;
         }
 
         let all_colors = vec![
@@ -60,13 +62,15 @@ impl Players {
             .filter(|(c, _)| !taken_colors.contains(c))
             .collect();
 
-        if let Some(pos) = self.get_random_index(available.len()) {
-            let (color, default_name) = available.remove(pos);
+        let Some(pos) = self.get_random_index(available.len()) else {
+            return false;
+        };
 
-            let player = Player::new(player_id, default_name, color);
-            self.order.push(player.id);
-            self.players.insert(player_id, player);
-        }
+        let (color, default_name) = available.remove(pos);
+        let player = Player::new(player_id, default_name, color);
+        self.order.push(player.id);
+        self.players.insert(player_id, player);
+        true
     }
 
     fn get_random_index(&self, len: usize) -> Option<usize> {

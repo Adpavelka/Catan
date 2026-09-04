@@ -71,8 +71,8 @@ impl Lobby {
             }
 
             let missing = game.turn_manager.players.get(pid).is_none();
-            if missing {
-                game.turn_manager.players.add_player_with_colour(pid);
+            if missing && !game.turn_manager.players.add_player_with_colour(pid) {
+                return self.send_error(pid, "Game is full");
             }
 
             (game.turn_manager.players.len() >= game.max_players, missing)
@@ -124,7 +124,7 @@ impl Lobby {
     fn begin_game(&mut self, game_id: &str) {
         let first_player = {
             let Some(game) = self.games.get_mut(game_id) else { return };
-            if game.get_state() != GamePhase::WaitingForPlayers {
+            if !game.can_start() {
                 return;
             }
 

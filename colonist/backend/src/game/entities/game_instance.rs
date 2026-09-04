@@ -31,6 +31,8 @@ pub struct GameInstance {
 /// Catan needs at least three players; below that the trading and robber
 /// rules stop making sense.
 pub const MIN_PLAYERS: usize = 3;
+/// There are only four player colours, so four is a hard ceiling.
+pub const MAX_PLAYERS: usize = 4;
 
 /// Trade offers older than this are treated as withdrawn.
 pub const TRADE_LIFETIME_SECS: u64 = 120;
@@ -50,9 +52,13 @@ pub fn now_secs() -> u64 {
 
 impl GameInstance {
     pub fn new(gid: String, creator_pid: Uuid, player_count: usize) -> Self {
+        // The requested size comes straight from a client, so pin it to what
+        // the game can actually seat.
+        let max_players = player_count.clamp(MIN_PLAYERS, MAX_PLAYERS);
+
         Self {
             id: gid,
-            max_players: player_count,
+            max_players,
 
             turn_manager: TurnManager::new(player_count, creator_pid),
 
@@ -317,6 +323,35 @@ mod tests {
             .collect();
         coords.sort();
         coords[0]
+    }
+
+    /// A client picks the table size, so it has to be pinned to what the game
+    /// can actually seat - there are only four colours.
+    #[test]
+    fn requested_table_size_is_clamped_to_a_playable_range() {
+        let creator = Uuid::from_u128(1);
+
+        assert_eq!(GameInstance::new("a".into(), creator, 99).max_players, MAX_PLAYERS);
+        assert_eq!(GameInstance::new("b".into(), creator, 0).max_players, MIN_PLAYERS);
+        assert_eq!(GameInstance::new("c".into(), creator, 2).max_players, MIN_PLAYERS);
+        assert_eq!(GameInstance::new("d".into(), creator, 4).max_players, 4);
+    }
+
+    /// Seating must report failure rather than silently dropping the player.
+    #[test]
+    fn seating_fails_once_every_colour_is_taken() {
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 4);
+
+        for n in 2..=4u128 {
+            assert!(game.turn_manager.players.add_player_with_colour(Uuid::from_u128(n)));
+        }
+        assert_eq!(game.turn_manager.players.len(), 4);
+
+        assert!(
+            !game.turn_manager.players.add_player_with_colour(Uuid::from_u128(5)),
+            "a fifth player has no colour and must be refused"
+        );
+        assert_eq!(game.turn_manager.players.len(), 4, "the roster must not grow");
     }
 
     #[test]
