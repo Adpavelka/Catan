@@ -23,6 +23,8 @@ pub struct TurnManager {
 
     robber: Robber,
     game_over: bool,
+    #[serde(default)]
+    winner: Option<Uuid>,
     
     pub army_bonus: BiggestArmy, // tohle by taky mělo private ne?
     pub road_bonus: LongestRoad, // tohle by taky mělo private ne?
@@ -45,6 +47,7 @@ impl TurnManager {
             bank: Bank::new(),
             board,
             game_over: false,
+            winner: None,
             robber,
             army_bonus: BiggestArmy::new(),
             road_bonus: LongestRoad::new(),
@@ -155,7 +158,7 @@ impl TurnManager {
         }
 
         self.board.build_vertex(pid, pos, Settlement);
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         info!("Player {} built a SETTLEMENT at {:?}", pid, pos);
         Ok(())
@@ -186,7 +189,7 @@ impl TurnManager {
         player.use_city()?;
 
         self.board.build_vertex(pid, pos, City);
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         info!("Player {} built a CITY at {:?}", pid, pos);
         Ok(())
@@ -232,7 +235,7 @@ impl TurnManager {
         player.longest_road = longest_road_len;
 
         self.road_bonus.recalculate(&mut self.players);
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         info!("Player {} built a ROAD at {:?}", pid, pos);
         Ok(())
@@ -269,7 +272,7 @@ impl TurnManager {
         }
 
         player.dev_cards.push(card);
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         Ok(card_type)
     }
@@ -316,7 +319,7 @@ impl TurnManager {
             .ok_or(GameError::PlayerNotFound)?;
 
         player.dev_card_played_this_turn = true;
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         Ok(())
     }
@@ -343,16 +346,28 @@ impl TurnManager {
     }    
 
     
-    fn has_player_won(&mut self, player_id: Uuid) -> bool {
-        let answer = self.players
-                                .get(player_id)
-                                .map(|p| p.get_total_victory_points() >= 10)
-                                .unwrap_or(false);
+    /// Scans every player, not just whoever moved: gaining or losing Longest
+    /// Road or Largest Army can push a different player over the line.
+    fn check_for_winner(&mut self) -> Option<Uuid> {
+        if self.winner.is_some() {
+            return self.winner;
+        }
 
-        if answer {
+        let winner = (0..self.players.len())
+            .filter_map(|idx| self.players.get_by_index(idx))
+            .find(|player| player.get_total_victory_points() >= 10)
+            .map(|player| player.id);
+
+        if let Some(id) = winner {
+            self.winner = Some(id);
             self.game_over = true;
         }
-        answer
+
+        winner
+    }
+
+    pub fn winner(&self) -> Option<Uuid> {
+        self.winner
     }
 
 
@@ -509,7 +524,7 @@ mod tests {
                 .add_secret_victory_point();
         }
 
-        tm.has_player_won(pid);
+        tm.check_for_winner();
         let res = tm.next_turn();
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
@@ -622,8 +637,9 @@ mod tests {
                 .add_secret_victory_point();
         }
 
-        let won = tm.has_player_won(pid);
-        assert!(won);
+        let won = tm.check_for_winner();
+        assert_eq!(won, Some(pid));
         assert!(tm.game_over());
+        assert_eq!(tm.winner(), Some(pid));
     }
 }

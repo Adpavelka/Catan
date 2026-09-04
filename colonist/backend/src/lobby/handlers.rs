@@ -93,22 +93,21 @@ impl Handler<ClientActorMessage> for Lobby {
 
 impl Lobby {
     fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>) {
-        self.handle_victory_if_needed(pid, gid);
+        self.handle_victory_if_needed(gid);
         self.persist_game(gid, ctx);
         self.broadcast_to_game(gid, msg.clone());
         self.handle_post_message_effects(pid, gid, &msg);
     }
 
-    fn handle_victory_if_needed(&mut self, pid: Uuid, gid: &str) {
-        if let Some(game) = self.games.get(gid) {
-            if game.turn_manager.game_over() {
-                let victory_msg = ServerMessage::PlayerWon {
-                    player_id: pid,
-                    secret_victory_points: game.turn_manager.player_secret_victory_points(pid),
-                };
-                self.broadcast_to_game(gid, victory_msg);
-            }
-        }
+    fn handle_victory_if_needed(&mut self, gid: &str) {
+        let Some(game) = self.games.get(gid) else { return };
+        let Some(winner) = game.turn_manager.winner() else { return };
+
+        let victory_msg = ServerMessage::PlayerWon {
+            player_id: winner,
+            secret_victory_points: game.turn_manager.player_secret_victory_points(winner),
+        };
+        self.broadcast_to_game(gid, victory_msg);
     }
 
     fn persist_game(&self, gid: &str, ctx: &mut Context<Self>) {

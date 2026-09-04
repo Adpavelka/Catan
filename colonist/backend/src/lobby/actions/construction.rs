@@ -1,6 +1,6 @@
 use crate::game::entities::game_instance::GameInstance;
 
-use shared::ServerMessage;
+use shared::{GamePhase, ServerMessage};
 use uuid::Uuid;
 
 impl GameInstance
@@ -43,6 +43,10 @@ impl GameInstance
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
         if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
+        }
+
+        if self.get_state() != GamePhase::RegularPlay {
+            return Err("You can only build cities during regular play.".to_string());
         }
 
         self.turn_manager.build_city((x, y))

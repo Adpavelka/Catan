@@ -82,34 +82,53 @@ impl Bank {
             }
         }
 
-        let can_distribute: HashSet<ResourceType> = totals
-            .iter()
-            .filter(|(res, needed)| {
-                let available = self.game_resources.amount_of(**res);
-                if available < **needed {
-                    log::warn!(
-                        "Bank does not have enough {:?}: needed {}, available {}",
-                        res,
-                        needed,
-                        available
-                    );
-                    false
-                } else {
-                    true
-                }
-            })
-            .map(|(res, _)| *res)
-            .collect();
+        let mut claimants: HashMap<ResourceType, HashSet<Uuid>> = HashMap::new();
+        for (player_id, res, _) in &pending {
+            claimants.entry(*res).or_default().insert(*player_id);
+        }
+
+        // When the bank cannot cover a resource, the rules distinguish two
+        // cases: a single claimant receives whatever is left, but if several
+        // players are owed it then nobody receives any of it.
+        let mut budget: HashMap<ResourceType, u32> = HashMap::new();
+        for (res, needed) in &totals {
+            let available = self.game_resources.amount_of(*res);
+
+            let payable = if available >= *needed {
+                *needed
+            } else if claimants.get(res).map_or(0, |ids| ids.len()) == 1 {
+                log::warn!(
+                    "Bank low on {:?}: paying sole claimant {} of {}",
+                    res,
+                    available,
+                    needed
+                );
+                available
+            } else {
+                log::warn!(
+                    "Bank does not have enough {:?} for {} claimants: needed {}, available {}",
+                    res,
+                    claimants.get(res).map_or(0, |ids| ids.len()),
+                    needed,
+                    available
+                );
+                0
+            };
+
+            budget.insert(*res, payable);
+        }
 
         let mut distributed = Vec::new();
 
         for (player_id, res, amount) in pending {
-            if !can_distribute.contains(&res) {
+            let remaining = budget.entry(res).or_insert(0);
+            let payout = amount.min(*remaining);
+            if payout == 0 {
                 continue;
             }
 
             let mut cost = ResourceSet::new();
-            cost.add(res, amount);
+            cost.add(res, payout);
 
             if self
                 .collect_from_to(
@@ -120,7 +139,8 @@ impl Bank {
                 )
                 .is_ok()
             {
-                distributed.push((player_id, res, amount));
+                *budget.get_mut(&res).expect("budget entry exists") -= payout;
+                distributed.push((player_id, res, payout));
             }
         }
 
@@ -403,6 +423,100 @@ mod tests {
 
     fn players(ps: Vec<Player>) -> Players {
         Players::new(ps)
+    }
+
+    /// Builds a board where exactly `settlers` players own a settlement on a
+    /// corner of one chosen hex, and returns that hex's number and resource.
+    fn board_with_settlements_on_one_hex(
+        settlers: &[Uuid],
+    ) -> (Board, Robber, u8, ResourceType) {
+        let mut board = Board::new();
+
+        let (coord, number, resource, corners) = board
+            .hexes
+            .values()
+            .find(|h| h.resource != ResourceType::Desert)
+            .map(|h| (h.coord, h.number, h.resource, h.adjacent_vertices))
+            .unwrap();
+
+        // Any other hex sharing this number would pay out too, which would
+        // muddy the accounting, so silence them.
+        let others: Vec<_> = board
+            .hexes
+            .values()
+            .filter(|h| h.coord != coord && h.number == number)
+            .map(|h| h.coord)
+            .collect();
+        for other in others {
+            board.hexes.get_mut(&other).unwrap().number = 0;
+        }
+
+        for (i, owner) in settlers.iter().enumerate() {
+            let v = board.vertices.get_mut(&corners[i * 2]).unwrap();
+            v.owner = Some(*owner);
+            v.building = Some(VertexBuilding::Settlement);
+        }
+
+        let robber = Robber::new(&board);
+        (board, robber, number, resource)
+    }
+
+    /// A lone claimant takes whatever the bank has left, even if it is short.
+    #[test]
+    fn bank_shortfall_pays_a_sole_claimant_the_remainder() {
+        let only = pid(1);
+        let (mut board, robber, number, resource) =
+            board_with_settlements_on_one_hex(&[only]);
+
+        // Upgrade to a city so the player is owed 2 but the bank holds only 1.
+        let corner = *board
+            .vertices
+            .iter()
+            .find(|(_, v)| v.owner == Some(only))
+            .map(|(c, _)| c)
+            .unwrap();
+        board.vertices.get_mut(&corner).unwrap().building = Some(VertexBuilding::City);
+
+        let mut bank = Bank::new();
+        let mut players = players(vec![Player::new(only, "A", 'A')]);
+
+        bank.game_resources = ResourceSet::new();
+        bank.game_resources.add(resource, 1);
+
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
+
+        assert_eq!(
+            distributed,
+            vec![(only, resource, 1)],
+            "the sole claimant should receive the bank's last card"
+        );
+        assert_eq!(players.get(only).unwrap().resources.amount_of(resource), 1);
+        assert_eq!(bank.game_resources.amount_of(resource), 0);
+    }
+
+    /// If two players are owed a resource the bank cannot cover, neither gets any.
+    #[test]
+    fn bank_shortfall_pays_nobody_when_several_players_claim() {
+        let a = pid(1);
+        let b = pid(2);
+        let (board, robber, number, resource) = board_with_settlements_on_one_hex(&[a, b]);
+
+        let mut bank = Bank::new();
+        let mut players = players(vec![Player::new(a, "A", 'A'), Player::new(b, "B", 'B')]);
+
+        // One card left, two players each owed one.
+        bank.game_resources = ResourceSet::new();
+        bank.game_resources.add(resource, 1);
+
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
+
+        assert!(
+            distributed.is_empty(),
+            "with two claimants and one card, nobody is paid"
+        );
+        assert_eq!(players.get(a).unwrap().resources.amount_of(resource), 0);
+        assert_eq!(players.get(b).unwrap().resources.amount_of(resource), 0);
+        assert_eq!(bank.game_resources.amount_of(resource), 1, "card stays in the bank");
     }
 
     #[test]

@@ -58,8 +58,14 @@ impl Player {
         self.secret_victory_points += 1;
     }
 
+    /// Road Building may be played with a single road left; the player simply
+    /// places fewer than two.
     pub fn can_play_road_builder(&self) -> bool {
-        self.roads_left >= 2
+        self.roads_left >= 1
+    }
+
+    pub fn roads_left(&self) -> u8 {
+        self.roads_left
     }
 
     // useless????
@@ -184,6 +190,23 @@ mod tests {
         assert_eq!(p.resources.amount_of(ResourceType::Ore), 0);
 
         assert!(p.dev_cards.is_empty());
+    }
+
+    /// Road Building is playable with a single road left; the rules do not
+    /// require being able to place both.
+    #[test]
+    fn road_builder_playable_with_one_road_left() {
+        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+
+        for _ in 0..14 {
+            p.use_road().unwrap();
+        }
+        assert_eq!(p.roads_left(), 1);
+        assert!(p.can_play_road_builder());
+
+        p.use_road().unwrap();
+        assert_eq!(p.roads_left(), 0);
+        assert!(!p.can_play_road_builder(), "no roads left means nothing to place");
     }
 
     #[test]

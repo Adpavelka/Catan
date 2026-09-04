@@ -67,7 +67,14 @@ pub fn handle_play_dev_card(pid: Uuid, card: shared::DevCardType, target: Option
                 }
 
                 shared::DevCardType::RoadBuilding => {
-                    game.add_pending_action(pid, PendingAction::RoadBuilding { remaining: 2 });
+                    // Two free roads, or fewer if the player is nearly out.
+                    let remaining = game
+                        .turn_manager
+                        .players
+                        .get(pid)
+                        .map_or(0, |player| player.roads_left())
+                        .min(2);
+                    game.add_pending_action(pid, PendingAction::RoadBuilding { remaining });
                 }
 
                 shared::DevCardType::YearOfPlenty => {
