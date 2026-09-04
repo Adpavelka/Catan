@@ -9,6 +9,7 @@ use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::robber::Robber;
 use log::info;
 use serde::{Deserialize, Serialize};
+use shared::PlayerColour;
 use std::collections::HashSet;
 use uuid::Uuid;
 use crate::game::entities::building::EdgeBuilding::Road;
@@ -31,14 +32,14 @@ pub struct TurnManager {
 }
 
 impl TurnManager {
-    pub fn new(player_count: usize, first_player_id:Uuid) -> TurnManager {
+    pub fn new(player_count: usize, first_player_id: Uuid, name: &str, colour: PlayerColour) -> TurnManager {
         let board = Board::new();
         let robber = Robber::new(&board);
 
-        // The creator joins through the same path as everyone else, so they get
-        // a name and colour from the shared pool rather than a hardcoded one.
+        // The creator is seated exactly like everyone else, with the name and
+        // colour they picked. An empty roster cannot clash, so this cannot fail.
         let mut players = Players::new(Vec::new());
-        players.add_player_with_colour(first_player_id);
+        let _ = players.seat(first_player_id, name, colour);
 
         info!("New game initialized for {} players", player_count);
 
@@ -422,6 +423,7 @@ impl TurnManager {
 
 #[cfg(test)]
 mod tests {
+    use shared::PlayerColour;
     use crate::errors::GameError;
     use crate::game::entities::building::EdgeBuilding::Road;
     use crate::game::entities::building::VertexBuilding::Settlement;
@@ -435,13 +437,13 @@ mod tests {
     }
 
     fn make_tm(player_count: usize) -> TurnManager {
-        TurnManager::new(player_count, pid(1))
+        TurnManager::new(player_count, pid(1), "Tester", PlayerColour::Blue)
     }
 
     fn add_players(tm: &mut TurnManager, count: usize) {
         for i in 2..=count as u128 {
             tm.players
-                .add_player(Player::new(pid(i), &format!("Player {}", i), 'x'));
+                .add_player(Player::new(pid(i), &format!("Player {}", i), PlayerColour::Blue));
         }
     }
 

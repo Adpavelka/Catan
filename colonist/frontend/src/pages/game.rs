@@ -2,7 +2,7 @@ use leptos::*;
 use uuid::Uuid;
 use crate::components::board::{player_color_hex, Board};
 use crate::state::GameState;
-use shared::{ClientRequest, GamePhase};
+use shared::{ClientRequest, GamePhase, PlayerColour};
 
 #[component]
 pub fn GamePage() -> impl IntoView {
@@ -197,7 +197,7 @@ pub fn GamePage() -> impl IntoView {
                                                 name=display_name
                                                 score=score_signal
                                                 is_active=is_active
-                                                color=player.color.clone()
+                                                colour=player.colour
                                                 is_me=player.player_id == state.player_id.get().unwrap_or(Uuid::nil())
                                                 resource_count=resource_count
                                                 dev_card_count=dev_card_count
@@ -383,7 +383,7 @@ fn PlayerTagDynamic(
     name: String,
     score: Signal<(i32, i32)>,
     is_active: impl Fn() -> bool + 'static + Clone,
-    color: String,
+    colour: PlayerColour,
     is_me: bool,
     resource_count: Signal<i32>,
     dev_card_count: Signal<i32>,
@@ -392,7 +392,7 @@ fn PlayerTagDynamic(
     has_longest_road: Signal<bool>,
     has_largest_army: Signal<bool>
 ) -> impl IntoView {
-    let hex_color = player_color_hex(&color);
+    let hex_color = player_color_hex(colour);
     let is_active_for_style = is_active.clone();
     let is_active_for_class = is_active.clone();
     let active_class = move || {

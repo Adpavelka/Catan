@@ -1,5 +1,5 @@
 use leptos::*;
-use shared::{BuildingInfo, ClientRequest, GamePhase, HexInfo, InitialRound, PlayerInfo, PortInfo, Resources, ServerMessage};
+use shared::{BuildingInfo, ClientRequest, GamePhase, HexInfo, InitialRound, LobbyGameInfo, PlayerColour, PlayerInfo, PortInfo, Resources, ServerMessage};
 use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::Message;
 use futures::{SinkExt, StreamExt};
@@ -30,7 +30,9 @@ pub struct GameState {
     // Lobby state
     pub messages: RwSignal<Vec<String>>,
     pub is_in_game: RwSignal<bool>,
-    pub lobby_games: RwSignal<Vec<(String, usize, usize)>>,
+    pub lobby_games: RwSignal<Vec<LobbyGameInfo>>,
+    /// The name this player last typed, remembered between sessions.
+    pub my_name: RwSignal<String>,
     pub ws_sender: RwSignal<Option<UnboundedSender<Message>>>,
     pub connection_error: RwSignal<Option<String>>,
     pub is_connecting: RwSignal<bool>,
@@ -94,6 +96,17 @@ pub fn card_label(card: &shared::DevCardType) -> &'static str {
 }
 
 impl GameState {
+    /// The seat this player is asking for, remembering the name for next time.
+    pub fn seat_request(&self, colour: PlayerColour) -> shared::SeatRequest {
+        let name = self.my_name.get_untracked().trim().to_string();
+
+        if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = storage.set_item("catan_player_name", &name);
+        }
+
+        shared::SeatRequest { name, colour }
+    }
+
     pub fn send(&self, req: ClientRequest) {
         if let Some(tx) = self.ws_sender.get_untracked() {
             if let Ok(json) = serde_json::to_string(&req) {
@@ -764,6 +777,12 @@ impl GameState {
 pub fn provide_game_state() {
     // The server decides who we are; all we may do is present a token it
     // issued us earlier. A missing or stale token simply gets a new identity.
+    let saved_name = (|| {
+        let window = web_sys::window()?;
+        let storage = window.local_storage().ok()??;
+        storage.get_item("catan_player_name").ok().flatten()
+    })().unwrap_or_default();
+
     let saved_token = (|| {
         let window = web_sys::window()?;
         let storage = window.local_storage().ok()??;
@@ -774,6 +793,7 @@ pub fn provide_game_state() {
         messages: create_rw_signal(Vec::new()),
         is_in_game: create_rw_signal(false),
         lobby_games: create_rw_signal(Vec::new()),
+        my_name: create_rw_signal(saved_name),
         ws_sender: create_rw_signal(None),
         connection_error: create_rw_signal(None),
         is_connecting: create_rw_signal(true),

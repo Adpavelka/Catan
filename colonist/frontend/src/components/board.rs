@@ -1,6 +1,6 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
-use shared::{ClientRequest, ResourceType, HexInfo, PortType, PortInfo};
+use shared::{ClientRequest, ResourceType, HexInfo, PlayerColour, PortType, PortInfo};
 use uuid::Uuid;
 
 // Convert axial coordinates (q, r) to pixel coordinates for SVG
@@ -85,14 +85,8 @@ fn resource_label(resource: &ResourceType) -> &'static str {
     }
 }
 
-pub(crate) fn player_color_hex(color_char: &str) -> &'static str {
-    match color_char.chars().next() {
-        Some('b') => "#3b82f6", // blue-500
-        Some('r') => "#ef4444", // red-500
-        Some('g') => "#22c55e", // green-500
-        Some('w') | Some('y') => "#eab308", // yellow-500
-        _ => "#a855f7", // purple-500
-    }
+pub(crate) fn player_color_hex(colour: PlayerColour) -> &'static str {
+    colour.hex()
 }
 
 // Get player color (for rendering buildings)
@@ -101,16 +95,7 @@ fn player_color(player_id: Uuid, state: &GameState) -> String {
     state.players.get_untracked()
         .iter()
         .find(|p| p.player_id == player_id)
-        .map(|p| {
-            // Convert backend color char to Tailwind class
-            match p.color.chars().next() {
-                Some('b') => "fill-blue-500".to_string(),
-                Some('r') => "fill-red-500".to_string(),
-                Some('g') => "fill-green-500".to_string(),
-                Some('w') | Some('y') => "fill-yellow-500".to_string(),
-                _ => "fill-purple-500".to_string(),
-            }
-        })
+        .map(|p| p.colour.fill_class().to_string())
         .unwrap_or_else(|| "fill-purple-500".to_string())
 }
 
@@ -552,15 +537,7 @@ pub fn Board() -> impl IntoView {
                                 let stroke_color = state.players.get()
                                     .iter()
                                     .find(|p| p.player_id == road.player_id)
-                                    .map(|p| {
-                                        match p.color.chars().next() {
-                                            Some('b') => "#3b82f6", // blue-500
-                                            Some('r') => "#ef4444", // red-500
-                                            Some('g') => "#22c55e", // green-500
-                                            Some('w') | Some('y') => "#eab308", // yellow-500
-                                            _ => "#a855f7", // purple-500
-                                        }
-                                    })
+                                    .map(|p| p.colour.hex())
                                     .unwrap_or("#a855f7");
 
                                 view! {

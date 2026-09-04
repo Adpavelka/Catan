@@ -409,6 +409,7 @@ impl Bank {
 
 #[cfg(test)]
 mod tests {
+    use shared::PlayerColour;
     use super::*;
     use crate::game::entities::board::Board;
     use crate::game::entities::building::VertexBuilding;
@@ -478,7 +479,7 @@ mod tests {
         board.vertices.get_mut(&corner).unwrap().building = Some(VertexBuilding::City);
 
         let mut bank = Bank::new();
-        let mut players = players(vec![Player::new(only, "A", 'A')]);
+        let mut players = players(vec![Player::new(only, "A", PlayerColour::Blue)]);
 
         bank.game_resources = ResourceSet::new();
         bank.game_resources.add(resource, 1);
@@ -502,7 +503,7 @@ mod tests {
         let (board, robber, _, number, resource) = board_with_settlements_on_one_hex(&[a, b]);
 
         let mut bank = Bank::new();
-        let mut players = players(vec![Player::new(a, "A", 'A'), Player::new(b, "B", 'B')]);
+        let mut players = players(vec![Player::new(a, "A", PlayerColour::Red), Player::new(b, "B", PlayerColour::Green)]);
 
         // One card left, two players each owed one.
         bank.game_resources = ResourceSet::new();
@@ -546,7 +547,7 @@ mod tests {
             board_with_settlements_on_one_hex(&[player_id]);
 
         let mut bank = Bank::new();
-        let mut players = players(vec![Player::new(player_id, "A", 'A')]);
+        let mut players = players(vec![Player::new(player_id, "A", PlayerColour::Yellow)]);
 
         let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
 
@@ -564,7 +565,7 @@ mod tests {
             board_with_settlements_on_one_hex(&[player_id]);
 
         let mut bank = Bank::new();
-        let mut players = players(vec![Player::new(player_id, "A", 'A')]);
+        let mut players = players(vec![Player::new(player_id, "A", PlayerColour::Blue)]);
 
         robber.move_to(hex_coord).unwrap();
 
@@ -586,10 +587,10 @@ mod tests {
         let from = pid(1);
         let to = pid(2);
 
-        let mut p1 = Player::new(from, "From", 'A');
+        let mut p1 = Player::new(from, "From", PlayerColour::Red);
         p1.resources.add(ResourceType::Wood, 3);
 
-        let p2 = Player::new(to, "To", 'B');
+        let p2 = Player::new(to, "To", PlayerColour::Green);
 
         let mut players = players(vec![p1, p2]);
 
@@ -620,10 +621,10 @@ mod tests {
 
         let target = pid(0);
 
-        let mut ps = vec![Player::new(target, "T", 'T')];
+        let mut ps = vec![Player::new(target, "T", PlayerColour::Yellow)];
 
         for i in 1..=3 {
-            let mut p = Player::new(pid(i), "P", 'A');
+            let mut p = Player::new(pid(i), "P", PlayerColour::Blue);
             p.resources.add(ResourceType::Ore, i as u32);
             ps.push(p);
         }
@@ -653,7 +654,7 @@ mod tests {
         let pid1 = Uuid::from_u128(1);
         let pid2 = Uuid::from_u128(2); // nebude existovat
 
-        let mut from = Player::new(pid1, "From", 'A');
+        let mut from = Player::new(pid1, "From", PlayerColour::Blue);
         from.resources.add(ResourceType::Brick, 2);
 
         let mut players = Players::new(vec![from]);

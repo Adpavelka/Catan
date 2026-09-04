@@ -51,7 +51,13 @@ pub fn now_secs() -> u64 {
 }
 
 impl GameInstance {
-    pub fn new(gid: String, creator_pid: Uuid, player_count: usize) -> Self {
+    pub fn new(
+        gid: String,
+        creator_pid: Uuid,
+        player_count: usize,
+        creator_name: &str,
+        creator_colour: shared::PlayerColour,
+    ) -> Self {
         // The requested size comes straight from a client, so pin it to what
         // the game can actually seat.
         let max_players = player_count.clamp(MIN_PLAYERS, MAX_PLAYERS);
@@ -60,7 +66,7 @@ impl GameInstance {
             id: gid,
             max_players,
 
-            turn_manager: TurnManager::new(player_count, creator_pid),
+            turn_manager: TurnManager::new(player_count, creator_pid, creator_name, creator_colour),
 
             phase: GamePhase::WaitingForPlayers,
             pending_actions: HashMap::new(),
@@ -270,6 +276,11 @@ impl GameInstance {
             .retain(|_, trade| now.saturating_sub(trade.created_at_secs) <= TRADE_LIFETIME_SECS);
     }
 
+    /// Colours a joining player may still pick.
+    pub fn available_colours(&self) -> Vec<shared::PlayerColour> {
+        self.turn_manager.players.available_colours()
+    }
+
     /// Whether there are enough players seated to begin.
     pub fn can_start(&self) -> bool {
         self.get_state() == GamePhase::WaitingForPlayers
@@ -299,7 +310,7 @@ mod tests {
 
     fn started_game() -> (GameInstance, Uuid) {
         let pid = Uuid::from_u128(1);
-        let mut game = GameInstance::new("test".into(), pid, 1);
+        let mut game = GameInstance::new("test".into(), pid, 1, "Tester", shared::PlayerColour::Blue);
         game.start_game();
         (game, pid)
     }
@@ -331,39 +342,50 @@ mod tests {
     fn requested_table_size_is_clamped_to_a_playable_range() {
         let creator = Uuid::from_u128(1);
 
-        assert_eq!(GameInstance::new("a".into(), creator, 99).max_players, MAX_PLAYERS);
-        assert_eq!(GameInstance::new("b".into(), creator, 0).max_players, MIN_PLAYERS);
-        assert_eq!(GameInstance::new("c".into(), creator, 2).max_players, MIN_PLAYERS);
-        assert_eq!(GameInstance::new("d".into(), creator, 4).max_players, 4);
+        assert_eq!(GameInstance::new("a".into(), creator, 99, "Tester", shared::PlayerColour::Blue).max_players, MAX_PLAYERS);
+        assert_eq!(GameInstance::new("b".into(), creator, 0, "Tester", shared::PlayerColour::Blue).max_players, MIN_PLAYERS);
+        assert_eq!(GameInstance::new("c".into(), creator, 2, "Tester", shared::PlayerColour::Blue).max_players, MIN_PLAYERS);
+        assert_eq!(GameInstance::new("d".into(), creator, 4, "Tester", shared::PlayerColour::Blue).max_players, 4);
     }
 
     /// Seating must report failure rather than silently dropping the player.
     #[test]
     fn seating_fails_once_every_colour_is_taken() {
-        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 4);
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 4, "Tester", shared::PlayerColour::Blue);
 
-        for n in 2..=4u128 {
-            assert!(game.turn_manager.players.add_player_with_colour(Uuid::from_u128(n)));
+        // The creator already took Blue.
+        for (n, colour) in [
+            (2u128, shared::PlayerColour::Red),
+            (3, shared::PlayerColour::Green),
+            (4, shared::PlayerColour::Yellow),
+        ] {
+            game.turn_manager
+                .players
+                .seat(Uuid::from_u128(n), "x", colour)
+                .expect("a free colour must be seatable");
         }
         assert_eq!(game.turn_manager.players.len(), 4);
+        assert!(game.available_colours().is_empty());
 
-        assert!(
-            !game.turn_manager.players.add_player_with_colour(Uuid::from_u128(5)),
-            "a fifth player has no colour and must be refused"
-        );
+        let err = game
+            .turn_manager
+            .players
+            .seat(Uuid::from_u128(5), "late", shared::PlayerColour::Red)
+            .expect_err("a taken colour must be refused");
+        assert!(err.contains("Red"), "unexpected error: {err}");
         assert_eq!(game.turn_manager.players.len(), 4, "the roster must not grow");
     }
 
     #[test]
     fn a_game_cannot_start_below_the_minimum_player_count() {
         let creator = Uuid::from_u128(1);
-        let mut game = GameInstance::new("test".into(), creator, 4);
+        let mut game = GameInstance::new("test".into(), creator, 4, "Tester", shared::PlayerColour::Blue);
         assert!(!game.can_start(), "one player is not enough");
 
-        game.turn_manager.players.add_player_with_colour(Uuid::from_u128(2));
+        let _ = game.turn_manager.players.seat(Uuid::from_u128(2), "b", shared::PlayerColour::Red);
         assert!(!game.can_start(), "two players is still not enough");
 
-        game.turn_manager.players.add_player_with_colour(Uuid::from_u128(3));
+        let _ = game.turn_manager.players.seat(Uuid::from_u128(3), "c", shared::PlayerColour::Green);
         assert!(game.can_start(), "three players may start without filling the table");
 
         game.start_game();
@@ -375,7 +397,7 @@ mod tests {
         use crate::game::entities::pending_trade::PendingTrade;
         use std::collections::HashSet;
 
-        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 3);
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 3, "Tester", shared::PlayerColour::Blue);
 
         let mut offer = |id: u64, age: u64| {
             game.pending_trades.insert(id, PendingTrade {
@@ -404,7 +426,7 @@ mod tests {
         use crate::game::entities::pending_trade::PendingTrade;
         use std::collections::HashSet;
 
-        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 3);
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 3, "Tester", shared::PlayerColour::Blue);
         game.next_trade_id = 7;
         game.pending_trades.insert(6, PendingTrade {
             offer_id: 6,
@@ -425,7 +447,7 @@ mod tests {
 
     #[test]
     fn touch_resets_the_idle_clock() {
-        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 2);
+        let mut game = GameInstance::new("test".into(), Uuid::from_u128(1), 2, "Tester", shared::PlayerColour::Blue);
 
         // Pretend the game has been sitting untouched for two hours.
         game.last_activity_secs = now_secs().saturating_sub(7200);
@@ -438,7 +460,7 @@ mod tests {
     /// Games persisted before activity tracking existed must still load.
     #[test]
     fn missing_activity_timestamp_defaults_instead_of_failing() {
-        let game = GameInstance::new("test".into(), Uuid::from_u128(1), 2);
+        let game = GameInstance::new("test".into(), Uuid::from_u128(1), 2, "Tester", shared::PlayerColour::Blue);
         let mut json = serde_json::to_value(&game).unwrap();
         json.as_object_mut().unwrap().remove("last_activity_secs");
 
@@ -457,9 +479,9 @@ mod tests {
         let victim = Uuid::from_u128(2);
         let outsider = Uuid::from_u128(3);
 
-        let mut game = GameInstance::new("test".into(), thief, 3);
-        game.turn_manager.players.add_player_with_colour(victim);
-        game.turn_manager.players.add_player_with_colour(outsider);
+        let mut game = GameInstance::new("test".into(), thief, 3, "Tester", shared::PlayerColour::Blue);
+        let _ = game.turn_manager.players.seat(victim, "v", shared::PlayerColour::Red);
+        let _ = game.turn_manager.players.seat(outsider, "o", shared::PlayerColour::Green);
         game.start_game();
         game.advance_phase();
         game.advance_phase(); // RegularPlay

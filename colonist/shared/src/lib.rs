@@ -9,10 +9,14 @@ fn default_player_count() -> usize { 4 }
 pub enum ClientRequest {
     CreateGame {
         #[serde(default = "default_player_count")]
-        player_count: usize
+        player_count: usize,
+        /// Displayed to the other players. Trimmed and length-capped by the
+        /// server, which substitutes a default if it comes through blank.
+        seat: SeatRequest,
     },
     JoinGame {
         game_id: String,
+        seat: SeatRequest,
     },
     LeaveGame
     {
@@ -104,7 +108,7 @@ pub enum ServerMessage {
         players: Vec<PlayerInfo>,
     },
     LobbyUpdate {
-        games: Vec<(String, usize, usize)>,
+        games: Vec<LobbyGameInfo>,
     },
     DiceRolled {
         player_id: Uuid,
@@ -269,6 +273,75 @@ impl StructureType {
     }
 }
 
+/// How a player wants to be seated: the name they picked and the colour they
+/// chose from the palette. The server has the final say on both.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct SeatRequest {
+    pub name: String,
+    pub colour: PlayerColour,
+}
+
+/// The player palette. One colour per player, so there are exactly as many
+/// colours as there are seats.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PlayerColour {
+    Blue,
+    Red,
+    Green,
+    Yellow,
+}
+
+impl PlayerColour {
+    pub const ALL: [PlayerColour; 4] = [
+        PlayerColour::Blue,
+        PlayerColour::Red,
+        PlayerColour::Green,
+        PlayerColour::Yellow,
+    ];
+
+    /// Longest name the server will keep; anything more is truncated.
+    pub const MAX_NAME_LEN: usize = 16;
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            PlayerColour::Blue => "Blue",
+            PlayerColour::Red => "Red",
+            PlayerColour::Green => "Green",
+            PlayerColour::Yellow => "Yellow",
+        }
+    }
+
+    pub fn hex(&self) -> &'static str {
+        match self {
+            PlayerColour::Blue => "#3b82f6",
+            PlayerColour::Red => "#ef4444",
+            PlayerColour::Green => "#22c55e",
+            PlayerColour::Yellow => "#eab308",
+        }
+    }
+
+    /// Tailwind `fill-*` class, for the SVG board.
+    pub fn fill_class(&self) -> &'static str {
+        match self {
+            PlayerColour::Blue => "fill-blue-500",
+            PlayerColour::Red => "fill-red-500",
+            PlayerColour::Green => "fill-green-500",
+            PlayerColour::Yellow => "fill-yellow-500",
+        }
+    }
+
+    /// A default name, used when a player submits a blank one.
+    pub fn default_name(&self) -> &'static str {
+        match self {
+            PlayerColour::Blue => "Steve",
+            PlayerColour::Red => "Bob",
+            PlayerColour::Green => "Kevin",
+            PlayerColour::Yellow => "George",
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DevCardType {
@@ -372,6 +445,16 @@ pub struct PortInfo {
     pub port_type: PortType,
 }
 
+/// A game as advertised in the lobby list, including which colours are still
+/// free so a joining player can be offered a real choice.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct LobbyGameInfo {
+    pub game_id: String,
+    pub players: usize,
+    pub max_players: usize,
+    pub available_colours: Vec<PlayerColour>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct BoardInfo{
     pub hexes: Vec<HexInfo>,
@@ -392,7 +475,7 @@ pub struct BoardInfo{
 pub struct PlayerInfo {
     pub player_id: Uuid,
     pub name: String,
-    pub color: String,
+    pub colour: PlayerColour,
     pub victory_points: u8,
     /// Ports this player has access to (from settlements/cities on port vertices)
     pub ports: Vec<PortType>,

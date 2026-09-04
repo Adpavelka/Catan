@@ -38,8 +38,13 @@ impl Lobby
 
     pub fn broadcast_lobby_status(&self) {
         info!("Broadcasting lobby status to all players");
-        let games_data: Vec<(String, usize, usize)> = self.games.iter()
-            .map(|(gid, game)| (gid.clone(), game.turn_manager.players.len(), game.max_players))
+        let games_data: Vec<shared::LobbyGameInfo> = self.games.iter()
+            .map(|(gid, game)| shared::LobbyGameInfo {
+                game_id: gid.clone(),
+                players: game.turn_manager.players.len(),
+                max_players: game.max_players,
+                available_colours: game.available_colours(),
+            })
             .collect();
 
         let lobby_update = shared::ServerMessage::LobbyUpdate { games: games_data };

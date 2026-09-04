@@ -179,6 +179,7 @@ impl BonusCard for BiggestArmy {
 
 #[cfg(test)]
 mod tests {
+    use shared::PlayerColour;
     use uuid::Uuid;
 
     use crate::game::entities::player::Player;
@@ -196,7 +197,7 @@ mod tests {
     }
 
     fn p(id: Uuid) -> Player {
-        Player::new(id, &format!("Player {}", id), 'A')
+        Player::new(id, &format!("Player {}", id), PlayerColour::Blue)
     }
 
     /// Regression test: tying the holder used to strip the card from everyone.

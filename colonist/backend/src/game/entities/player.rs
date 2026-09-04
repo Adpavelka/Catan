@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use shared::PlayerInfo;
+use shared::{PlayerColour, PlayerInfo};
 use crate::errors::GameError;
 use crate::game::entities::board::PortType;
 use crate::game::entities::development_card::DevelopmentCard;
@@ -12,7 +12,7 @@ pub struct Player {
     pub name: String,
     pub resources: ResourceSet, // TODO Private
     
-    pub colour: char,
+    pub colour: PlayerColour,
 
     settlements_left: u8,
     cities_left: u8,
@@ -31,7 +31,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(id: Uuid, name: &str, colour: char) -> Self {
+    pub fn new(id: Uuid, name: &str, colour: PlayerColour) -> Self {
         Self {
             id,
             name: name.to_string(),
@@ -143,7 +143,7 @@ impl From<&Player> for PlayerInfo {
         PlayerInfo {
             player_id: p.id,
             name: p.name.clone(),
-            color: p.colour.to_string(),
+            colour: p.colour,
             victory_points: p.get_victory_points(),
             ports: p.ports.iter().map(|port| port.into()).collect(),
             resource_count: p.resources.get_cards_total() as u8,
@@ -161,6 +161,7 @@ impl From<&Player> for PlayerInfo {
 
 #[cfg(test)]
 mod tests {
+    use shared::PlayerColour;
     use uuid::Uuid;
 
     use crate::game::entities::player::Player;
@@ -169,11 +170,11 @@ mod tests {
 
     #[test]
     fn player_new_initializes_defaults() {
-        let p = Player::new(Uuid::from_u128(42), "Alice", 'A');
+        let p = Player::new(Uuid::from_u128(42), "Alice", PlayerColour::Blue);
 
         assert_eq!(p.id, Uuid::from_u128(42));
         assert_eq!(p.name, "Alice");
-        assert_eq!(p.colour, 'A');
+        assert_eq!(p.colour, PlayerColour::Blue);
 
         assert_eq!(p.get_victory_points(), 0);
         assert_eq!(p.knight_played, 0);
@@ -196,7 +197,7 @@ mod tests {
     /// require being able to place both.
     #[test]
     fn road_builder_playable_with_one_road_left() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        let mut p = Player::new(Uuid::from_u128(1), "P", PlayerColour::Red);
 
         for _ in 0..14 {
             p.use_road().unwrap();
@@ -211,7 +212,7 @@ mod tests {
 
     #[test]
     fn add_victory_point_increments() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        let mut p = Player::new(Uuid::from_u128(1), "P", PlayerColour::Green);
         assert_eq!(p.get_victory_points(), 0);
         p.add_victory_point();
         assert_eq!(p.get_victory_points(), 1);
@@ -221,7 +222,7 @@ mod tests {
 
     #[test]
     fn can_pay_and_pay_succeeds_and_deducts_resources() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        let mut p = Player::new(Uuid::from_u128(1), "P", PlayerColour::Yellow);
         p.resources.add(ResourceType::Wood, 2);
         p.resources.add(ResourceType::Brick, 1);
 
@@ -239,7 +240,7 @@ mod tests {
 
     #[test]
     fn pay_fails_when_cannot_pay_and_changes_nothing() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        let mut p = Player::new(Uuid::from_u128(1), "P", PlayerColour::Blue);
         p.resources.add(ResourceType::Wood, 1);
 
         let mut cost = ResourceSet::new();
@@ -255,7 +256,7 @@ mod tests {
 
     #[test]
     fn use_settlement_decrements_available_and_adds_victory_point() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        let mut p = Player::new(Uuid::from_u128(1), "P", PlayerColour::Red);
 
         let vp_before = p.get_victory_points();
         p.use_settlement().expect("should have settlements");
@@ -274,7 +275,7 @@ mod tests {
 
     #[test]
     fn use_city_decrements_cities_increments_settlements_and_adds_victory_point() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        let mut p = Player::new(Uuid::from_u128(1), "P", PlayerColour::Green);
 
         let vp_before = p.get_victory_points();
         // Use all settlements so we can observe that using a city increases settlements_left by 1.
@@ -299,7 +300,7 @@ mod tests {
 
     #[test]
     fn use_road_decrements_roads_and_errors_when_none_left() {
-        let mut p = Player::new(Uuid::from_u128(1), "P", 'A');
+        let mut p = Player::new(Uuid::from_u128(1), "P", PlayerColour::Yellow);
 
         // Start: 15 roads => has_road and
         assert!(p.has_road());

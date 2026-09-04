@@ -12,11 +12,13 @@ pub fn handle_lobby_action(
     ctx: &mut Context<Lobby>,
 ) {
     match req {
-        ClientRequest::CreateGame { player_count } => {
-            lobby.handle_create_game(pid, player_count, ctx);
+        ClientRequest::CreateGame { player_count, seat } => {
+            lobby.handle_create_game(pid, player_count, seat, ctx);
         }
 
-        ClientRequest::JoinGame { game_id } => lobby.handle_join_game(pid, game_id, ctx),
+        ClientRequest::JoinGame { game_id, seat } => {
+            lobby.handle_join_game(pid, game_id, seat, ctx)
+        }
 
         ClientRequest::LeaveGame { game_id } => {
             lobby.handle_leave_game(pid, game_id, ctx);

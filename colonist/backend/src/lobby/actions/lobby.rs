@@ -1,7 +1,7 @@
 use actix::{AsyncContext, Context, WrapFuture};
 use log::{info, warn};
 use uuid::Uuid;
-use shared::{GamePhase, ServerMessage};
+use shared::{GamePhase, SeatRequest, ServerMessage};
 use crate::lobby::{GameInstance, Lobby};
 
 impl Lobby { 
@@ -60,19 +60,24 @@ impl Lobby {
         self.broadcast_lobby_status();
     }
 
-    pub fn handle_join_game(&mut self, pid: Uuid, game_id: String, ctx: &mut Context<Lobby>) {
+    pub fn handle_join_game(&mut self, pid: Uuid, game_id: String, seat: SeatRequest, ctx: &mut Context<Lobby>) {
         let (is_full, missing) = {
             let Some(game) = self.games.get_mut(&game_id) else {
                 return self.send_error(pid, "Game not found");
             };
 
-            if game.turn_manager.players.len() >= game.max_players && game.turn_manager.players.get(pid).is_none() {
-                return self.send_error(pid, "Game is full");
-            }
-
+            // Already seated? This is a reconnect, so their existing name and
+            // colour stand and the request is ignored.
             let missing = game.turn_manager.players.get(pid).is_none();
-            if missing && !game.turn_manager.players.add_player_with_colour(pid) {
-                return self.send_error(pid, "Game is full");
+
+            if missing {
+                if game.turn_manager.players.len() >= game.max_players {
+                    return self.send_error(pid, "Game is full");
+                }
+
+                if let Err(e) = game.turn_manager.players.seat(pid, &seat.name, seat.colour) {
+                    return self.send_error(pid, &e);
+                }
             }
 
             (game.turn_manager.players.len() >= game.max_players, missing)
@@ -138,12 +143,12 @@ impl Lobby {
         }
     }
 
-    pub fn handle_create_game(&mut self, pid: Uuid, player_count: usize, ctx: &mut Context<Lobby>) {
+    pub fn handle_create_game(&mut self, pid: Uuid, player_count: usize, seat: SeatRequest, ctx: &mut Context<Lobby>) {
         let gid = Uuid::new_v4().to_string()[..6].to_string();
         info!("Creating game {} for player {}", gid, pid);
 
-        // GameInstance::new already seats the creator.
-        let game = GameInstance::new(gid.clone(), pid, player_count);
+        // GameInstance::new seats the creator with the name and colour they chose.
+        let game = GameInstance::new(gid.clone(), pid, player_count, &seat.name, seat.colour);
 
         self.games.insert(gid.clone(), game);
         self.player_to_game.insert(pid, gid.clone());

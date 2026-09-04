@@ -118,6 +118,7 @@ impl DevelopmentCard {
 
 #[cfg(test)]
 mod tests {
+    use shared::PlayerColour;
     use shared::DevCardType;
     use uuid::Uuid;
 
@@ -128,7 +129,7 @@ mod tests {
     use crate::game::entities::resources::ResourceType;
 
     fn dummy_player() -> Player {
-        Player::new(Uuid::new_v4(), "Test".into(), 'c')
+        Player::new(Uuid::new_v4(), "Test".into(), PlayerColour::Blue)
     }
 
     #[test]
