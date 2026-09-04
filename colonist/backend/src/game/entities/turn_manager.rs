@@ -33,15 +33,16 @@ impl TurnManager {
         let first_player = Player::new(first_player_id, "Player 1", 'b');
 
         let board = Board::new();
+        let robber = Robber::new(&board);
 
         info!("New game initialized for {} players", player_count);
 
         Self {
             dice: Dice::new(),
             bank: Bank::new(),
-            board: Board::new(),
+            board,
             game_over: false,
-            robber: Robber::new(&board),
+            robber,
             army_bonus: BiggestArmy::new(),
             road_bonus: LongestRoad::new(),
             players: Players::new(vec![first_player.clone()]),
@@ -418,6 +419,31 @@ mod tests {
 
         assert!(!tm.game_over());
         assert_eq!(tm.players.len(), 1);
+    }
+
+    /// The robber must start on the desert of the board the game is actually
+    /// played on. Regression test: the robber used to be placed on the desert
+    /// of a second, discarded board, so it started on a producing hex.
+    #[test]
+    fn robber_starts_on_the_desert_of_the_game_board() {
+        for _ in 0..20 {
+            let tm = make_tm(3);
+            let pos = tm.get_robber_pos();
+
+            let hex = tm
+                .board
+                .hexes
+                .get(&pos)
+                .expect("robber must stand on a hex of the game board");
+
+            assert_eq!(
+                hex.resource,
+                ResourceType::Desert,
+                "robber started on {:?} at {:?}",
+                hex.resource,
+                pos
+            );
+        }
     }
 
     #[test]
