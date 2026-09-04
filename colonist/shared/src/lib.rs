@@ -63,6 +63,12 @@ impl GameRules {
         }
     }
 
+    /// The 5-6 player game inserts a special building phase between turns, so
+    /// a bigger table does not mean an unbearable wait between builds.
+    pub fn uses_special_building(&self) -> bool {
+        self.player_count >= 5
+    }
+
     pub fn dev_card_total(&self) -> usize {
         self.knight_cards
             + self.victory_point_cards
@@ -472,11 +478,31 @@ pub enum GamePhase {
     },
 
     RegularPlay,
+
+    /// The 5-6 player special building phase: between turns, each other player
+    /// in turn order gets one chance to build or buy. `builder` is the only
+    /// player who may act, and they may only build - no rolling, trading or
+    /// playing development cards.
+    SpecialBuilding {
+        builder: Uuid,
+    },
 }
 
 impl GamePhase {
     pub fn is_initial_phase(&self) -> bool {
         matches!(self, GamePhase::InitialPlacement { .. })
+    }
+
+    /// Phases in which buying and building are allowed at all.
+    pub fn allows_building(&self) -> bool {
+        matches!(self, GamePhase::RegularPlay | GamePhase::SpecialBuilding { .. })
+    }
+
+    pub fn special_builder(&self) -> Option<Uuid> {
+        match self {
+            GamePhase::SpecialBuilding { builder } => Some(*builder),
+            _ => None,
+        }
     }
 }
 

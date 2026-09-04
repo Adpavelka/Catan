@@ -96,6 +96,32 @@ pub fn card_label(card: &shared::DevCardType) -> &'static str {
 }
 
 impl GameState {
+    /// Whether the 5-6 special building phase is currently offered to us.
+    pub fn is_my_special_build(&self) -> bool {
+        match (self.game_phase.get().special_builder(), self.player_id.get()) {
+            (Some(builder), Some(me)) => builder == me,
+            _ => false,
+        }
+    }
+
+    /// Whether we may build or buy right now: on our own turn after rolling,
+    /// or when a special building phase has been handed to us.
+    pub fn can_build_now(&self) -> bool {
+        if self.game_phase.get().special_builder().is_some() {
+            return self.is_my_special_build();
+        }
+
+        let my_turn = self
+            .player_id
+            .get()
+            .map(|id| id == self.current_turn_player.get())
+            .unwrap_or(false);
+
+        my_turn
+            && self.last_dice_roll.get().is_some()
+            && self.game_phase.get() == GamePhase::RegularPlay
+    }
+
     /// The seat this player is asking for, remembering the name for next time.
     pub fn seat_request(&self, colour: PlayerColour) -> shared::SeatRequest {
         let name = self.my_name.get_untracked().trim().to_string();
@@ -187,6 +213,7 @@ impl GameState {
                         GamePhase::InitialPlacement {round: InitialRound::First, ..} => "Starting initial placement - Round 1!",
                         GamePhase::InitialPlacement {round: InitialRound::Second, ..} => "Initial placement - Round 2!",
                         GamePhase::RegularPlay => "Game started!",
+                        GamePhase::SpecialBuilding { .. } => "Special building phase",
                         GamePhase::WaitingForPlayers => "Waiting for players...",
                     };
                     self.messages.update(|m| m.push(format!("{} ({} players)", phase_msg, players.len())));
@@ -293,6 +320,13 @@ impl GameState {
                         GamePhase::InitialPlacement {round: InitialRound::First, ..} => "Initial placement - Round 1",
                         GamePhase::InitialPlacement {round: InitialRound::Second, ..} => "Initial placement - Round 2",
                         GamePhase::RegularPlay => "Regular play started!",
+                        GamePhase::SpecialBuilding { .. } => {
+                            if self.is_my_special_build() {
+                                "Special building phase - build or buy, then pass"
+                            } else {
+                                "Special building phase"
+                            }
+                        }
                         GamePhase::WaitingForPlayers => "Waiting for players",
                     };
                     self.messages.update(|m| m.push(phase_msg.to_string()));

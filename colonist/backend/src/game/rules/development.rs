@@ -43,12 +43,17 @@ impl GameInstance {
     }
 
     pub fn handle_buy_dev_card(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
-        if pid != self.turn_manager.players.get_current_player().id {
+        // Buying is allowed in a special building phase; playing is not.
+        if pid != self.active_player() {
             return Err("Wait for your turn!".to_string());
         }
 
+        if !self.get_state().allows_building() {
+            return Err("You cannot buy a development card right now.".to_string());
+        }
+
         // The card itself is private; only the buyer is told which one it was.
-        self.turn_manager.buy_dev_card()
+        self.turn_manager.buy_dev_card(pid)
             .map(|_| ServerMessage::DevCardBought { player_id: pid })
             .map_err(|e| e.to_string())
     }
@@ -56,6 +61,10 @@ impl GameInstance {
     pub fn handle_play_dev_card(&mut self, pid: Uuid, card: shared::DevCardType, target: Option<shared::DevCardTarget>) -> Result<ServerMessage, String> {
         if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
+        }
+
+        if self.get_state() != shared::GamePhase::RegularPlay {
+            return Err("You can only play development cards on your own turn.".to_string());
         }
 
         self.turn_manager.play_development_card(card.clone(), target)

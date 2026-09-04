@@ -85,6 +85,18 @@ impl Player {
         self.victory_points
     }
 
+    /// Whether this player could buy *something* - used to skip players with
+    /// nothing to do during the special building phase.
+    pub fn can_afford_anything(&self) -> bool {
+        use crate::game::entities::building::{EdgeBuilding, VertexBuilding};
+        use crate::game::entities::development_card::DevelopmentCard;
+
+        (self.has_road() && self.can_pay(&EdgeBuilding::Road.cost()))
+            || (self.has_settlement() && self.can_pay(&VertexBuilding::Settlement.cost()))
+            || (self.has_city() && self.can_pay(&VertexBuilding::City.cost()))
+            || self.can_pay(&DevelopmentCard::cost())
+    }
+
     pub fn can_pay(&self, cost: &ResourceSet) -> bool {
         self.resources.can_pay(cost)
     }

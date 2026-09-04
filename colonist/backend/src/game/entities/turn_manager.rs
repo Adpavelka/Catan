@@ -138,8 +138,9 @@ impl TurnManager {
     }
 
 
-    pub fn build_settlement(&mut self, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
-        let pid: Uuid = self.players.get_current_player().id;
+    /// `pid` is passed in rather than assumed to be the player on turn: during
+    /// the 5-6 special building phase the builder is somebody else.
+    pub fn build_settlement(&mut self, pid: Uuid, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
 
         let vertex = self
             .board
@@ -181,8 +182,7 @@ impl TurnManager {
     }
 
 
-    pub fn build_city(&mut self, pos: Coordinates) -> Result<(), GameError> {
-        let pid = self.players.get_current_player().id;
+    pub fn build_city(&mut self, pid: Uuid, pos: Coordinates) -> Result<(), GameError> {
 
         let vertex = self
             .board
@@ -212,8 +212,7 @@ impl TurnManager {
     }
 
 
-    pub fn build_road(&mut self, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
-        let pid = self.players.get_current_player().id;
+    pub fn build_road(&mut self, pid: Uuid, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
 
         let edge = self.board.edges.get(&pos).ok_or(GameError::InvalidAction)?;
         if edge.building.is_some() || !self.board.is_edge_connected_to_player(pos, pid) {
@@ -258,8 +257,7 @@ impl TurnManager {
     }
 
 
-    pub fn buy_dev_card(&mut self) -> Result<shared::DevCardType, GameError> {
-        let pid = self.players.get_current_player().id;
+    pub fn buy_dev_card(&mut self, pid: Uuid) -> Result<shared::DevCardType, GameError> {
         let cost = DevelopmentCard::cost();
 
         {
@@ -445,6 +443,11 @@ impl TurnManager {
 
 #[cfg(test)]
 mod tests {
+    /// Whoever is on turn - the actor for build calls in these tests.
+    fn tm_current(tm: &TurnManager) -> Uuid {
+        tm.players.get_current_player().id
+    }
+
     use shared::PlayerColour;
     use crate::errors::GameError;
     use crate::game::entities::building::EdgeBuilding::Road;
@@ -560,7 +563,7 @@ mod tests {
     fn build_settlement_fails_if_vertex_missing() {
         let mut tm = make_tm(3);
 
-        let res = tm.build_settlement((9999, 9999), true);
+        let res = tm.build_settlement(tm_current(&tm), (9999, 9999), true);
         assert_eq!(res.unwrap_err(), GameError::InvalidPosition);
     }
 
@@ -572,7 +575,7 @@ mod tests {
 
         tm.board.build_vertex(pid, v, Settlement);
 
-        let res = tm.build_settlement(v, true);
+        let res = tm.build_settlement(tm_current(&tm), v, true);
         assert_eq!(res.unwrap_err(), GameError::InvalidPosition);
     }
 
@@ -593,7 +596,7 @@ mod tests {
 
         let before = player.resources.clone();
 
-        tm.build_settlement(v, true).unwrap();
+        tm.build_settlement(tm_current(&tm), v, true).unwrap();
 
         let after = tm.players.get(pid).unwrap().resources.clone();
         assert_eq!(before, after);
@@ -604,7 +607,7 @@ mod tests {
         let mut tm = make_tm(3);
         let v = find_any_vertex_coords(&tm);
 
-        let res = tm.build_city(v);
+        let res = tm.build_city(tm_current(&tm), v);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -616,7 +619,7 @@ mod tests {
         let v = find_any_vertex_coords(&tm);
         tm.board.build_vertex(pid(2), v, Settlement);
 
-        let res = tm.build_city(v);
+        let res = tm.build_city(tm_current(&tm), v);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -624,7 +627,7 @@ mod tests {
     fn build_road_fails_if_edge_missing() {
         let mut tm = make_tm(3);
 
-        let res = tm.build_road((9999, 9999), true);
+        let res = tm.build_road(tm_current(&tm), (9999, 9999), true);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -636,7 +639,7 @@ mod tests {
 
         tm.board.build_edge(pid, e, Road);
 
-        let res = tm.build_road(e, true);
+        let res = tm.build_road(tm_current(&tm), e, true);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -647,7 +650,7 @@ mod tests {
 
         tm.players.get_mut(pid).unwrap().resources = ResourceSet::new();
 
-        let res = tm.buy_dev_card();
+        let res = tm.buy_dev_card(tm_current(&tm));
         assert_eq!(res.unwrap_err(), GameError::NotEnoughResources);
     }
 

@@ -1,5 +1,5 @@
 use uuid::Uuid;
-use shared::{ServerMessage, ResourceType};
+use shared::{GamePhase as ServerPhase, ServerMessage, ResourceType};
 use shared::ResourceType::{Brick, Ore, Sheep, Wheat, Wood};
 use std::collections::HashSet;
 use crate::game::entities::pending_trade::PendingTrade;
@@ -29,8 +29,8 @@ impl GameInstance {
                 return Err("Wait for your turn!".to_string());
             }
 
-            if self.get_state().is_initial_phase() {
-                return Err("Cannot trade during initial placement!".to_string());
+            if self.get_state() != ServerPhase::RegularPlay {
+                return Err("You can only trade on your own turn.".to_string());
             }
         }
 
@@ -76,8 +76,8 @@ impl GameInstance {
                 return Err("Wait for your turn!".to_string());
             }
 
-            if self.get_state().is_initial_phase() {
-                return Err("Cannot trade during initial placement!".to_string());
+            if self.get_state() != ServerPhase::RegularPlay {
+                return Err("You can only trade on your own turn.".to_string());
             }
         }
 

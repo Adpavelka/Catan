@@ -22,6 +22,11 @@ pub struct GameInstance {
     #[serde(default = "first_trade_id")]
     pub next_trade_id: u64,  // Counter for trade IDs
 
+    /// Players still owed a special building phase before the next turn
+    /// begins, in the order they get it. Only ever non-empty at 5-6 players.
+    #[serde(default)]
+    special_build_queue: Vec<Uuid>,
+
     /// Wall-clock seconds since the epoch when this game last saw activity.
     /// Used to evict abandoned games; `0` means "never touched".
     #[serde(default)]
@@ -78,6 +83,7 @@ impl GameInstance {
 
             pending_trades: HashMap::new(),
             next_trade_id: 1,
+            special_build_queue: Vec::new(),
             last_activity_secs: now_secs(),
         }
     }
@@ -157,8 +163,12 @@ impl GameInstance {
                 }
             }
 
+            // A special build is paid for normally: free roads come from a
+            // Road Building card, which cannot be played outside your turn.
+            GamePhase::SpecialBuilding { .. } => Ok(false),
+
             GamePhase::RegularPlay => {
-                let pid = self.turn_manager.players.get_current_player().id;
+                let pid = self.active_player();
 
                 let free = self
                     .pending_actions
@@ -210,7 +220,7 @@ impl GameInstance {
                 Ok(round == InitialRound::Second)
             }
 
-            GamePhase::RegularPlay => Ok(false),
+            GamePhase::RegularPlay | GamePhase::SpecialBuilding { .. } => Ok(false),
 
             GamePhase::WaitingForPlayers => {
                 Err("Game has not started.".into())
@@ -278,6 +288,57 @@ impl GameInstance {
         let now = now_secs();
         self.pending_trades
             .retain(|_, trade| now.saturating_sub(trade.created_at_secs) <= TRADE_LIFETIME_SECS);
+    }
+
+    /// Who may act right now. During a special building phase that is the
+    /// player being offered the build, not the player whose turn it is.
+    pub fn active_player(&self) -> Uuid {
+        self.phase
+            .special_builder()
+            .unwrap_or_else(|| self.turn_manager.players.get_current_player().id)
+    }
+
+    /// Begins the special building phase after `finished` ends their turn.
+    /// Everyone else gets one chance to build, in turn order. Players who
+    /// could not afford anything are skipped so the round does not drag.
+    ///
+    /// Returns false when nobody is owed a phase, and the next turn should
+    /// simply begin.
+    pub(crate) fn open_special_building(&mut self, finished: Uuid) -> bool {
+        if !self.turn_manager.rules().uses_special_building() {
+            return false;
+        }
+
+        let players = &self.turn_manager.players;
+        let count = players.len();
+        let start = players.get_current_index();
+
+        self.special_build_queue = (0..count)
+            .filter_map(|offset| players.get_by_index((start + offset + 1) % count))
+            .filter(|player| player.id != finished)
+            .filter(|player| player.can_afford_anything())
+            .map(|player| player.id)
+            .collect();
+
+        self.advance_special_building()
+    }
+
+    /// Moves to the next player owed a special build. Returns false once the
+    /// queue is empty and the phase is over.
+    pub(crate) fn advance_special_building(&mut self) -> bool {
+        if self.special_build_queue.is_empty() {
+            return false;
+        }
+
+        let builder = self.special_build_queue.remove(0);
+        self.phase = GamePhase::SpecialBuilding { builder };
+        true
+    }
+
+    /// Closes the special building phase and hands play back to the table.
+    pub(crate) fn finish_special_building(&mut self) {
+        self.special_build_queue.clear();
+        self.phase = GamePhase::RegularPlay;
     }
 
     /// The setup this game is playing under, fixed by the lobby size.
@@ -545,6 +606,147 @@ mod tests {
         let restored: GameInstance =
             serde_json::from_value(json).expect("older saves must still deserialize");
         assert_eq!(restored.last_activity_secs, 0);
+    }
+
+    /// A five-player table with everybody holding enough to build.
+    fn five_player_game() -> (GameInstance, Vec<Uuid>) {
+        use crate::game::entities::resources::ResourceType;
+
+        let ids: Vec<Uuid> = (1..=5u128).map(Uuid::from_u128).collect();
+        let mut game =
+            GameInstance::new("t".into(), ids[0], 5, "p1", shared::PlayerColour::Blue);
+
+        for (i, colour) in shared::PlayerColour::ALL.iter().skip(1).take(4).enumerate() {
+            game.turn_manager
+                .players
+                .seat(ids[i + 1], &format!("p{}", i + 2), *colour)
+                .unwrap();
+        }
+
+        game.start_game();
+        game.advance_phase();
+        game.advance_phase(); // RegularPlay
+
+        for id in &ids {
+            let player = game.turn_manager.players.get_mut(*id).unwrap();
+            for res in [ResourceType::Wood, ResourceType::Brick] {
+                player.resources.add(res, 5);
+            }
+        }
+
+        (game, ids)
+    }
+
+    #[test]
+    fn ending_a_turn_opens_a_special_build_for_everyone_else() {
+        let (mut game, ids) = five_player_game();
+        let first = game.turn_manager.players.get_current_player().id;
+
+        game.turn_manager.roll_dice().unwrap();
+        game.handle_end_turn(first).unwrap();
+
+        // The turn has not advanced yet; the next player is building instead.
+        let mut offered = Vec::new();
+        while let Some(builder) = game.get_state().special_builder() {
+            offered.push(builder);
+            game.handle_end_turn(builder).unwrap();
+        }
+
+        assert_eq!(offered.len(), 4, "everyone except the player who just went");
+        assert!(!offered.contains(&first), "the finished player does not build again");
+        for id in &ids {
+            if *id != first {
+                assert!(offered.contains(id), "{id} was skipped");
+            }
+        }
+
+        assert_eq!(game.get_state(), GamePhase::RegularPlay);
+        assert_ne!(
+            game.turn_manager.players.get_current_player().id,
+            first,
+            "the turn advances once the phase is over"
+        );
+    }
+
+    #[test]
+    fn a_four_player_game_has_no_special_building() {
+        let creator = Uuid::from_u128(1);
+        let mut game = GameInstance::new("t".into(), creator, 4, "p1", shared::PlayerColour::Blue);
+        for (i, colour) in shared::PlayerColour::ALL.iter().skip(1).take(3).enumerate() {
+            game.turn_manager
+                .players
+                .seat(Uuid::from_u128(i as u128 + 2), "p", *colour)
+                .unwrap();
+        }
+        game.start_game();
+        game.advance_phase();
+        game.advance_phase();
+
+        let first = game.turn_manager.players.get_current_player().id;
+        game.turn_manager.roll_dice().unwrap();
+        game.handle_end_turn(first).unwrap();
+
+        assert_eq!(game.get_state(), GamePhase::RegularPlay, "no special build below five");
+        assert_ne!(game.turn_manager.players.get_current_player().id, first);
+    }
+
+    /// Only the player being offered the build may act, and only to build.
+    #[test]
+    fn a_special_build_permits_building_but_not_playing_the_turn() {
+        let (mut game, _) = five_player_game();
+        let first = game.turn_manager.players.get_current_player().id;
+
+        game.turn_manager.roll_dice().unwrap();
+        game.handle_end_turn(first).unwrap();
+
+        let builder = game.get_state().special_builder().expect("a build is offered");
+        assert_ne!(builder, first);
+
+        // Somebody else's special build is not an invitation to act.
+        assert!(game.handle_end_turn(first).is_err(), "only the builder may pass");
+
+        // No rolling, no trading, no development cards.
+        assert!(game.handle_roll_dice(builder).is_err(), "rolling is not allowed");
+        assert!(
+            game.handle_bank_trade(builder, shared::ResourceType::Wood, shared::ResourceType::Ore).is_err(),
+            "trading is not allowed"
+        );
+        assert!(
+            game.handle_play_dev_card(builder, shared::DevCardType::Knight, None).is_err(),
+            "playing a development card is not allowed"
+        );
+
+        // Building is.
+        assert!(game.validate_settlement_placement().is_ok());
+        assert_eq!(game.active_player(), builder, "the builder is the one who may act");
+    }
+
+    /// A player who cannot afford anything has nothing to do, so is skipped
+    /// rather than stalling the table.
+    #[test]
+    fn players_who_can_afford_nothing_are_skipped() {
+        let (mut game, ids) = five_player_game();
+        let first = game.turn_manager.players.get_current_player().id;
+
+        // Strip everyone but one player bare.
+        let keep = *ids.iter().find(|id| **id != first).unwrap();
+        for id in &ids {
+            if *id != keep {
+                game.turn_manager.players.get_mut(*id).unwrap().resources =
+                    crate::game::entities::resources::ResourceSet::new();
+            }
+        }
+
+        game.turn_manager.roll_dice().unwrap();
+        game.handle_end_turn(first).unwrap();
+
+        let mut offered = Vec::new();
+        while let Some(builder) = game.get_state().special_builder() {
+            offered.push(builder);
+            game.handle_end_turn(builder).unwrap();
+        }
+
+        assert_eq!(offered, vec![keep], "only the player who can buy is offered");
     }
 
     /// Stealing used to be completely unvalidated: anyone could rob anyone,

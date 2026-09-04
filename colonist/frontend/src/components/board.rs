@@ -624,6 +624,33 @@ pub fn Board() -> impl IntoView {
                     }
                 }}
 
+                // Special building phase banner (5-6 player games)
+                <Show when=move || state.game_phase.get().special_builder().is_some()>
+                    <div class=move || if state.is_my_special_build() {
+                        "px-4 py-2 rounded-xl border-2 border-emerald-500 bg-emerald-600/15 text-emerald-300 font-bold text-sm"
+                    } else {
+                        "px-4 py-2 rounded-xl border border-slate-700 bg-slate-900/70 text-slate-400 font-bold text-sm"
+                    }>
+                        {move || {
+                            if state.is_my_special_build() {
+                                "SPECIAL BUILD - build or buy, then pass".to_string()
+                            } else {
+                                let who = state
+                                    .game_phase
+                                    .get()
+                                    .special_builder()
+                                    .and_then(|id| {
+                                        state.players.get().iter()
+                                            .find(|p| p.player_id == id)
+                                            .map(|p| p.name.clone())
+                                    })
+                                    .unwrap_or_else(|| "Someone".to_string());
+                                format!("SPECIAL BUILD - waiting for {who}")
+                            }
+                        }}
+                    </div>
+                </Show>
+
                 // Dice roll section (only in regular play)
                 <Show when=move || state.game_phase.get() == shared::GamePhase::RegularPlay>
                     <div class="flex gap-3 items-center">
@@ -700,10 +727,7 @@ pub fn Board() -> impl IntoView {
                 </Show>
 
                 // Build buttons during regular play (only show after rolling)
-                <Show when=move || {
-                    let phase = move || state.game_phase.get() ;
-                    is_my_turn() && has_rolled() && phase() == shared::GamePhase::RegularPlay
-                }>
+                <Show when=move || state.can_build_now()>
                     <div class="flex gap-2">
                         <button
                             class=move || {

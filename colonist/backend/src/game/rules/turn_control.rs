@@ -9,8 +9,8 @@ impl GameInstance
             return Err("Wait for your turn!".to_string());
         }
 
-        if self.get_state().is_initial_phase() {
-            return Err("Cannot roll dice during initial placement!".to_string());
+        if self.get_state() != GamePhase::RegularPlay {
+            return Err("You cannot roll right now.".to_string());
         }
 
         self.turn_manager.roll_dice()
@@ -44,6 +44,12 @@ impl GameInstance
 
 
     pub fn handle_end_turn(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
+        // Finishing a special build hands the slot to the next player rather
+        // than ending anybody's turn.
+        if self.get_state().special_builder().is_some() {
+            return self.handle_end_special_build(pid);
+        }
+
         if pid != self.turn_manager.players.get_current_player().id {
             return Err("Wait for your turn!".to_string());
         }
@@ -66,10 +72,33 @@ impl GameInstance
             return Err("Cannot end turn without rolling dices.".into());
         }
 
+        // At 5-6 players everyone else gets a chance to build before the next
+        // turn starts, so the turn does not advance yet.
+        if self.open_special_building(pid) {
+            return Ok(ServerMessage::PhaseChanged { new_phase: self.get_state() });
+        }
+
         self.turn_manager.end_turn();
 
         Ok(ServerMessage::NextTurn {
             player_id: self.turn_manager.players.get_current_player().id
+        })
+    }
+
+    fn handle_end_special_build(&mut self, pid: Uuid) -> Result<ServerMessage, String> {
+        if Some(pid) != self.get_state().special_builder() {
+            return Err("It is not your turn to build.".to_string());
+        }
+
+        if self.advance_special_building() {
+            return Ok(ServerMessage::PhaseChanged { new_phase: self.get_state() });
+        }
+
+        self.finish_special_building();
+        self.turn_manager.end_turn();
+
+        Ok(ServerMessage::NextTurn {
+            player_id: self.turn_manager.players.get_current_player().id,
         })
     }
 }

@@ -95,7 +95,7 @@ pub fn GamePage() -> impl IntoView {
                         class="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-lg font-bold transition-all shadow-lg active:scale-95 text-sm"
                         on:click=move |_| state.send(ClientRequest::EndTurn)
                     >
-                        "END TURN"
+                        {move || if state.is_my_special_build() { "DONE BUILDING" } else { "END TURN" }}
                     </button>
                 </div>
             </header>
@@ -216,10 +216,10 @@ pub fn GamePage() -> impl IntoView {
                             <div>
                                 <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Bank Trading"</h3>
                                 <div class="text-xs text-slate-400 mb-2">"Trade resources with the bank"</div>
+                                // Trading is barred during a special build.
                                 <Show when=move || {
-                                    let is_my_turn = state.player_id.get().map(|id| id == state.current_turn_player.get()).unwrap_or(false);
-                                    let has_rolled = state.last_dice_roll.get().is_some();
-                                    is_my_turn && has_rolled
+                                    state.can_build_now()
+                                        && state.game_phase.get() == GamePhase::RegularPlay
                                 }>
                                     <BankTradeUI />
                                 </Show>
@@ -237,13 +237,8 @@ pub fn GamePage() -> impl IntoView {
                                     on:click=move |_| {
                                         state.send(ClientRequest::BuyDevelopmentCard);
                                     }
-                                    disabled=move || {
-                                        // Can only buy if it's your turn and you've rolled
-                                        let is_my_turn = state.player_id.get().map(|id| id == state.current_turn_player.get()).unwrap_or(false);
-                                        let has_rolled = state.last_dice_roll.get().is_some();
-                                        let phase = move || state.game_phase.get();
-                                        !(is_my_turn && has_rolled && phase() == shared::GamePhase::RegularPlay)
-                                    }
+                                    // Buying a card is allowed in a special build.
+                                    disabled=move || !state.can_build_now()
                                 >
                                     "BUY CARD"
                                 </button>

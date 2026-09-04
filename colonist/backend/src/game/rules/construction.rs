@@ -1,12 +1,12 @@
 use crate::game::entities::game_instance::GameInstance;
 
-use shared::{GamePhase, ServerMessage, StructureType};
+use shared::{ServerMessage, StructureType};
 use uuid::Uuid;
 
 impl GameInstance
 {
     pub fn handle_build_settlement(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
-        if pid != self.turn_manager.players.get_current_player().id {
+        if pid != self.active_player() {
             return Err("Wait for your turn!".to_string());
         }
 
@@ -18,7 +18,7 @@ impl GameInstance
         // otherwise a rejected click would leave the game waiting for a road
         // next to a settlement that was never built.
         self.turn_manager
-            .build_settlement((x, y), is_initial)
+            .build_settlement(pid, (x, y), is_initial)
             .map_err(|e| e.to_string())?;
 
         self.advance_after_settlement(x, y);
@@ -41,15 +41,15 @@ impl GameInstance
 
 
     pub fn handle_build_city(&mut self,pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
-        if pid != self.turn_manager.players.get_current_player().id {
+        if pid != self.active_player() {
             return Err("Wait for your turn!".to_string());
         }
 
-        if self.get_state() != GamePhase::RegularPlay {
-            return Err("You can only build cities during regular play.".to_string());
+        if !self.get_state().allows_building() {
+            return Err("You cannot build a city right now.".to_string());
         }
 
-        self.turn_manager.build_city((x, y))
+        self.turn_manager.build_city(pid, (x, y))
             .map(|_| {
                 ServerMessage::Built {
                     player_id: pid,
@@ -62,14 +62,14 @@ impl GameInstance
 
 
     pub fn handle_build_road(&mut self, pid: Uuid, x: i32, y: i32) -> Result<ServerMessage, String> {
-        if pid != self.turn_manager.players.get_current_player().id {
+        if pid != self.active_player() {
             return Err("Wait for your turn!".to_string());
         }
 
         let free = self.validate_road_placement((x, y))?;
 
         self.turn_manager
-            .build_road((x, y), free)
+            .build_road(pid, (x, y), free)
             .map_err(|e| e.to_string())?;
 
         self.advance_after_road();
