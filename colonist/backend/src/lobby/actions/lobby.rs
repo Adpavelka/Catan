@@ -1,5 +1,5 @@
 use actix::{AsyncContext, Context, WrapFuture};
-use log::info;
+use log::{info, warn};
 use uuid::Uuid;
 use shared::{GamePhase, ServerMessage};
 use crate::lobby::{GameInstance, Lobby};
@@ -25,8 +25,9 @@ impl Lobby {
         let mut should_remove_game = false;
         {
             if let Some(game) = self.games.get_mut(&game_id) {
-                game.turn_manager.players.remove_player(pid).unwrap();
-                let _ = game.turn_manager.players.remove_player(pid);
+                if let Err(e) = game.turn_manager.players.remove_player(pid) {
+                    warn!("Could not remove player {} from game {}: {}", pid, game_id, e);
+                }
 
                 if game.turn_manager.players.len() == 0 {
                     should_remove_game = true;

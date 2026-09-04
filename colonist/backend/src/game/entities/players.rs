@@ -77,12 +77,29 @@ impl Players {
     }
 
     pub fn remove_player(&mut self, player_id: Uuid) -> Result<(), String> {
-        if self.players.remove(&player_id).is_some() {
-            self.players.retain(|_, p| p.id != player_id);
-            Ok(())
-        } else {
-            Err("Player not found".to_string())
+        let Some(position) = self.order.iter().position(|id| *id == player_id) else {
+            return Err("Player not found".to_string());
+        };
+
+        self.players.remove(&player_id);
+        self.order.remove(position);
+
+        if self.order.is_empty() {
+            self.current_index = 0;
+            return Ok(());
         }
+
+        // Keep whoever was on turn on turn: removing someone ahead of them in
+        // the order shifts every later slot down by one. If the player on turn
+        // is the one leaving, the slot now holds the next player already,
+        // except when they were last and the index has to wrap.
+        if position < self.current_index {
+            self.current_index -= 1;
+        } else if self.current_index >= self.order.len() {
+            self.current_index = 0;
+        }
+
+        Ok(())
     }
 
     pub fn get_current_player(&self) -> &Player {
@@ -122,5 +139,105 @@ impl Players {
 
     pub fn get_by_index(&self, idx: usize) -> Option<&Player> {
         self.order.get(idx).and_then(|id| self.players.get(id))
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pid(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn four_players() -> Players {
+        Players::new(
+            (1..=4)
+                .map(|n| Player::new(pid(n), &format!("P{n}"), 'x'))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn remove_player_shrinks_the_turn_order() {
+        let mut players = four_players();
+
+        players.remove_player(pid(2)).unwrap();
+
+        assert_eq!(players.len(), 3, "len() must reflect the removal");
+        assert!(players.get(pid(2)).is_none());
+        assert_eq!(
+            (0..players.len())
+                .map(|i| players.get_by_index(i).unwrap().id)
+                .collect::<Vec<_>>(),
+            vec![pid(1), pid(3), pid(4)]
+        );
+    }
+
+    #[test]
+    fn remove_player_reports_unknown_player() {
+        let mut players = four_players();
+        assert!(players.remove_player(pid(99)).is_err());
+        assert_eq!(players.len(), 4);
+    }
+
+    /// Regression test: `order` used to keep the departed id, so `get_current_player`
+    /// unwrapped a missing entry and panicked.
+    #[test]
+    fn current_player_survives_every_removal_position() {
+        for victim in 1..=4u128 {
+            for turn in 0..4 {
+                let mut players = four_players();
+                for _ in 0..turn {
+                    players.next_turn();
+                }
+
+                players.remove_player(pid(victim)).unwrap();
+
+                // Must not panic, and must never hand back the player who left.
+                assert_ne!(players.get_current_player().id, pid(victim));
+                players.next_turn();
+                assert_ne!(players.get_current_player().id, pid(victim));
+            }
+        }
+    }
+
+    #[test]
+    fn removing_someone_earlier_keeps_the_same_player_on_turn() {
+        let mut players = four_players();
+        players.next_turn();
+        players.next_turn(); // on P3
+        assert_eq!(players.get_current_player().id, pid(3));
+
+        players.remove_player(pid(1)).unwrap();
+
+        assert_eq!(
+            players.get_current_player().id,
+            pid(3),
+            "removing an earlier player must not change whose turn it is"
+        );
+    }
+
+    #[test]
+    fn removing_the_last_player_on_turn_wraps_to_the_start() {
+        let mut players = four_players();
+        for _ in 0..3 {
+            players.next_turn();
+        }
+        assert_eq!(players.get_current_player().id, pid(4));
+
+        players.remove_player(pid(4)).unwrap();
+
+        assert_eq!(players.get_current_player().id, pid(1));
+    }
+
+    #[test]
+    fn removing_the_last_remaining_player_leaves_an_empty_roster() {
+        let mut players = Players::new(vec![Player::new(pid(1), "solo", 'x')]);
+
+        players.remove_player(pid(1)).unwrap();
+
+        assert_eq!(players.len(), 0);
     }
 }
