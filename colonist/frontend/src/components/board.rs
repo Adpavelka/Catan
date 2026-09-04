@@ -214,7 +214,38 @@ pub fn Board() -> impl IntoView {
                 preserveAspectRatio="xMidYMid meet"
             >
                 // Center the board horizontally, move up vertically
-                <g transform="translate(500, 320)">
+                // The board is drawn at a fixed hex size and then scaled as a
+                // whole, so the 30-hex extension board fits the same viewport
+                // as the 19-hex one without touching every coordinate.
+                <g transform=move || {
+                    let hexes = state.hexes.get();
+                    if hexes.is_empty() {
+                        return "translate(500, 320)".to_string();
+                    }
+
+                    let points: Vec<(f32, f32)> = hexes
+                        .iter()
+                        .map(|h| axial_to_pixel(h.q, h.r, 60.0))
+                        .collect();
+
+                    // Room for the hex itself plus the harbour markers outside it.
+                    let margin = 115.0;
+                    let min_x = points.iter().map(|p| p.0).fold(f32::INFINITY, f32::min) - margin;
+                    let max_x = points.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max) + margin;
+                    let min_y = points.iter().map(|p| p.1).fold(f32::INFINITY, f32::min) - margin;
+                    let max_y = points.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max) + margin;
+
+                    let scale = (980.0 / (max_x - min_x))
+                        .min(780.0 / (max_y - min_y))
+                        .min(1.0);
+
+                    format!(
+                        "translate(500, 400) scale({:.4}) translate({:.1}, {:.1})",
+                        scale,
+                        -(min_x + max_x) / 2.0,
+                        -(min_y + max_y) / 2.0,
+                    )
+                }>
                     // Render all hexes
                     <For
                         each=move || state.hexes.get()
@@ -273,17 +304,22 @@ pub fn Board() -> impl IntoView {
                                 let nx = -edge_dy / edge_len;
                                 let ny = edge_dx / edge_len;
 
-                                // Determine which direction is "outward" (away from island center at 0,0)
-                                let test_x = mid_x + nx * 10.0;
-                                let test_y = mid_y + ny * 10.0;
-                                let dist_out = test_x * test_x + test_y * test_y;
-                                let dist_in = (mid_x - nx * 10.0).powi(2) + (mid_y - ny * 10.0).powi(2);
+                                // "Outward" is away from the hex this harbour sits on, not away
+                                // from the board's centre: on a coastline with any concavity -
+                                // as the extension board has - those are not the same direction,
+                                // and the marker ends up drawn on top of the land.
+                                let (hx, hy) = state.hexes.get_untracked()
+                                    .iter()
+                                    .map(|h| axial_to_pixel(h.q, h.r, 60.0))
+                                    .min_by(|a, b| {
+                                        let da = (a.0 - mid_x).powi(2) + (a.1 - mid_y).powi(2);
+                                        let db = (b.0 - mid_x).powi(2) + (b.1 - mid_y).powi(2);
+                                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                                    .unwrap_or((0.0, 0.0));
 
-                                let (out_nx, out_ny) = if dist_out > dist_in {
-                                    (nx, ny)
-                                } else {
-                                    (-nx, -ny)
-                                };
+                                let away = (mid_x - hx) * nx + (mid_y - hy) * ny;
+                                let (out_nx, out_ny) = if away >= 0.0 { (nx, ny) } else { (-nx, -ny) };
 
                                 // Push port marker outward from the edge
                                 let port_x = mid_x + out_nx * 45.0;

@@ -44,6 +44,7 @@ impl Lobby
                 players: game.turn_manager.players.len(),
                 max_players: game.max_players,
                 available_colours: game.available_colours(),
+                victory_points_to_win: game.rules().victory_points_to_win,
             })
             .collect();
 

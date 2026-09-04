@@ -9,7 +9,7 @@ use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::robber::Robber;
 use log::info;
 use serde::{Deserialize, Serialize};
-use shared::PlayerColour;
+use shared::{GameRules, PlayerColour};
 use std::collections::HashSet;
 use uuid::Uuid;
 use crate::game::entities::building::EdgeBuilding::Road;
@@ -24,6 +24,9 @@ pub struct TurnManager {
 
     robber: Robber,
     game_over: bool,
+    /// Everything that varies with the number of players.
+    #[serde(default = "default_rules")]
+    rules: GameRules,
     #[serde(default)]
     winner: Option<Uuid>,
     
@@ -31,9 +34,15 @@ pub struct TurnManager {
     pub road_bonus: LongestRoad, // tohle by taky mělo private ne?
 }
 
+/// Older saves predate configurable table sizes; they were all four-player.
+fn default_rules() -> GameRules {
+    GameRules::for_player_count(4)
+}
+
 impl TurnManager {
     pub fn new(player_count: usize, first_player_id: Uuid, name: &str, colour: PlayerColour) -> TurnManager {
-        let board = Board::new();
+        let rules = GameRules::for_player_count(player_count);
+        let board = Board::new_for_layout(rules.board, rules.port_count);
         let robber = Robber::new(&board);
 
         // The creator is seated exactly like everyone else, with the name and
@@ -41,12 +50,16 @@ impl TurnManager {
         let mut players = Players::new(Vec::new());
         let _ = players.seat(first_player_id, name, colour);
 
-        info!("New game initialized for {} players", player_count);
+        info!(
+            "New game initialized for {} players ({:?} board, {} to win)",
+            rules.player_count, rules.board, rules.victory_points_to_win
+        );
 
         Self {
             dice: Dice::new(),
-            bank: Bank::new(),
+            bank: Bank::new(&rules),
             board,
+            rules,
             game_over: false,
             winner: None,
             robber,
@@ -358,7 +371,7 @@ impl TurnManager {
 
         let winner = (0..self.players.len())
             .filter_map(|idx| self.players.get_by_index(idx))
-            .find(|player| player.get_total_victory_points() >= 10)
+            .find(|player| player.get_total_victory_points() >= self.rules.victory_points_to_win)
             .map(|player| player.id);
 
         if let Some(id) = winner {
@@ -371,6 +384,15 @@ impl TurnManager {
 
     pub fn winner(&self) -> Option<Uuid> {
         self.winner
+    }
+
+    pub fn rules(&self) -> GameRules {
+        self.rules
+    }
+
+    #[cfg(test)]
+    pub fn check_for_winner_for_test(&mut self) -> Option<Uuid> {
+        self.check_for_winner()
     }
 
 

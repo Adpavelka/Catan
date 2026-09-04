@@ -28,13 +28,10 @@ pub struct GameInstance {
     pub last_activity_secs: u64,
 }
 
-/// Catan needs at least three players; below that the trading and robber
-/// rules stop making sense.
-pub const MIN_PLAYERS: usize = 3;
-/// The base game seats four. Going beyond this is not just a matter of having
-/// more colours: the 5-6 player extension needs a larger board, a deeper
-/// resource bank and the special building phase, none of which exist here.
-pub const MAX_PLAYERS: usize = 4;
+/// Table sizes we support. The size chosen when the lobby is created fixes the
+/// board, the bank and the victory target for the whole game - see `GameRules`.
+pub const MIN_PLAYERS: usize = shared::GameRules::MIN_PLAYERS;
+pub const MAX_PLAYERS: usize = shared::GameRules::MAX_PLAYERS;
 
 const _: () = assert!(
     shared::PlayerColour::ALL.len() >= MAX_PLAYERS,
@@ -283,6 +280,11 @@ impl GameInstance {
             .retain(|_, trade| now.saturating_sub(trade.created_at_secs) <= TRADE_LIFETIME_SECS);
     }
 
+    /// The setup this game is playing under, fixed by the lobby size.
+    pub fn rules(&self) -> shared::GameRules {
+        self.turn_manager.rules()
+    }
+
     /// Colours a joining player may still pick.
     pub fn available_colours(&self) -> Vec<shared::PlayerColour> {
         self.turn_manager.players.available_colours()
@@ -345,14 +347,84 @@ mod tests {
 
     /// A client picks the table size, so it has to be pinned to what the game
     /// can actually seat - there are only four colours.
+    /// The lobby size chosen at creation fixes the whole setup.
+    #[test]
+    fn table_size_drives_the_victory_target_board_and_bank() {
+        use shared::{BoardLayout, GameRules};
+
+        // A duel needs a longer race; everything else wins at ten.
+        assert_eq!(GameRules::for_player_count(2).victory_points_to_win, 15);
+        for n in 3..=6 {
+            assert_eq!(GameRules::for_player_count(n).victory_points_to_win, 10);
+        }
+
+        // Two to four play the base set; five and six need the extension.
+        for n in 2..=4 {
+            let rules = GameRules::for_player_count(n);
+            assert_eq!(rules.board, BoardLayout::Standard);
+            assert_eq!(rules.bank_per_resource, 19);
+            assert_eq!(rules.dev_card_total(), 25);
+            assert_eq!(rules.port_count, 9);
+        }
+        for n in 5..=6 {
+            let rules = GameRules::for_player_count(n);
+            assert_eq!(rules.board, BoardLayout::Extended);
+            assert_eq!(rules.bank_per_resource, 24);
+            assert_eq!(rules.dev_card_total(), 34);
+            assert_eq!(rules.port_count, 11);
+        }
+    }
+
+    /// The rules reach the actual game, not just the table.
+    #[test]
+    fn a_two_player_game_is_actually_built_to_fifteen_points() {
+        let creator = Uuid::from_u128(1);
+
+        let duel = GameInstance::new("a".into(), creator, 2, "T", shared::PlayerColour::Blue);
+        assert_eq!(duel.rules().victory_points_to_win, 15);
+        assert_eq!(duel.turn_manager.board.hexes.len(), 19);
+
+        let six = GameInstance::new("b".into(), creator, 6, "T", shared::PlayerColour::Blue);
+        assert_eq!(six.rules().victory_points_to_win, 10);
+        assert_eq!(six.turn_manager.board.hexes.len(), 30, "six players need the big board");
+    }
+
+    /// A two-player game must not end at ten points.
+    #[test]
+    fn ten_points_does_not_win_a_two_player_game() {
+        let creator = Uuid::from_u128(1);
+        let mut game = GameInstance::new("a".into(), creator, 2, "T", shared::PlayerColour::Blue);
+
+        for _ in 0..10 {
+            game.turn_manager
+                .players
+                .get_mut(creator)
+                .unwrap()
+                .add_secret_victory_point();
+        }
+        assert!(!game.turn_manager.game_over(), "ten is not enough for a duel");
+
+        for _ in 0..5 {
+            game.turn_manager
+                .players
+                .get_mut(creator)
+                .unwrap()
+                .add_secret_victory_point();
+        }
+        game.turn_manager.check_for_winner_for_test();
+        assert!(game.turn_manager.game_over(), "fifteen should win");
+    }
+
     #[test]
     fn requested_table_size_is_clamped_to_a_playable_range() {
         let creator = Uuid::from_u128(1);
 
         assert_eq!(GameInstance::new("a".into(), creator, 99, "Tester", shared::PlayerColour::Blue).max_players, MAX_PLAYERS);
         assert_eq!(GameInstance::new("b".into(), creator, 0, "Tester", shared::PlayerColour::Blue).max_players, MIN_PLAYERS);
-        assert_eq!(GameInstance::new("c".into(), creator, 2, "Tester", shared::PlayerColour::Blue).max_players, MIN_PLAYERS);
-        assert_eq!(GameInstance::new("d".into(), creator, 4, "Tester", shared::PlayerColour::Blue).max_players, 4);
+        for n in MIN_PLAYERS..=MAX_PLAYERS {
+            let game = GameInstance::new("c".into(), creator, n, "Tester", shared::PlayerColour::Blue);
+            assert_eq!(game.max_players, n, "a table of {n} should be honoured");
+        }
     }
 
     /// Seating must report failure rather than silently dropping the player.
@@ -389,10 +461,10 @@ mod tests {
         assert!(!game.can_start(), "one player is not enough");
 
         let _ = game.turn_manager.players.seat(Uuid::from_u128(2), "b", shared::PlayerColour::Red);
-        assert!(!game.can_start(), "two players is still not enough");
+        assert!(game.can_start(), "two players may start without filling the table");
 
         let _ = game.turn_manager.players.seat(Uuid::from_u128(3), "c", shared::PlayerColour::Green);
-        assert!(game.can_start(), "three players may start without filling the table");
+        assert!(game.can_start());
 
         game.start_game();
         assert!(!game.can_start(), "an already started game cannot start again");

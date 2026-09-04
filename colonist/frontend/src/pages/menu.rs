@@ -1,6 +1,6 @@
 use leptos::*;
 use crate::state::GameState;
-use shared::{ClientRequest, LobbyGameInfo, PlayerColour};
+use shared::{ClientRequest, GameRules, LobbyGameInfo, PlayerColour};
 
 const BTN_PRIMARY: &str = "bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50";
 
@@ -92,6 +92,7 @@ pub fn MainMenu() -> impl IntoView {
 #[component]
 fn ActionButtons(set_view_list: WriteSignal<bool>, state: GameState) -> impl IntoView {
     let (creating, set_creating) = create_signal(false);
+    let (table_size, set_table_size) = create_signal(4usize);
 
     view! {
         <div class="flex flex-col gap-4 animate-in zoom-in-95 duration-200">
@@ -118,19 +119,57 @@ fn ActionButtons(set_view_list: WriteSignal<bool>, state: GameState) -> impl Int
                     </button>
                 }
             >
-                // A brand new game has the whole palette free.
-                <ColourPicker
-                    state=state
-                    available=PlayerColour::ALL.to_vec()
-                    label="Pick your colour"
-                    on_pick=Callback::new(move |colour: PlayerColour| {
-                        state.send(ClientRequest::CreateGame {
-                            player_count: 4,
-                            seat: state.seat_request(colour),
-                        });
-                        set_creating.set(false);
-                    })
-                />
+                <div class="space-y-4">
+                    <div class="space-y-2">
+                        <p class="text-slate-400 font-bold uppercase text-[10px] tracking-widest text-left">
+                            "Table size"
+                        </p>
+                        <div class="grid grid-cols-5 gap-2">
+                            {GameRules::SUPPORTED_PLAYER_COUNTS.into_iter().map(|n| {
+                                view! {
+                                    <button
+                                        class=move || if table_size.get() == n {
+                                            "py-2 rounded-lg font-bold text-sm bg-orange-600 text-white border-2 border-orange-500".to_string()
+                                        } else {
+                                            "py-2 rounded-lg font-bold text-sm bg-slate-950 text-slate-400 border-2 border-slate-800 hover:border-slate-600".to_string()
+                                        }
+                                        on:click=move |_| set_table_size.set(n)
+                                    >
+                                        {n}
+                                    </button>
+                                }
+                            }).collect_view()}
+                        </div>
+                        <p class="text-[10px] text-slate-500 text-left">
+                            {move || {
+                                let rules = GameRules::for_player_count(table_size.get());
+                                let board = if rules.board == shared::BoardLayout::Extended {
+                                    "30-hex extension board"
+                                } else {
+                                    "19-hex base board"
+                                };
+                                format!(
+                                    "First to {} points · {} · {} of each resource",
+                                    rules.victory_points_to_win, board, rules.bank_per_resource,
+                                )
+                            }}
+                        </p>
+                    </div>
+
+                    // A brand new game has the whole palette free.
+                    <ColourPicker
+                        state=state
+                        available=PlayerColour::ALL.to_vec()
+                        label="Pick your colour"
+                        on_pick=Callback::new(move |colour: PlayerColour| {
+                            state.send(ClientRequest::CreateGame {
+                                player_count: table_size.get(),
+                                seat: state.seat_request(colour),
+                            });
+                            set_creating.set(false);
+                        })
+                    />
+                </div>
             </Show>
         </div>
     }
@@ -176,7 +215,7 @@ fn ColourPicker(
 fn LobbyItem(lobby: LobbyGameInfo, state: GameState) -> impl IntoView {
     let (picking, set_picking) = create_signal(false);
 
-    let LobbyGameInfo { game_id, players, max_players, available_colours } = lobby;
+    let LobbyGameInfo { game_id, players, max_players, available_colours, victory_points_to_win } = lobby;
     let is_full = players >= max_players || available_colours.is_empty();
     let gid = game_id.clone();
 
@@ -186,7 +225,7 @@ fn LobbyItem(lobby: LobbyGameInfo, state: GameState) -> impl IntoView {
                 <div class="text-left">
                     <div class="font-mono text-orange-500 font-bold text-sm">"ID: " {game_id}</div>
                     <div class="text-[10px] text-slate-600 font-bold uppercase tracking-wider">
-                        {players} " / " {max_players} " Players"
+                        {players} " / " {max_players} " Players · First to " {victory_points_to_win}
                     </div>
                 </div>
 

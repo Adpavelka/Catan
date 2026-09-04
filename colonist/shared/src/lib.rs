@@ -3,6 +3,75 @@ use uuid::Uuid;
 
 fn default_player_count() -> usize { 4 }
 
+/// Which physical board a game is played on.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BoardLayout {
+    /// The base game: 19 hexes, one desert.
+    Standard,
+    /// The 5-6 player extension: 30 hexes, two deserts.
+    Extended,
+}
+
+/// Everything about a game that depends on how many people are playing.
+///
+/// Two- to four-player games use the base set. Five and six use the larger
+/// extension board with a deeper bank and development deck, because six
+/// players competing over nineteen hexes is not a game. Two players race to a
+/// higher target, since points come far quicker with nobody in the way.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct GameRules {
+    pub player_count: usize,
+    pub victory_points_to_win: u8,
+    pub board: BoardLayout,
+    /// How many cards of each resource the bank starts with.
+    pub bank_per_resource: u32,
+    pub knight_cards: usize,
+    pub victory_point_cards: usize,
+    pub road_building_cards: usize,
+    pub monopoly_cards: usize,
+    pub year_of_plenty_cards: usize,
+    /// Harbours around the coast.
+    pub port_count: usize,
+}
+
+impl GameRules {
+    pub const MIN_PLAYERS: usize = 2;
+    pub const MAX_PLAYERS: usize = 6;
+
+    /// Every table size we support, for building a lobby-size picker.
+    pub const SUPPORTED_PLAYER_COUNTS: [usize; 5] = [2, 3, 4, 5, 6];
+
+    pub fn for_player_count(player_count: usize) -> Self {
+        let player_count = player_count.clamp(Self::MIN_PLAYERS, Self::MAX_PLAYERS);
+
+        // Five and six players need the extension: more land, more cards.
+        let extended = player_count >= 5;
+
+        Self {
+            player_count,
+            // A duel reaches ten points far too quickly to be interesting.
+            victory_points_to_win: if player_count == 2 { 15 } else { 10 },
+            board: if extended { BoardLayout::Extended } else { BoardLayout::Standard },
+            bank_per_resource: if extended { 24 } else { 19 },
+            knight_cards: if extended { 20 } else { 14 },
+            victory_point_cards: if extended { 6 } else { 5 },
+            road_building_cards: if extended { 3 } else { 2 },
+            monopoly_cards: if extended { 3 } else { 2 },
+            year_of_plenty_cards: 2,
+            port_count: if extended { 11 } else { 9 },
+        }
+    }
+
+    pub fn dev_card_total(&self) -> usize {
+        self.knight_cards
+            + self.victory_point_cards
+            + self.road_building_cards
+            + self.monopoly_cards
+            + self.year_of_plenty_cards
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -467,6 +536,7 @@ pub struct LobbyGameInfo {
     pub players: usize,
     pub max_players: usize,
     pub available_colours: Vec<PlayerColour>,
+    pub victory_points_to_win: u8,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
