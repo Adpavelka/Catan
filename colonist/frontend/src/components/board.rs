@@ -841,24 +841,24 @@ fn DiceTray() -> impl IntoView {
             on:click=roll
         >
             <div class=move || if tumbling.get() {
-                "flex gap-1.5 text-2xl animate-bounce"
+                "flex gap-2 animate-bounce"
             } else {
-                "flex gap-1.5 text-2xl"
+                "flex gap-2"
             }>
                 {move || {
                     let (a, b) = shown.get();
-                    view! { <DieFace value=a /> <DieFace value=b /> }
+                    view! { <DieFace value=a size="w-11 h-11" /> <DieFace value=b size="w-11 h-11" /> }
                 }}
             </div>
             <Show
                 when=can_roll
                 fallback=move || view! {
-                    <span class="text-lg font-black text-white tabular-nums w-6 text-center">
+                    <span class="text-2xl font-black text-white tabular-nums w-8 text-center">
                         {move || { let (a, b) = shown.get(); a + b }}
                     </span>
                 }
             >
-                <span class="text-xs font-bold uppercase tracking-wider text-white pr-1">"Roll"</span>
+                <span class="text-sm font-bold uppercase tracking-wider text-white pr-1">"Roll"</span>
             </Show>
         </button>
     }

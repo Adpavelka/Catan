@@ -203,44 +203,9 @@ pub fn GamePage() -> impl IntoView {
                             </div>
                         </div>
 
-                        <div class="space-y-4">
-                            <div>
-                                <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Development Cards"</h3>
-
-                                <div class="space-y-1">
-                                    {move || {
-                                        let cards = state.my_dev_cards.get();
-                                        if cards.is_empty() {
-                                            view! {
-                                                <div class="text-[10px] text-slate-600 italic py-2">"No cards yet"</div>
-                                            }.into_view()
-                                        } else {
-                                            cards.into_iter().map(|card| {
-                                                let card_clone = card.clone();
-                                                let card_name = match card {
-                                                    shared::DevCardType::Knight => "Knight",
-                                                    shared::DevCardType::VictoryPoint => "Victory Point",
-                                                    shared::DevCardType::RoadBuilding => "Road Building",
-                                                    shared::DevCardType::Monopoly => "Monopoly",
-                                                    shared::DevCardType::YearOfPlenty => "Year of Plenty",
-                                                };
-
-                                                view! {
-                                                    <button
-                                                        class="w-full py-1.5 px-2 bg-purple-900/30 hover:bg-purple-800/40 border border-purple-700/50 rounded text-[10px] font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
-                                                        on:click=move |_| {
-                                                            state.send(ClientRequest::PlayDevCard { card: card_clone.clone(), target: None });
-                                                        }
-                                                    >
-                                                        {card_name}
-                                                    </button>
-                                                }
-                                            }).collect_view()
-                                        }
-                                    }}
-                                </div>
-                            </div>
-                        </div>
+                        // Development cards used to be listed here; they are
+                        // part of your hand under the board now, beside your
+                        // resources.
                     </div>
 
                     // Trading lives in one place at the bottom of the column
@@ -266,7 +231,10 @@ pub fn GamePage() -> impl IntoView {
                     // when you are deciding what to do.
                     <div class="shrink-0 flex items-end justify-between gap-3">
                         <BuildBar />
-                        <ResourceHand />
+                        <div class="flex items-end gap-2">
+                            <DevCardHand />
+                            <ResourceHand />
+                        </div>
                     </div>
                 </div>
 
@@ -363,17 +331,14 @@ pub fn GamePage() -> impl IntoView {
     }
 }
 
-/// How long a player gets before the dice are rolled for them.
-const AUTO_ROLL_SECS: f64 = 10.0;
-/// How long a whole turn may run before it is ended for them.
-const TURN_LIMIT_SECS: f64 = 60.0;
+const AUTO_ROLL_SECS: f64 = shared::TURN_AUTO_ROLL_SECS as f64;
+const TURN_LIMIT_SECS: f64 = shared::TURN_LIMIT_SECS as f64;
 
 /// The turn clock, as a bar above the board.
 ///
-/// Only the player whose turn it is acts on the deadline - everyone else just
-/// watches it run down. That does mean a player who closes their tab stalls
-/// the table, because nothing server-side is counting; see the note in the
-/// commit. It is the same trap trade expiry had, and wants the same fix.
+/// Display only. The server enforces the deadline and will roll or end the
+/// turn itself; this just shows what it is about to do, off the same shared
+/// constants so the bar cannot promise a timeout that is not coming.
 #[component]
 fn TurnTimer() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
@@ -392,16 +357,6 @@ fn TurnTimer() -> impl IntoView {
     let my_turn = move || state.player_id.get() == Some(state.current_turn_player.get());
     let rolled = move || state.last_dice_roll.get().is_some();
 
-    // Nothing should be forced through while the player owes the game an
-    // answer - a discard, a robber move, a resource pick.
-    let blocked = move || {
-        state.must_discard_count.get().is_some()
-            || state.must_move_robber.get()
-            || !state.must_steal_from_players.get().is_empty()
-            || state.year_of_plenty_pending.get()
-            || state.monopoly_pending.get()
-    };
-
     let handle = store_value(None::<leptos_dom::helpers::IntervalHandle>);
     create_effect(move |_| {
         if let Some(h) = handle.get_value() {
@@ -409,19 +364,8 @@ fn TurnTimer() -> impl IntoView {
         }
         let h = set_interval_with_handle(
             move || {
-                if !running() {
-                    return;
-                }
-                let secs = (js_sys::Date::now() - started.get_value()) / 1000.0;
-                set_elapsed.set(secs);
-
-                if !my_turn() || blocked() {
-                    return;
-                }
-                if !rolled() && secs >= AUTO_ROLL_SECS {
-                    state.send(ClientRequest::RollDice);
-                } else if rolled() && secs >= TURN_LIMIT_SECS {
-                    state.send(ClientRequest::EndTurn);
+                if running() {
+                    set_elapsed.set((js_sys::Date::now() - started.get_value()) / 1000.0);
                 }
             },
             std::time::Duration::from_millis(250),
@@ -694,6 +638,117 @@ fn TradePanel() -> impl IntoView {
 enum TradeTab {
     Bank,
     Players,
+}
+
+/// Development cards you hold, as a hand beside your resources.
+///
+/// Hidden entirely when you have none, rather than showing an empty shelf.
+/// Cards you cannot play right now are dimmed: one card per turn, and never
+/// the turn you drew it. Victory points are the exception - they are never
+/// played, so they are never dimmed and never clickable, they just sit there
+/// being worth a point.
+#[component]
+fn DevCardHand() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let icon_for = |card: &shared::DevCardType| match card {
+        shared::DevCardType::Knight => IconKind::Knight,
+        shared::DevCardType::VictoryPoint => IconKind::Trophy,
+        shared::DevCardType::RoadBuilding => IconKind::Road,
+        shared::DevCardType::Monopoly => IconKind::Coins,
+        shared::DevCardType::YearOfPlenty => IconKind::Wheat,
+    };
+    let short = |card: &shared::DevCardType| match card {
+        shared::DevCardType::Knight => "Knight",
+        shared::DevCardType::VictoryPoint => "Point",
+        shared::DevCardType::RoadBuilding => "Roads",
+        shared::DevCardType::Monopoly => "Monopoly",
+        shared::DevCardType::YearOfPlenty => "Plenty",
+    };
+
+    // Pair each card with whether it was drawn this turn. The hand is a plain
+    // list of types with no identity, so mark the newest of each type: those
+    // are necessarily the ones just drawn.
+    let cards = move || {
+        let hand = state.my_dev_cards.get();
+        let fresh = state.fresh_dev_cards.get();
+        let mut marks = vec![false; hand.len()];
+
+        for kind in &fresh {
+            if let Some(idx) = hand
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(i, c)| *c == kind && !marks[*i])
+                .map(|(i, _)| i)
+            {
+                marks[idx] = true;
+            }
+        }
+
+        hand.into_iter().zip(marks).enumerate().collect::<Vec<_>>()
+    };
+
+    let my_turn = move || state.player_id.get() == Some(state.current_turn_player.get());
+
+    view! {
+        <Show when=move || !state.my_dev_cards.get().is_empty()>
+            <div class="flex items-end gap-1.5 bg-slate-900/70 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/70 shadow-2xl">
+                <For
+                    each=cards
+                    key=|(i, (card, fresh))| (*i, format!("{card:?}"), *fresh)
+                    children=move |(_, (card, fresh))| {
+                        let is_point = card == shared::DevCardType::VictoryPoint;
+                        let playable = move || {
+                            !is_point
+                                && !fresh
+                                && my_turn()
+                                && !state.dev_card_played_this_turn.get()
+                                && state.game_phase.get() == GamePhase::RegularPlay
+                        };
+                        let name = short(&card);
+                        let why = move || {
+                            if is_point { "Counts towards victory. Nothing to play.".to_string() }
+                            else if fresh { "Drawn this turn - playable next turn".to_string() }
+                            else if !my_turn() { "Playable on your turn".to_string() }
+                            else if state.dev_card_played_this_turn.get() {
+                                "One development card per turn".to_string()
+                            } else { format!("Play {name}") }
+                        };
+                        let to_play = card.clone();
+
+                        view! {
+                            <button
+                                class=move || format!(
+                                    "flex flex-col items-center justify-center gap-0.5 w-12 h-12 rounded-lg border-b-4 transition-all {}",
+                                    if is_point {
+                                        "bg-amber-300 border-amber-500 text-amber-950 cursor-default"
+                                    } else if playable() {
+                                        "bg-violet-400 border-violet-600 text-violet-950 hover:-translate-y-1 cursor-pointer"
+                                    } else {
+                                        "bg-slate-600 border-slate-700 text-slate-400 opacity-60 cursor-not-allowed"
+                                    }
+                                )
+                                title=why
+                                disabled=move || !playable()
+                                on:click=move |_| {
+                                    state.send(ClientRequest::PlayDevCard {
+                                        card: to_play.clone(),
+                                        target: None,
+                                    });
+                                }
+                            >
+                                <Icon kind=icon_for(&card) size="w-4 h-4" />
+                                <span class="text-[7px] font-bold uppercase tracking-wide leading-none">
+                                    {name}
+                                </span>
+                            </button>
+                        }
+                    }
+                />
+            </div>
+        </Show>
+    }
 }
 
 /// The cards in your hand. Reads as a row of cards rather than a table of

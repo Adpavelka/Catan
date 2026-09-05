@@ -59,6 +59,12 @@ pub struct GameState {
     pub last_dice_roll: RwSignal<Option<(u8, u8)>>,
     pub build_mode: RwSignal<BuildMode>,
     pub my_dev_cards: RwSignal<Vec<shared::DevCardType>>,
+    /// Cards drawn this turn. They cannot be played until the next one, so
+    /// tracking them is what lets the UI grey them out rather than letting you
+    /// click into a server error.
+    pub fresh_dev_cards: RwSignal<Vec<shared::DevCardType>>,
+    /// One development card per turn: once you play one, the rest grey out.
+    pub dev_card_played_this_turn: RwSignal<bool>,
 
     // Robber state
     pub must_discard_count: RwSignal<Option<usize>>,
@@ -387,6 +393,8 @@ impl GameState {
                     logging::log!("Next turn: Player {}", player_id);
                     self.current_turn_player.set(player_id);
                     self.last_dice_roll.set(None); // Clear dice roll for new turn
+                    self.fresh_dev_cards.set(Vec::new());
+                    self.dev_card_played_this_turn.set(false);
                     self.waiting_for_discards.set(false); // Clear waiting state on turn change
 
                     let player_name = self.players.get_untracked()
@@ -447,7 +455,8 @@ impl GameState {
                 ServerMessage::DevCardDrawn { card_type } => {
                     // Private: only we are told which card we drew.
                     let card_name = card_label(&card_type);
-                    self.my_dev_cards.update(|cards| cards.push(card_type));
+                    self.my_dev_cards.update(|cards| cards.push(card_type.clone()));
+                    self.fresh_dev_cards.update(|cards| cards.push(card_type));
                     self.messages.update(|m| m.push(format!("You drew a {} card", card_name)));
                 }
                 ServerMessage::DevCardPlayed { player_id, card_type } => {
@@ -460,6 +469,7 @@ impl GameState {
                                 cards.remove(pos);
                             }
                         });
+                        self.dev_card_played_this_turn.set(true);
                     }
 
                     self.players.update(|players| {
@@ -884,6 +894,10 @@ impl GameState {
                     self.my_dev_cards.set(your_dev_cards);
                     self.last_dice_roll.set(last_dice_roll);
                     self.restore_trades(player_id, pending_trades);
+                    // We cannot tell from a sync which cards were drawn this
+                    // turn, so treat them all as fresh: refusing a legal play
+                    // for one turn beats offering an illegal one.
+                    self.fresh_dev_cards.set(self.my_dev_cards.get_untracked());
                 }
                 ServerMessage::PlayerWon {
                     player_id,
@@ -1004,6 +1018,8 @@ pub fn provide_game_state() {
         last_dice_roll: create_rw_signal(None),
         build_mode: create_rw_signal(BuildMode::None),
         my_dev_cards: create_rw_signal(Vec::new()),
+        fresh_dev_cards: create_rw_signal(Vec::new()),
+        dev_card_played_this_turn: create_rw_signal(false),
 
         // Robber state
         must_discard_count: create_rw_signal(None),

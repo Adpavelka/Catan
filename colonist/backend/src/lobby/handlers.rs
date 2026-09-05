@@ -127,7 +127,7 @@ impl Handler<ClientActorMessage> for Lobby {
 }
 
 impl Lobby {
-    fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>) {
+    pub(super) fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>) {
         if let Some(game) = self.games.get_mut(gid) {
             game.touch();
         }

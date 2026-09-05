@@ -1,4 +1,4 @@
-use crate::game::entities::game_instance::GameInstance;
+use crate::game::entities::game_instance::{GameInstance, TurnClockAction};
 use crate::network::message::ServerMessage;
 use crate::repository::game_repository::GameRepository;
 use shared::ServerMessage as ServerMsg;
@@ -32,6 +32,9 @@ const ABANDONED_AFTER: u64 = 60 * 60;
 /// than `SWEEP_INTERVAL`, so an offer dies close to when the clients say it
 /// will rather than up to five minutes later.
 const TRADE_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+/// How often to check turn deadlines. A second is fine granularity for a
+/// ten-second roll window and cheap: it is a comparison per running game.
+const TURN_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 impl Actor for Lobby {
     type Context = Context<Self>;
@@ -39,6 +42,7 @@ impl Actor for Lobby {
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.run_interval(SWEEP_INTERVAL, |lobby, ctx| lobby.sweep_stale_games(ctx));
         ctx.run_interval(TRADE_SWEEP_INTERVAL, |lobby, _| lobby.sweep_expired_trades());
+        ctx.run_interval(TURN_SWEEP_INTERVAL, |lobby, ctx| lobby.sweep_turn_clocks(ctx));
     }
 }
 
@@ -90,6 +94,40 @@ impl Lobby {
             for offer_id in offer_ids {
                 log::info!("Trade offer {} in game {} expired", offer_id, gid);
                 self.broadcast_to_game(&gid, ServerMsg::TradeCancelled { offer_id });
+            }
+        }
+    }
+
+    /// Rolls for, or ends the turn of, any player who has run out of time.
+    ///
+    /// The server owns the clock. A client drawing a countdown cannot enforce
+    /// one: the player it is counting down is exactly the player who might
+    /// have closed their tab, and the rest of the table would wait forever.
+    fn sweep_turn_clocks(&mut self, ctx: &mut Context<Self>) {
+        let due: Vec<(String, Uuid, TurnClockAction)> = self
+            .games
+            .iter_mut()
+            .filter_map(|(gid, game)| {
+                let action = game.turn_clock_due()?;
+                Some((gid.clone(), game.active_player(), action))
+            })
+            .collect();
+
+        for (gid, pid, action) in due {
+            let Some(game) = self.games.get_mut(&gid) else { continue };
+
+            let result = match action {
+                TurnClockAction::Roll => game.handle_roll_dice(pid),
+                TurnClockAction::EndTurn => game.handle_end_turn(pid),
+            };
+
+            match result {
+                Ok(msg) => {
+                    log::info!("Turn clock: {:?} for player {} in game {}", action, pid, gid);
+                    self.process_successful_action(pid, &gid, msg, ctx);
+                }
+                // Losing a race with the player's own click is normal.
+                Err(e) => log::debug!("Turn clock no-op in game {}: {}", gid, e),
             }
         }
     }

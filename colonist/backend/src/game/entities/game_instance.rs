@@ -31,6 +31,22 @@ pub struct GameInstance {
     /// Used to evict abandoned games; `0` means "never touched".
     #[serde(default)]
     pub last_activity_secs: u64,
+
+    /// Whose turn the clock is currently running for, and when it started.
+    /// Comparing the player rather than hooking every transition means the
+    /// clock re-arms itself whenever the turn changes hands, however it
+    /// changed - end of turn, a special build finishing, a player leaving.
+    #[serde(default)]
+    clock_player: Option<Uuid>,
+    #[serde(default)]
+    clock_started_secs: u64,
+}
+
+/// What the turn clock wants done, once a deadline has passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnClockAction {
+    Roll,
+    EndTurn,
 }
 
 /// Table sizes we support. The size chosen when the lobby is created fixes the
@@ -86,6 +102,8 @@ impl GameInstance {
             next_trade_id: 1,
             special_build_queue: Vec::new(),
             last_activity_secs: now_secs(),
+            clock_player: None,
+            clock_started_secs: 0,
         }
     }
 
@@ -318,6 +336,45 @@ impl GameInstance {
     /// the turn it was made in, and must not be settled during someone else's.
     pub fn clear_trades(&mut self) -> Vec<u64> {
         self.pending_trades.drain().map(|(id, _)| id).collect()
+    }
+
+    /// What the turn clock says should happen now, if anything.
+    ///
+    /// Re-arms itself when the turn changes hands, and refuses to force
+    /// anything while the player still owes the game an answer - a discard, a
+    /// robber move, a resource pick - because those are the player's to make
+    /// and skipping them would corrupt the position.
+    pub fn turn_clock_due(&mut self) -> Option<TurnClockAction> {
+        if self.phase != GamePhase::RegularPlay {
+            self.clock_player = None;
+            return None;
+        }
+
+        let current = self.turn_manager.players.get_current_player().id;
+        let now = now_secs();
+
+        if self.clock_player != Some(current) {
+            self.clock_player = Some(current);
+            self.clock_started_secs = now;
+            return None;
+        }
+
+        if self.pending_actions.contains_key(&current)
+            || self
+                .pending_actions
+                .values()
+                .any(|actions| actions.contains(&PendingAction::Discard))
+        {
+            return None;
+        }
+
+        let elapsed = now.saturating_sub(self.clock_started_secs);
+
+        if !self.turn_manager.dice.was_dice_rolled() {
+            (elapsed >= shared::TURN_AUTO_ROLL_SECS).then_some(TurnClockAction::Roll)
+        } else {
+            (elapsed >= shared::TURN_LIMIT_SECS).then_some(TurnClockAction::EndTurn)
+        }
     }
 
     /// The open offers `pid` is entitled to see, for restoring their trade

@@ -27,6 +27,8 @@ pub enum IconKind {
     Warning,
     Refresh,
     Wheat,
+    /// Monopoly.
+    Coins,
 }
 
 #[component]
@@ -142,6 +144,16 @@ pub fn Icon(
             </>
         }.into_view(),
 
+        // coins
+        IconKind::Coins => view! {
+            <>
+                <circle cx="8" cy="8" r="6"/>
+                <path d="M18.09 10.37A6 6 0 1 1 10.34 18"/>
+                <path d="M7 6h1v4"/>
+                <path d="m16.71 13.88.7.71-2.82 2.82"/>
+            </>
+        }.into_view(),
+
         // wheat
         IconKind::Wheat => view! {
             <>
@@ -174,7 +186,11 @@ pub fn Icon(
 /// A die face, 1-6, drawn as pips. The Unicode die characters are missing from
 /// most default font stacks, so they get the same treatment as the emoji did.
 #[component]
-pub fn DieFace(value: u8, #[prop(default = "")] class: &'static str) -> impl IntoView {
+pub fn DieFace(
+    value: u8,
+    #[prop(default = "")] class: &'static str,
+    #[prop(default = "w-[1.35em] h-[1.35em]")] size: &'static str,
+) -> impl IntoView {
     let pips: &[(f32, f32)] = match value {
         1 => &[(8.0, 8.0)],
         2 => &[(5.0, 5.0), (11.0, 11.0)],
@@ -186,7 +202,7 @@ pub fn DieFace(value: u8, #[prop(default = "")] class: &'static str) -> impl Int
 
     view! {
         <svg
-            class=format!("inline-block align-[-0.2em] w-[1.35em] h-[1.35em] shrink-0 {class}")
+            class=format!("inline-block align-[-0.2em] shrink-0 {size} {class}")
             viewBox="0 0 16 16"
             aria-label=format!("die showing {value}")
         >

@@ -25,6 +25,15 @@ pub struct TradeSnapshot {
     pub counters: Option<u64>,
 }
 
+/// How long a player has to roll before the server rolls for them, and how
+/// long a whole turn may run before the server ends it.
+///
+/// The server is the authority: a client that closes its tab must not be able
+/// to stall the table. Clients read the same constants purely to draw a bar
+/// that agrees with the deadline being enforced.
+pub const TURN_AUTO_ROLL_SECS: u64 = 10;
+pub const TURN_LIMIT_SECS: u64 = 60;
+
 /// How long a trade offer stays open before the server withdraws it.
 ///
 /// The server is the authority here; the client only counts down so the
