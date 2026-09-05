@@ -2,6 +2,7 @@ use leptos::*;
 use uuid::Uuid;
 use crate::components::board::{player_color_hex, Board};
 use crate::state::GameState;
+use crate::components::icons::{Icon, IconKind};
 use shared::{ClientRequest, GamePhase, PlayerColour};
 
 #[component]
@@ -255,11 +256,11 @@ pub fn GamePage() -> impl IntoView {
                                             cards.into_iter().map(|card| {
                                                 let card_clone = card.clone();
                                                 let card_name = match card {
-                                                    shared::DevCardType::Knight => "⚔️ Knight",
-                                                    shared::DevCardType::VictoryPoint => "🏆 Victory Point",
-                                                    shared::DevCardType::RoadBuilding => "🛣️ Road Building",
-                                                    shared::DevCardType::Monopoly => "💰 Monopoly",
-                                                    shared::DevCardType::YearOfPlenty => "🌾 Year of Plenty",
+                                                    shared::DevCardType::Knight => "Knight",
+                                                    shared::DevCardType::VictoryPoint => "Victory Point",
+                                                    shared::DevCardType::RoadBuilding => "Road Building",
+                                                    shared::DevCardType::Monopoly => "Monopoly",
+                                                    shared::DevCardType::YearOfPlenty => "Year of Plenty",
                                                 };
 
                                                 view! {
@@ -317,7 +318,7 @@ pub fn GamePage() -> impl IntoView {
             <Show when=move || state.winner_player_id.get().is_some()>
                     <div class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-md pointer-events-auto">
                         <div class="bg-slate-900 border-4 border-yellow-500 rounded-3xl p-10 flex flex-col items-center shadow-[0_0_50px_rgba(234,179,8,0.3)] animate-in fade-in zoom-in duration-300">
-                            <div class="text-7xl mb-4">"🏆"</div>
+                            <div class="text-6xl mb-4 text-amber-400 flex justify-center"><Icon kind=IconKind::Trophy /></div>
                             <h2 class="text-5xl font-black text-white mb-2 tracking-tighter">"VICTORY"</h2>
                             <div class="h-1 w-32 bg-yellow-500 mb-6"></div>
 
@@ -415,40 +416,68 @@ fn PlayerTagDynamic(
                         class="w-2.5 h-2.5 rounded-full border border-black/40 shrink-0"
                         style=move || format!("background-color: {};", hex_color)
                     ></div>
-                    <span class="text-sm font-bold truncate" style=move || format!("color: {};", hex_color)>{name}</span>
+                    <span
+                        class="text-sm font-bold truncate"
+                        style=move || format!("color: {};", hex_color)
+                        title=name.clone()
+                    >{name}</span>
                     <Show when=is_active>
-                        <span class="bg-orange-600 text-white px-2 py-1 rounded-full text-[9px] font-bold">"TURN"</span>
+                        <span class="bg-orange-600 text-white px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0">"TURN"</span>
                     </Show>
                     <Show when=move || has_longest_road.get()>
-                        <span class="bg-yellow-700 text-white px-2 py-1 rounded-full text-[9px] font-bold" title="Longest Road (2 VP)">"🛣️"</span>
+                        <span class="bg-yellow-700 text-white px-1.5 py-0.5 rounded-full text-[10px] shrink-0" title="Longest Road (2 VP)">
+                            <Icon kind=IconKind::Road />
+                        </span>
                     </Show>
                     <Show when=move || has_largest_army.get()>
-                        <span class="bg-red-700 text-white px-2 py-1 rounded-full text-[9px] font-bold" title="Largest Army (2 VP)">"⚔️"</span>
+                        <span class="bg-red-700 text-white px-1.5 py-0.5 rounded-full text-[10px] shrink-0" title="Largest Army (2 VP)">
+                            <Icon kind=IconKind::Knight />
+                        </span>
                     </Show>
                 </div>
-                <span class="bg-black/40 px-2 py-1 rounded text-[10px] font-mono font-bold text-orange-400">
+                // Never wraps: the score is the one thing that has to stay
+                // readable however long the name is.
+                <span
+                    class="bg-black/40 px-2 py-1 rounded text-[10px] font-mono font-bold text-orange-400 whitespace-nowrap shrink-0"
+                    title=move || {
+                        let (vp, secret) = score.get();
+                        if is_me && secret > 0 {
+                            format!("{} public + {secret} hidden victory point(s)", vp - secret)
+                        } else {
+                            format!("{vp} victory points")
+                        }
+                    }
+                >
                     {move || {
                         let (vp, secret) = score.get();
-                        if is_me{
-                            format!("{vp} VP + ({secret})")
+                        if is_me && secret > 0 {
+                            format!("{vp} VP ({secret} hidden)")
                         } else {
                             format!("{vp} VP")
                         }
                     }}
                 </span>
             </div>
-            <div class="flex gap-3 mt-2 text-[10px] text-slate-400">
-                <span>
-                    "🃏 " {move || resource_count.get()} " resources"
+            <div class="grid grid-cols-2 gap-x-3 gap-y-1 mt-2 text-[10px] text-slate-400">
+                <span class="flex items-center gap-1.5 whitespace-nowrap" title="Resource cards in hand">
+                    <Icon kind=IconKind::Resource />
+                    <span class="text-slate-200 font-semibold">{move || resource_count.get()}</span>
+                    "resources"
                 </span>
-                <span>
-                    "🎴 " {move || dev_card_count.get()} " dev cards"
+                <span class="flex items-center gap-1.5 whitespace-nowrap" title="Development cards in hand">
+                    <Icon kind=IconKind::DevCard />
+                    <span class="text-slate-200 font-semibold">{move || dev_card_count.get()}</span>
+                    "dev cards"
                 </span>
-                <span>
-                    "⚔️ " {move || knights_played.get()} " knights"
+                <span class="flex items-center gap-1.5 whitespace-nowrap" title="Knights played">
+                    <Icon kind=IconKind::Knight />
+                    <span class="text-slate-200 font-semibold">{move || knights_played.get()}</span>
+                    "knights"
                 </span>
-                <span>
-                    "🛣️ " {move || roads_count.get()} " road length"
+                <span class="flex items-center gap-1.5 whitespace-nowrap" title="Longest road length">
+                    <Icon kind=IconKind::Road />
+                    <span class="text-slate-200 font-semibold">{move || roads_count.get()}</span>
+                    "road"
                 </span>
             </div>
         </div>
@@ -702,7 +731,7 @@ fn DiscardCardsModal() -> impl IntoView {
         <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm pointer-events-auto">
             <div class="bg-slate-900 border-2 border-red-600 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
                 <div class="flex justify-between items-center mb-2">
-                    <h2 class="text-2xl font-bold text-red-500">"⚠️ Discard Cards"</h2>
+                    <h2 class="text-2xl font-bold text-red-500 flex items-center gap-2"><Icon kind=IconKind::Warning /> "Discard Cards"</h2>
                     <div class=move || {
                         let t = time_left.get();
                         if t <= 10 {
@@ -756,7 +785,7 @@ fn RobPlayerModal() -> impl IntoView {
     view! {
         <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm pointer-events-auto">
             <div class="bg-slate-900 border-2 border-orange-600 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
-                <h2 class="text-2xl font-bold text-orange-500 mb-2">"🦹 Rob a Player"</h2>
+                <h2 class="text-2xl font-bold text-orange-500 mb-2 flex items-center gap-2"><Icon kind=IconKind::Robber /> "Rob a Player"</h2>
                 <p class="text-slate-300 mb-4">
                     "Select a player to steal a random resource card from:"
                 </p>
@@ -1623,7 +1652,7 @@ fn YearOfPlentyModal() -> impl IntoView {
             <div class="bg-slate-900 border-2 border-emerald-600 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
                 <div class="flex justify-between items-start mb-2">
                     <div>
-                        <h2 class="text-2xl font-bold text-emerald-400">"🌾 Year of Plenty"</h2>
+                        <h2 class="text-2xl font-bold text-emerald-400 flex items-center gap-2"><Icon kind=IconKind::Wheat /> "Year of Plenty"</h2>
                         <p class="text-slate-300 text-sm">"Choose 2 resources to receive from the bank."</p>
                     </div>
                     <div class="text-[10px] text-slate-400">

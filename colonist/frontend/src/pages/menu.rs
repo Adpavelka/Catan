@@ -1,5 +1,6 @@
 use leptos::*;
 use crate::state::GameState;
+use crate::components::icons::{Icon, IconKind};
 use shared::{ClientRequest, GameRules, LobbyGameInfo, PlayerColour};
 
 const BTN_PRIMARY: &str = "bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50";
@@ -15,7 +16,7 @@ pub fn MainMenu() -> impl IntoView {
             <Show when=move || state.connection_error.get().is_some()>
                 <div class="mb-6 p-4 bg-red-900/30 border border-red-500/50 text-red-200 rounded-2xl text-sm max-w-md w-full animate-in fade-in duration-500">
                     <div class="flex items-center gap-3">
-                        <span class="text-xl">"⚠️"</span>
+                        <span class="text-xl text-red-300"><Icon kind=IconKind::Warning /></span>
                         <div>
                             <p class="font-bold">"Connection Error"</p>
                             <p class="text-xs opacity-80">{move || state.connection_error.get()}</p>
@@ -78,7 +79,7 @@ pub fn MainMenu() -> impl IntoView {
                             on:click=move |_| state.send(ClientRequest::GetLobbyList)
                             class="text-xs text-orange-500/50 hover:text-orange-500 transition-colors flex items-center justify-center gap-1 w-full"
                         >
-                            "🔄 Refresh list"
+                            <Icon kind=IconKind::Refresh class="mr-1" /> "Refresh list"
                         </button>
                     </div>
                 </Show>

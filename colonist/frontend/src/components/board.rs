@@ -1,5 +1,6 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
+use crate::components::icons::DieFace;
 use shared::{ClientRequest, ResourceType, HexInfo, PlayerColour, PortType, PortInfo};
 use uuid::Uuid;
 
@@ -412,15 +413,14 @@ pub fn Board() -> impl IntoView {
                                         r="20"
                                         class="fill-black/40 stroke-red-600 stroke-2"
                                     />
-                                    // Robber emoji
-                                    <text
-                                        y="6"
-                                        text-anchor="middle"
-                                        class="fill-red-500 text-[16px] font-black pointer-events-none"
-                                        style="text-shadow: 1px 1px 2px rgba(0,0,0,0.9)"
-                                    >
-                                        "🦹"
-                                    </text>
+                                    // Drawn, not lettered: an emoji here is a
+                                    // tofu box on any machine without an emoji
+                                    // font, and the robber has to be legible.
+                                    <g class="pointer-events-none" transform="translate(-9, -9) scale(1.125)">
+                                        <circle cx="8" cy="5" r="2.6" class="fill-red-500"/>
+                                        <path d="M2.6 14c0-3 2.4-5 5.4-5s5.4 2 5.4 5z" class="fill-red-500"/>
+                                        <path d="M4.2 5.6h7.6" stroke="#0b1120" stroke-width="1.6" stroke-linecap="round"/>
+                                    </g>
                                 </g>
                             }.into_view()
                         } else {
@@ -665,13 +665,11 @@ pub fn Board() -> impl IntoView {
 
                         <Show when=move || has_rolled()>
                             <div class="flex gap-2 items-center text-white font-bold">
-                                {move || {
-                                    if let Some((d1, d2)) = state.last_dice_roll.get() {
-                                        format!("🎲 {} + {} = {}", d1, d2, d1 + d2)
-                                    } else {
-                                        String::new()
-                                    }
-                                }}
+                                {move || state.last_dice_roll.get().map(|(d1, d2)| view! {
+                                    <DieFace value=d1 />
+                                    <DieFace value=d2 />
+                                    <span class="ml-1 text-lg tabular-nums">{d1 + d2}</span>
+                                })}
                             </div>
                         </Show>
                     </div>
