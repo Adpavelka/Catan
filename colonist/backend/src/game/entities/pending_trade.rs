@@ -20,6 +20,11 @@ pub struct PendingTrade {
     pub accepted_by: Vec<Uuid>,
     /// When the offer was made, in seconds since the epoch.
     pub created_at_secs: u64,
+    /// Set when this trade answers another player's offer with different
+    /// terms. A counter always runs between the countering player and the
+    /// active player, which is what stops two idle players trading.
+    #[serde(default)]
+    pub counters: Option<u64>,
 }
 
 impl PendingTrade {
@@ -39,6 +44,10 @@ impl PendingTrade {
         self.accepted_by.retain(|id| *id != pid);
         self.declined_by.insert(pid);
         had_accepted
+    }
+
+    pub fn is_counter(&self) -> bool {
+        self.counters.is_some()
     }
 
     pub fn has_accepted(&self, pid: Uuid) -> bool {

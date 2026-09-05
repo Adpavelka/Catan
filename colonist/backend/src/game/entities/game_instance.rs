@@ -344,6 +344,7 @@ impl GameInstance {
                     accepted_by: trade.accepted_by.clone(),
                     seconds_remaining: TRADE_LIFETIME_SECS.saturating_sub(age),
                     you_declined: trade.declined_by.contains(&pid),
+                    counters: trade.counters,
                 }
             })
             .collect();
@@ -658,6 +659,7 @@ mod tests {
                 requesting: Default::default(),
                 declined_by: HashSet::new(),
                 accepted_by: Vec::new(),
+                counters: None,
                 created_at_secs: now_secs().saturating_sub(age),
             });
         };
@@ -687,6 +689,7 @@ mod tests {
             requesting: Default::default(),
             declined_by: HashSet::new(),
                 accepted_by: Vec::new(),
+                counters: None,
             created_at_secs: now_secs(),
         });
 

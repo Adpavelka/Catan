@@ -133,6 +133,7 @@ impl GameInstance {
             declined_by: HashSet::new(),
             accepted_by: Vec::new(),
             created_at_secs: crate::game::entities::game_instance::now_secs(),
+            counters: None,
         };
 
         self.pending_trades.insert(offer_id, pending_trade);
@@ -143,6 +144,90 @@ impl GameInstance {
             target_player_id,
             offering: offer,
             requesting: request,
+            counters: None,
+        })
+    }
+
+
+    /// Answers the active player's offer with different terms. The counter is
+    /// a trade from `pid` to them, so it is still their turn's trade - two
+    /// players who are both waiting can never deal with each other.
+    pub fn handle_counter_offer(&mut self, pid: Uuid,
+        offer_id: u64,
+        offer: shared::Resources,
+        request: shared::Resources,
+    ) -> Result<ServerMessage, String> {
+        self.expire_stale_trades();
+
+        if self.get_state() != ServerPhase::RegularPlay {
+            return Err("You can only trade during a turn.".to_string());
+        }
+
+        let Some(original) = self.pending_trades.get(&offer_id) else {
+            return Ok(ServerMessage::TradeCancelled { offer_id });
+        };
+
+        if original.is_counter() {
+            return Err("You cannot counter a counter-offer.".to_string());
+        }
+
+        let active = self.turn_manager.players.get_current_player().id;
+        if original.proposer_id != active {
+            return Err("That offer is no longer on the table.".to_string());
+        }
+
+        if pid == active {
+            return Err("You cannot counter your own offer.".to_string());
+        }
+
+        if !original.is_open_to(pid) {
+            return Err("This trade was not offered to you".to_string());
+        }
+
+        if is_empty(&offer) || is_empty(&request) {
+            return Err("A trade needs something on both sides.".to_string());
+        }
+
+        let counterer = self
+            .turn_manager
+            .players
+            .get(pid)
+            .ok_or("Player not found")?;
+
+        if !counterer.can_pay(&resources_to_set(&offer)) {
+            return Err("You don't have enough resources for this trade".to_string());
+        }
+
+        // Countering supersedes whatever you said before: your earlier terms
+        // are gone, and you are no longer bidding on theirs.
+        self.pending_trades
+            .retain(|_, trade| !(trade.proposer_id == pid && trade.counters == Some(offer_id)));
+        if let Some(original) = self.pending_trades.get_mut(&offer_id) {
+            original.accepted_by.retain(|id| *id != pid);
+        }
+
+        let counter_id = self.next_trade_id;
+        self.next_trade_id += 1;
+
+        self.pending_trades.insert(counter_id, PendingTrade {
+            offer_id: counter_id,
+            proposer_id: pid,
+            target_player_id: Some(active),
+            offering: offer.clone(),
+            requesting: request.clone(),
+            declined_by: HashSet::new(),
+            accepted_by: Vec::new(),
+            created_at_secs: crate::game::entities::game_instance::now_secs(),
+            counters: Some(offer_id),
+        });
+
+        Ok(ServerMessage::TradeProposed {
+            offer_id: counter_id,
+            proposer_id: pid,
+            target_player_id: Some(active),
+            offering: offer,
+            requesting: request,
+            counters: Some(offer_id),
         })
     }
 
@@ -167,6 +252,12 @@ impl GameInstance {
             return Err("This trade was not offered to you".to_string());
         }
 
+        // A counter runs between exactly two players and is settled by the
+        // active one, so there is nothing here to bid on.
+        if trade.is_counter() {
+            return Err("Answer a counter-offer by accepting or rejecting it.".to_string());
+        }
+
         if !accept {
             let already_declined = trade.declined_by.contains(&pid);
             let had_accepted = self
@@ -183,7 +274,7 @@ impl GameInstance {
             // can be what leaves nobody willing, and returning early here left
             // the offer stranded: unanswerable, and blocking a replacement.
             if self.everyone_has_declined(offer_id) {
-                self.pending_trades.remove(&offer_id);
+                self.close_offer_and_counters(offer_id);
             }
 
             // Taking back an acceptance is worth telling the proposer about,
@@ -244,10 +335,6 @@ impl GameInstance {
             return Ok(ServerMessage::TradeCancelled { offer_id });
         };
 
-        if trade.proposer_id != pid {
-            return Err("Only the player who offered the trade can settle it.".to_string());
-        }
-
         // Offers are cleared when a turn ends, but a 5-6 player table goes
         // into a special building phase first. Without this guard the player
         // who just finished could settle while somebody else is building.
@@ -257,9 +344,26 @@ impl GameInstance {
             return Err("You can only trade on your own turn.".to_string());
         }
 
-        if !trade.has_accepted(partner_id) {
-            return Err("That player has not accepted your offer.".to_string());
+        // Only the active player settles, either way round. For their own
+        // offer they pick an accepter; for a counter aimed at them they pick
+        // the player who countered. Both leave the trade between the active
+        // player and one other, never between two players who are waiting.
+        if trade.proposer_id == pid {
+            if !trade.has_accepted(partner_id) {
+                return Err("That player has not accepted your offer.".to_string());
+            }
+        } else if trade.is_counter() && trade.target_player_id == Some(pid) {
+            if partner_id != trade.proposer_id {
+                return Err("That player did not make this counter-offer.".to_string());
+            }
+        } else {
+            return Err("Only the player whose turn it is can settle a trade.".to_string());
         }
+
+        // `offering` always flows from the trade's proposer to the other side,
+        // whichever of the two is the active player.
+        let giver = trade.proposer_id;
+        let taker = if giver == pid { partner_id } else { pid };
 
         let proposer_gives = resources_to_set(&trade.offering);
         let partner_gives = resources_to_set(&trade.requesting);
@@ -267,55 +371,81 @@ impl GameInstance {
         let proposer = self
             .turn_manager
             .players
-            .get(pid)
-            .ok_or("Proposer not found")?;
+            .get(giver)
+            .ok_or("That player is no longer in the game.")?;
 
-        // The offer is dead either way if the proposer cannot cover it, so
-        // withdraw it rather than leaving them stuck with an offer they can
-        // neither settle nor see the state of.
+        // The offer is dead either way if its proposer cannot cover it, so
+        // withdraw it rather than leaving it as something that can never be
+        // settled and can never be seen to have failed.
         if !proposer.can_pay(&proposer_gives) {
             self.pending_trades.remove(&offer_id);
             return Ok(ServerMessage::TradeCancelled { offer_id });
         }
 
-        let partner = self
+        let other = self
             .turn_manager
             .players
-            .get(partner_id)
+            .get(taker)
             .ok_or("That player is no longer in the game.")?;
 
-        // Only this bid is dead; other players may still be able to settle.
-        if !partner.can_pay(&partner_gives) {
+        if !other.can_pay(&partner_gives) {
+            // A counter has only one possible partner, so it dies with them;
+            // an open offer may still have other bids worth keeping.
+            if trade.is_counter() {
+                self.pending_trades.remove(&offer_id);
+                return Ok(ServerMessage::TradeCancelled { offer_id });
+            }
+
             self.pending_trades
                 .get_mut(&offer_id)
                 .expect("checked above")
-                .decline(partner_id);
+                .decline(taker);
 
             return Ok(ServerMessage::TradeAcceptanceWithdrawn {
                 offer_id,
-                accepter_id: partner_id,
+                accepter_id: taker,
             });
         }
 
         let tm = &mut self.turn_manager;
 
         tm.bank
-            .collect_from_player_to_player(pid, partner_id, &proposer_gives, &mut tm.players)
+            .collect_from_player_to_player(giver, taker, &proposer_gives, &mut tm.players)
             .map_err(|e| e.to_string())?;
 
         tm.bank
-            .collect_from_player_to_player(partner_id, pid, &partner_gives, &mut tm.players)
+            .collect_from_player_to_player(taker, giver, &partner_gives, &mut tm.players)
             .map_err(|e| e.to_string())?;
 
-        self.pending_trades.remove(&offer_id);
+        // Settling ends the whole negotiation, including any counters that
+        // were answering the same offer.
+        self.close_offer_and_counters(offer_id);
+        if let Some(original) = trade.counters {
+            self.close_offer_and_counters(original);
+        }
 
         Ok(ServerMessage::TradeCompleted {
             offer_id,
-            proposer_id: pid,
-            accepter_id: partner_id,
+            proposer_id: giver,
+            accepter_id: taker,
             proposer_gave: trade.offering,
             accepter_gave: trade.requesting,
         })
+    }
+
+
+    /// Removes an offer along with every counter that was answering it.
+    /// Returns the ids that went, for the caller to announce.
+    pub(crate) fn close_offer_and_counters(&mut self, offer_id: u64) -> Vec<u64> {
+        let mut closed = Vec::new();
+        self.pending_trades.retain(|id, trade| {
+            let doomed = *id == offer_id || trade.counters == Some(offer_id);
+            if doomed {
+                closed.push(*id);
+            }
+            !doomed
+        });
+        closed
     }
 
 
@@ -345,7 +475,7 @@ impl GameInstance {
                 if trade.proposer_id != pid {
                     Err("You can only cancel your own trades".to_string())
                 } else {
-                    self.pending_trades.remove(&offer_id);
+                    self.close_offer_and_counters(offer_id);
                     Ok(ServerMessage::TradeCancelled { offer_id })
                 }
             }
@@ -447,14 +577,21 @@ mod tests {
         assert!(!game.pending_trades.contains_key(&offer_id), "offer is settled");
     }
 
+    /// Settling is the active player's alone. A bystander is turned away by
+    /// the turn check before anything else is even considered.
     #[test]
-    fn only_the_proposer_may_settle() {
+    fn only_the_active_player_may_settle() {
         let (mut game, proposer, first, second) = table();
         let offer_id = offer_brick_for_lumber(&mut game, proposer);
         game.handle_trade_response(first, offer_id, true).unwrap();
 
         let err = game.handle_confirm_trade(second, offer_id, first).unwrap_err();
-        assert!(err.contains("Only the player who offered"), "got: {err}");
+        assert!(err.contains("own turn"), "got: {err}");
+        assert!(game.pending_trades.contains_key(&offer_id));
+
+        // Nor may the bidder settle the offer they bid on.
+        let err = game.handle_confirm_trade(first, offer_id, first).unwrap_err();
+        assert!(err.contains("own turn"), "got: {err}");
         assert!(game.pending_trades.contains_key(&offer_id));
     }
 
@@ -675,5 +812,133 @@ mod tests {
             0,
             "a private offer must not show up for a bystander"
         );
+    }
+
+    fn counter(game: &mut GameInstance, pid: Uuid, original: u64,
+               give: Resources, want: Resources) -> Result<u64, String> {
+        match game.handle_counter_offer(pid, original, give, want)? {
+            ServerMessage::TradeProposed { offer_id, counters, .. } => {
+                assert_eq!(counters, Some(original), "a counter must point at its original");
+                Ok(offer_id)
+            }
+            other => panic!("expected TradeProposed, got {other:?}"),
+        }
+    }
+
+    /// The active player offers, somebody counters, the active player takes
+    /// the counter. Resources move on the counter's terms, not the original's.
+    #[test]
+    fn a_counter_can_be_settled_by_the_active_player() {
+        let (mut game, proposer, taker, _) = table();
+        let original = offer_brick_for_lumber(&mut game, proposer);
+
+        // They want two brick for their one lumber, not one.
+        let counter_id = counter(&mut game, taker, original, res(0, 1), res(2, 0)).unwrap();
+
+        let msg = game.handle_confirm_trade(proposer, counter_id, taker).unwrap();
+        match msg {
+            ServerMessage::TradeCompleted { proposer_id, accepter_id, proposer_gave, accepter_gave, .. } => {
+                assert_eq!(proposer_id, taker, "the counter's proposer is the counterer");
+                assert_eq!(accepter_id, proposer);
+                assert_eq!(proposer_gave, res(0, 1));
+                assert_eq!(accepter_gave, res(2, 0));
+            }
+            other => panic!("expected TradeCompleted, got {other:?}"),
+        }
+
+        let amount = |g: &GameInstance, id, r| {
+            g.turn_manager.players.get(id).unwrap().resources.amount_of(r)
+        };
+        assert_eq!(amount(&game, proposer, ResourceType::Brick), 3, "paid two brick");
+        assert_eq!(amount(&game, proposer, ResourceType::Wood), 1);
+        assert_eq!(amount(&game, taker, ResourceType::Brick), 2);
+
+        assert!(game.pending_trades.is_empty(), "settling ends the negotiation");
+    }
+
+    /// The rule that matters: a counter is aimed at the active player, so two
+    /// players who are both waiting can never trade with each other.
+    #[test]
+    fn a_waiting_player_cannot_settle_a_counter() {
+        let (mut game, proposer, first, second) = table();
+        let original = offer_brick_for_lumber(&mut game, proposer);
+        let counter_id = counter(&mut game, first, original, res(0, 1), res(1, 0)).unwrap();
+
+        let err = game.handle_confirm_trade(second, counter_id, first).unwrap_err();
+        assert!(err.contains("own turn"), "got: {err}");
+
+        // ...and they cannot bid on it to sneak in either.
+        let err = game.handle_trade_response(second, counter_id, true).unwrap_err();
+        assert!(err.contains("not offered to you"), "got: {err}");
+    }
+
+    #[test]
+    fn a_counter_is_not_something_to_bid_on() {
+        let (mut game, proposer, taker, _) = table();
+        let original = offer_brick_for_lumber(&mut game, proposer);
+        let counter_id = counter(&mut game, taker, original, res(0, 1), res(1, 0)).unwrap();
+
+        let err = game.handle_trade_response(proposer, counter_id, true).unwrap_err();
+        assert!(err.contains("accepting or rejecting"), "got: {err}");
+    }
+
+    #[test]
+    fn countering_replaces_your_earlier_answer() {
+        let (mut game, proposer, taker, _) = table();
+        let original = offer_brick_for_lumber(&mut game, proposer);
+
+        game.handle_trade_response(taker, original, true).unwrap();
+        assert_eq!(game.pending_trades[&original].accepted_by, vec![taker]);
+
+        let first_counter = counter(&mut game, taker, original, res(0, 1), res(2, 0)).unwrap();
+        assert!(
+            game.pending_trades[&original].accepted_by.is_empty(),
+            "countering withdraws the bid on their original terms"
+        );
+
+        // Changing your mind again replaces the counter rather than stacking.
+        let second_counter = counter(&mut game, taker, original, res(0, 1), res(3, 0)).unwrap();
+        assert!(!game.pending_trades.contains_key(&first_counter));
+        assert!(game.pending_trades.contains_key(&second_counter));
+    }
+
+    #[test]
+    fn counters_die_with_the_offer_they_answer() {
+        let (mut game, proposer, first, second) = table();
+        let original = offer_brick_for_lumber(&mut game, proposer);
+        counter(&mut game, first, original, res(0, 1), res(2, 0)).unwrap();
+        counter(&mut game, second, original, res(0, 1), res(3, 0)).unwrap();
+        assert_eq!(game.pending_trades.len(), 3);
+
+        game.handle_cancel_trade(proposer, original).unwrap();
+        assert!(game.pending_trades.is_empty(), "withdrawing the offer clears its counters");
+    }
+
+    #[test]
+    fn you_cannot_counter_your_own_offer_or_a_counter() {
+        let (mut game, proposer, taker, _) = table();
+        let original = offer_brick_for_lumber(&mut game, proposer);
+
+        let err = game
+            .handle_counter_offer(proposer, original, res(1, 0), res(0, 1))
+            .unwrap_err();
+        assert!(err.contains("your own offer"), "got: {err}");
+
+        let counter_id = counter(&mut game, taker, original, res(0, 1), res(1, 0)).unwrap();
+        let err = game
+            .handle_counter_offer(proposer, counter_id, res(1, 0), res(0, 1))
+            .unwrap_err();
+        assert!(err.contains("counter a counter"), "got: {err}");
+    }
+
+    #[test]
+    fn a_counter_you_cannot_afford_is_refused() {
+        let (mut game, proposer, taker, _) = table();
+        let original = offer_brick_for_lumber(&mut game, proposer);
+
+        let err = game
+            .handle_counter_offer(taker, original, res(0, 99), res(1, 0))
+            .unwrap_err();
+        assert!(err.contains("enough resources"), "got: {err}");
     }
 }

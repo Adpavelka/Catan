@@ -1207,6 +1207,107 @@ fn PlayerTradeUI() -> impl IntoView {
 /// will send `TradeCancelled`; this is display only, so the two cannot drift.
 const TRADE_TIMEOUT_SECONDS: f64 = shared::TRADE_LIFETIME_SECS as f64;
 
+/// Terms to answer somebody else's offer with. Sends a counter, which is a
+/// trade from us to the active player - never to another waiting player.
+#[component]
+fn CounterOfferForm(offer_id: u64, on_done: Callback<()>) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let give = create_rw_signal(shared::Resources::default());
+    let want = create_rw_signal(shared::Resources::default());
+
+    let can_afford = move || {
+        let (g, mine) = (give.get(), state.my_resources.get());
+        g.brick <= mine.brick && g.lumber <= mine.lumber && g.wool <= mine.wool
+            && g.grain <= mine.grain && g.ore <= mine.ore
+    };
+    let non_empty = |r: &shared::Resources| {
+        r.brick + r.lumber + r.wool + r.grain + r.ore > 0
+    };
+    let is_valid = move || non_empty(&give.get()) && non_empty(&want.get()) && can_afford();
+
+    // (label, colour, read the field, write the field)
+    type Field = (&'static str, &'static str, fn(&shared::Resources) -> u8, fn(&mut shared::Resources, u8));
+    let fields: [Field; 5] = [
+        ("Brick", "text-red-400", |r| r.brick, |r, v| r.brick = v),
+        ("Wood", "text-green-400", |r| r.lumber, |r, v| r.lumber = v),
+        ("Sheep", "text-lime-400", |r| r.wool, |r, v| r.wool = v),
+        ("Wheat", "text-yellow-400", |r| r.grain, |r, v| r.grain = v),
+        ("Ore", "text-slate-300", |r| r.ore, |r, v| r.ore = v),
+    ];
+
+    let row = move |label: &'static str, colour: &'static str,
+                    read: fn(&shared::Resources) -> u8,
+                    write: fn(&mut shared::Resources, u8),
+                    bucket: RwSignal<shared::Resources>,
+                    cap: Option<fn(&shared::Resources) -> u8>| {
+        view! {
+            <div class="flex items-center justify-between text-[10px]">
+                <span class=format!("font-bold {}", colour)>{label}</span>
+                <div class="flex items-center gap-1">
+                    <button
+                        class="w-5 h-5 bg-red-700 hover:bg-red-600 rounded text-white font-bold text-xs disabled:opacity-30"
+                        disabled=move || read(&bucket.get()) == 0
+                        on:click=move |_| bucket.update(|r| {
+                            let v = read(r);
+                            if v > 0 { write(r, v - 1); }
+                        })
+                    >"-"</button>
+                    <span class="w-4 text-center text-white">{move || read(&bucket.get())}</span>
+                    <button
+                        class="w-5 h-5 bg-green-700 hover:bg-green-600 rounded text-white font-bold text-xs disabled:opacity-30"
+                        disabled=move || match cap {
+                            Some(limit) => read(&bucket.get()) >= limit(&state.my_resources.get()),
+                            None => read(&bucket.get()) >= 19,
+                        }
+                        on:click=move |_| bucket.update(|r| {
+                            let v = read(r);
+                            write(r, v + 1);
+                        })
+                    >"+"</button>
+                </div>
+            </div>
+        }
+    };
+
+    view! {
+        <div class="mt-2 bg-slate-800/60 rounded p-2 space-y-2">
+            <div class="text-[9px] text-amber-400 font-bold">"YOUR COUNTER - YOU GIVE:"</div>
+            <div class="space-y-1">
+                {fields.map(|(l, c, r, w)| row(l, c, r, w, give, Some(r))).to_vec()}
+            </div>
+
+            <div class="text-[9px] text-amber-400 font-bold">"YOU WANT:"</div>
+            <div class="space-y-1">
+                {fields.map(|(l, c, r, w)| row(l, c, r, w, want, None)).to_vec()}
+            </div>
+
+            <div class="flex gap-1">
+                <button
+                    class="flex-1 py-1 bg-slate-700 hover:bg-slate-600 rounded text-[10px] font-bold"
+                    on:click=move |_| on_done.call(())
+                >
+                    "CANCEL"
+                </button>
+                <button
+                    class="flex-1 py-1 bg-amber-700 hover:bg-amber-600 rounded text-[10px] font-bold disabled:opacity-40"
+                    disabled=move || !is_valid()
+                    on:click=move |_| {
+                        state.send(ClientRequest::CounterOffer {
+                            offer_id,
+                            offer: give.get_untracked(),
+                            request: want.get_untracked(),
+                        });
+                        on_done.call(());
+                    }
+                >
+                    "SEND COUNTER"
+                </button>
+            </div>
+        </div>
+    }
+}
+
 #[component]
 fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
@@ -1245,6 +1346,21 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
 
     // Whether I have already bid on this offer and am waiting to be picked.
     let i_accepted = move || state.my_accepted_offers.get().contains(&offer_id);
+
+    // A counter is aimed at me alone, so accepting it settles it outright
+    // rather than joining a queue of bidders.
+    let is_counter = trade.counters.is_some();
+    let counterer = trade.proposer_id;
+
+    // Have I already answered this offer with terms of my own?
+    let my_counter = move || {
+        state.my_counter_offers.get()
+            .iter()
+            .find(|(original, _)| *original == offer_id)
+            .map(|(_, counter)| *counter)
+    };
+
+    let (show_counter_form, set_show_counter_form) = create_signal(false);
 
     let proposer_name = state.players.get()
         .iter()
@@ -1306,7 +1422,10 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
             </div>
 
             <div class="flex justify-between items-center mb-1">
-                <div class="font-bold text-blue-300">{proposer_name}</div>
+                <div class="font-bold text-blue-300">
+                    {proposer_name}
+                    {if is_counter { " (counter)" } else { "" }}
+                </div>
                 <div class=move || {
                     let remaining = seconds_left.get();
                     if remaining <= 5.0 {
@@ -1326,46 +1445,97 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
             <div class="text-slate-300">
                 <span class="text-red-400">"Wants: "</span>{requesting_str}
             </div>
-            <Show
-                when=i_accepted
-                fallback=move || view! {
+            {if is_counter {
+                // Somebody's counter to my offer: I settle it directly.
+                view! {
                     <div class="flex gap-1 mt-2">
                         <button
                             class="flex-1 py-1 bg-red-700 hover:bg-red-600 rounded font-bold"
                             on:click=move |_| {
-                                state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+                                state.send(ClientRequest::CancelTrade { offer_id });
                             }
                         >
-                            "DECLINE"
+                            "REJECT"
                         </button>
                         <button
                             class="flex-1 py-1 bg-green-700 hover:bg-green-600 rounded font-bold disabled:opacity-40"
                             disabled=move || !can_afford()
                             on:click=move |_| {
-                                state.send(ClientRequest::TradeResponse { offer_id, accept: true });
+                                state.send(ClientRequest::ConfirmTrade {
+                                    offer_id,
+                                    partner_id: counterer,
+                                });
                             }
                         >
-                            "ACCEPT"
+                            "TRADE"
                         </button>
                     </div>
-                }
-            >
-                // Bid placed. It is the proposer's move now: they may pick
-                // somebody else, so this stays until they settle or it lapses.
-                <div class="mt-2 space-y-1">
-                    <div class="text-green-400 font-bold text-center">
-                        "✓ Accepted - waiting for them to choose"
-                    </div>
-                    <button
-                        class="w-full py-1 bg-slate-700 hover:bg-slate-600 rounded font-bold"
-                        on:click=move |_| {
-                            state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+                }.into_view()
+            } else {
+                view! {
+                    <Show
+                        when=move || i_accepted() || my_counter().is_some()
+                        fallback=move || view! {
+                            <div class="flex gap-1 mt-2">
+                                <button
+                                    class="flex-1 py-1 bg-red-700 hover:bg-red-600 rounded font-bold"
+                                    on:click=move |_| {
+                                        state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+                                    }
+                                >
+                                    "DECLINE"
+                                </button>
+                                <button
+                                    class="flex-1 py-1 bg-amber-700 hover:bg-amber-600 rounded font-bold"
+                                    on:click=move |_| set_show_counter_form.set(true)
+                                >
+                                    "COUNTER"
+                                </button>
+                                <button
+                                    class="flex-1 py-1 bg-green-700 hover:bg-green-600 rounded font-bold disabled:opacity-40"
+                                    disabled=move || !can_afford()
+                                    on:click=move |_| {
+                                        state.send(ClientRequest::TradeResponse { offer_id, accept: true });
+                                    }
+                                >
+                                    "ACCEPT"
+                                </button>
+                            </div>
                         }
                     >
-                        "WITHDRAW"
-                    </button>
-                </div>
-            </Show>
+                        // Answered. It is their move now - they may pick
+                        // somebody else, so this stays until they settle.
+                        <div class="mt-2 space-y-1">
+                            <div class="text-green-400 font-bold text-center">
+                                {move || if my_counter().is_some() {
+                                    "✓ Countered - waiting for them to choose"
+                                } else {
+                                    "✓ Accepted - waiting for them to choose"
+                                }}
+                            </div>
+                            <button
+                                class="w-full py-1 bg-slate-700 hover:bg-slate-600 rounded font-bold"
+                                on:click=move |_| {
+                                    if let Some(counter_id) = my_counter() {
+                                        state.send(ClientRequest::CancelTrade { offer_id: counter_id });
+                                    } else {
+                                        state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+                                    }
+                                }
+                            >
+                                "WITHDRAW"
+                            </button>
+                        </div>
+                    </Show>
+
+                    <Show when=move || show_counter_form.get()>
+                        <CounterOfferForm
+                            offer_id=offer_id
+                            on_done=Callback::new(move |_| set_show_counter_form.set(false))
+                        />
+                    </Show>
+                }.into_view()
+            }}
         </div>
     }
 }

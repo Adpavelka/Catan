@@ -53,6 +53,9 @@ pub fn handle_game_request(
         ClientRequest::TradeResponse { offer_id, accept } => {
             game.handle_trade_response(pid, offer_id, accept)
         }
+        ClientRequest::CounterOffer { offer_id, offer, request } => {
+            game.handle_counter_offer(pid, offer_id, offer, request)
+        }
         ClientRequest::ConfirmTrade { offer_id, partner_id } => {
             game.handle_confirm_trade(pid, offer_id, partner_id)
         }

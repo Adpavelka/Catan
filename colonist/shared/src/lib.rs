@@ -20,6 +20,9 @@ pub struct TradeSnapshot {
     pub seconds_remaining: u64,
     /// Whether the player receiving this sync has already refused it.
     pub you_declined: bool,
+    /// Set when this is a counter to another offer.
+    #[serde(default)]
+    pub counters: Option<u64>,
 }
 
 /// How long a trade offer stays open before the server withdraws it.
@@ -148,7 +151,19 @@ pub enum ClientRequest {
         offer_id: u64,
         accept: bool,
     },
-    /// Proposer settles their own offer with one of the players who accepted.
+    /// Reply to the active player's offer with terms of your own. The counter
+    /// is a trade from you to them; they settle it, the same as any other.
+    /// Countering withdraws any acceptance you had on the original.
+    CounterOffer {
+        /// The offer being countered.
+        offer_id: u64,
+        offer: Resources,
+        request: Resources,
+    },
+    /// Settle a trade. Only the player whose turn it is may do this, which is
+    /// what keeps every trade between them and one other player: for their own
+    /// offer they pick one of the accepters, for a counter they pick the
+    /// player who countered.
     ConfirmTrade {
         offer_id: u64,
         partner_id: Uuid,
@@ -331,6 +346,10 @@ pub enum ServerMessage {
         target_player_id: Option<Uuid>,
         offering: Resources,
         requesting: Resources,
+        /// Set when this is a counter to an earlier offer, so clients can show
+        /// it against the offer it answers.
+        #[serde(default)]
+        counters: Option<u64>,
     },
     /// Someone is willing to take the offer. Nothing has moved yet: the
     /// proposer picks one of these players with `ConfirmTrade` to settle.
