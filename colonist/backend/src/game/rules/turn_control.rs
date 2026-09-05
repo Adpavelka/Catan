@@ -62,8 +62,12 @@ impl GameInstance
             return Err("You still have pending actions to complete.".into());
         }
 
-        for actions in self.pending_actions.values() {
-            if actions.contains(&PendingAction::Discard) {
+        // Only players still at the table can hold this up. Departures clear
+        // their own actions, but a stray entry must never freeze the game.
+        for (owner, actions) in &self.pending_actions {
+            if actions.contains(&PendingAction::Discard)
+                && self.turn_manager.players.get(*owner).is_some()
+            {
                 return Err("Cannot end turn until all players discard.".into());
             }
         }

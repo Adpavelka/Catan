@@ -36,6 +36,24 @@ impl Lobby
         }
     }
 
+    /// Broadcast to everyone in the game except `skip`. Used where the same
+    /// event carries more detail for the players involved than for onlookers.
+    pub fn broadcast_except(&self, game_id: &str, skip: &[Uuid], msg: shared::ServerMessage) {
+        let Some(game) = self.games.get(game_id) else { return };
+        let Ok(json_string) = serde_json::to_string(&msg) else { return };
+
+        let actix_msg = ServerMessage(json_string);
+        for idx in 0..game.turn_manager.players.len() {
+            let Some(player) = game.turn_manager.players.get_by_index(idx) else { continue };
+            if skip.contains(&player.id) {
+                continue;
+            }
+            if let Some(addr) = self.sessions.get(&player.id) {
+                let _ = addr.do_send(actix_msg.clone());
+            }
+        }
+    }
+
     pub fn broadcast_lobby_status(&self) {
         info!("Broadcasting lobby status to all players");
         let games_data: Vec<shared::LobbyGameInfo> = self.games.iter()

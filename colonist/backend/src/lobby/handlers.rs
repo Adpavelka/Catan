@@ -141,13 +141,39 @@ impl Lobby {
     /// players involved - broadcasting it would tell everyone who refused
     /// what, which is information they should have to ask for.
     fn deliver_action_result(&mut self, gid: &str, msg: ServerMessage) {
-        if let ServerMessage::TradeDeclined { proposer_id, decliner_id, .. } = msg {
-            self.send_server_msg(proposer_id, msg.clone());
-            self.send_server_msg(decliner_id, msg);
-            return;
-        }
+        match msg {
+            ServerMessage::TradeDeclined { proposer_id, decliner_id, .. } => {
+                self.send_server_msg(proposer_id, msg.clone());
+                self.send_server_msg(decliner_id, msg);
+            }
 
-        self.broadcast_to_game(gid, msg);
+            // Only the two players involved learn which card was taken.
+            // Broadcasting it would hand everyone the information that
+            // hiding hands in `PlayerInfo` was meant to withhold.
+            ServerMessage::PlayerRobbed { thief_id, victim_id, resource, stole_a_card } => {
+                let private = ServerMessage::PlayerRobbed {
+                    thief_id,
+                    victim_id,
+                    resource,
+                    stole_a_card,
+                };
+                self.send_server_msg(thief_id, private.clone());
+                self.send_server_msg(victim_id, private);
+
+                self.broadcast_except(
+                    gid,
+                    &[thief_id, victim_id],
+                    ServerMessage::PlayerRobbed {
+                        thief_id,
+                        victim_id,
+                        resource: None,
+                        stole_a_card,
+                    },
+                );
+            }
+
+            other => self.broadcast_to_game(gid, other),
+        }
     }
 
     fn handle_victory_if_needed(&mut self, gid: &str) {

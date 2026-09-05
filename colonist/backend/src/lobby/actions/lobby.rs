@@ -23,16 +23,24 @@ impl Lobby {
         }
 
         let mut should_remove_game = false;
+        let mut closed_trades = Vec::new();
         {
             if let Some(game) = self.games.get_mut(&game_id) {
-                if let Err(e) = game.turn_manager.players.remove_player(pid) {
-                    warn!("Could not remove player {} from game {}: {}", pid, game_id, e);
+                match game.remove_player(pid) {
+                    Ok(closed) => closed_trades = closed,
+                    Err(e) => {
+                        warn!("Could not remove player {} from game {}: {}", pid, game_id, e)
+                    }
                 }
 
                 if game.turn_manager.players.len() == 0 {
                     should_remove_game = true;
                 }
             }
+        }
+
+        for offer_id in closed_trades {
+            self.broadcast_to_game(&game_id, ServerMessage::TradeCancelled { offer_id });
         }
 
             self.player_to_game.remove(&pid);
@@ -71,6 +79,14 @@ impl Lobby {
             let missing = game.turn_manager.players.get(pid).is_none();
 
             if missing {
+                // A game used to only start when it was full, so "full" also
+                // meant "started". It can now start early, and seating a
+                // newcomer mid-game would splice them into the turn order
+                // with no settlements and shift everybody else's slot.
+                if game.get_state() != GamePhase::WaitingForPlayers {
+                    return self.send_error(pid, "This game has already started");
+                }
+
                 if game.turn_manager.players.len() >= game.max_players {
                     return self.send_error(pid, "Game is full");
                 }

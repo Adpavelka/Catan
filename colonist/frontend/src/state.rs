@@ -431,27 +431,24 @@ impl GameState {
 
                     self.messages.update(|m| m.push(format!("{} moved the robber", player_name)));
                 }
-                ServerMessage::PlayerRobbed { thief_id, victim_id, resource } => {
+                ServerMessage::PlayerRobbed { thief_id, victim_id, resource, stole_a_card } => {
                     logging::log!("Player {} robbed from Player {}", thief_id, victim_id);
 
-                    let thief_name = self.players.get_untracked()
-                        .iter()
-                        .find(|p| p.player_id == thief_id)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| format!("Player {}", thief_id));
+                    let thief_name = self.player_name(thief_id);
+                    let victim_name = self.player_name(victim_id);
 
-                    let victim_name = self.players.get_untracked()
-                        .iter()
-                        .find(|p| p.player_id == victim_id)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| format!("Player {}", victim_id));
-
-                    if let Some(res) = resource {
-                        let res_name = format!("{:?}", res);
-                        self.messages.update(|m| m.push(format!("{} stole {} from {}", thief_name, res_name, victim_name)));
-                    } else {
-                        self.messages.update(|m| m.push(format!("{} couldn't rob {} (no cards)", thief_name, victim_name)));
-                    }
+                    // `resource` is only filled in for the two players
+                    // involved; onlookers are told a card moved, not which.
+                    let line = match (stole_a_card, resource) {
+                        (true, Some(res)) => {
+                            format!("{} stole {:?} from {}", thief_name, res, victim_name)
+                        }
+                        (true, None) => format!("{} stole a card from {}", thief_name, victim_name),
+                        (false, _) => {
+                            format!("{} couldn't rob {} (no cards)", thief_name, victim_name)
+                        }
+                    };
+                    self.messages.update(|m| m.push(line));
                 }
                 ServerMessage::MustDiscardCards { player_id, count } => {
                     logging::log!("Player {} must discard {} cards", player_id, count);

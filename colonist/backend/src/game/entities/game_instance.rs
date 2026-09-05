@@ -320,6 +320,54 @@ impl GameInstance {
         self.pending_trades.drain().map(|(id, _)| id).collect()
     }
 
+    /// Takes a player out of the game and clears everything that referred to
+    /// them. The seat is the easy part: what strands a table is the debris -
+    /// a discard nobody can now make, a special build nobody can now take, a
+    /// trade offer nobody can now answer.
+    ///
+    /// Returns the trade offers that died with them, for the caller to
+    /// announce. The player's buildings stay on the board; they simply stop
+    /// producing, since the owner is no longer anybody's resources to gain.
+    pub fn remove_player(&mut self, pid: Uuid) -> Result<Vec<u64>, String> {
+        let was_on_turn = self.turn_manager.players.get_current_player().id == pid;
+
+        self.turn_manager.players.remove_player(pid)?;
+
+        // A pending action belonging to somebody who has gone can never be
+        // discharged, and `end_turn` refuses to advance while a discard is
+        // outstanding - so this would freeze the table.
+        self.pending_actions.remove(&pid);
+
+        let mut closed: Vec<u64> = Vec::new();
+        self.pending_trades.retain(|offer_id, trade| {
+            if trade.proposer_id == pid || trade.target_player_id == Some(pid) {
+                closed.push(*offer_id);
+                return false;
+            }
+            true
+        });
+        for trade in self.pending_trades.values_mut() {
+            trade.decline(pid);
+        }
+
+        self.special_build_queue.retain(|id| *id != pid);
+
+        // If they were the one building, hand the slot on rather than leaving
+        // a phase that only a departed player can end.
+        if self.phase.special_builder() == Some(pid) && !self.advance_special_building() {
+            self.finish_special_building();
+            self.turn_manager.end_turn();
+        }
+
+        // Removing the player on turn slides the next one into their slot, but
+        // the dice still read as rolled for the turn that just vanished.
+        if was_on_turn && self.turn_manager.players.len() > 0 {
+            self.turn_manager.dice.next_turn();
+        }
+
+        Ok(closed)
+    }
+
     /// Who may act right now. During a special building phase that is the
     /// player being offered the build, not the player whose turn it is.
     pub fn active_player(&self) -> Uuid {
@@ -931,5 +979,96 @@ mod tests {
 
         game.handle_build_settlement(pid, far.0, far.1)
             .expect("an unconnected settlement is legal during initial placement");
+    }
+
+    /// A three-player game where everyone is seated and play has begun.
+    fn seated_game(n: usize) -> (GameInstance, Vec<Uuid>) {
+        let ids: Vec<Uuid> = (1..=n as u128).map(Uuid::from_u128).collect();
+        let mut game =
+            GameInstance::new("t".into(), ids[0], n, "p1", shared::PlayerColour::Blue);
+        for (i, colour) in shared::PlayerColour::ALL.iter().skip(1).take(n - 1).enumerate() {
+            game.turn_manager.players.seat(ids[i + 1], "p", *colour).unwrap();
+        }
+        game.start_game();
+        game.advance_phase();
+        game.advance_phase(); // RegularPlay
+        (game, ids)
+    }
+
+    /// A discard owed by somebody who has left can never be made, and
+    /// `end_turn` refuses to advance while one is outstanding.
+    #[test]
+    fn leaving_clears_the_pending_actions_that_would_freeze_the_table() {
+        let (mut game, ids) = seated_game(3);
+        game.add_pending_action(ids[2], PendingAction::Discard);
+
+        game.remove_player(ids[2]).unwrap();
+
+        assert!(!game.pending_actions.contains_key(&ids[2]));
+        game.turn_manager.roll_dice().unwrap();
+        game.handle_end_turn(ids[0]).expect("the turn must still be endable");
+    }
+
+    /// The departed player's offers die with them, and their acceptance of
+    /// somebody else's offer is taken back.
+    #[test]
+    fn leaving_closes_the_trades_that_referred_to_them() {
+        use crate::game::entities::resources::ResourceType;
+        let (mut game, ids) = seated_game(3);
+
+        for id in &ids {
+            game.turn_manager.players.get_mut(*id).unwrap()
+                .resources.add(ResourceType::Brick, 5);
+        }
+
+        let give = shared::Resources { brick: 1, ..Default::default() };
+        let want = shared::Resources { lumber: 1, ..Default::default() };
+        let mine = match game.handle_trade_offer(ids[0], None, give, want).unwrap() {
+            shared::ServerMessage::TradeProposed { offer_id, .. } => offer_id,
+            other => panic!("{other:?}"),
+        };
+
+        let closed = game.remove_player(ids[0]).unwrap();
+        assert_eq!(closed, vec![mine], "their own offer is withdrawn");
+        assert!(game.pending_trades.is_empty());
+    }
+
+    /// If the player currently taking a special build leaves, the slot has to
+    /// pass on. Otherwise `active_player` names a ghost and nobody can act.
+    #[test]
+    fn leaving_mid_special_build_hands_the_slot_on() {
+        let (mut game, ids) = seated_game(5);
+        let builder = ids[2];
+        game.force_phase_for_test(GamePhase::SpecialBuilding { builder });
+
+        game.remove_player(builder).unwrap();
+
+        assert_ne!(
+            game.get_state().special_builder(),
+            Some(builder),
+            "a departed player must not still hold the build slot"
+        );
+        assert!(
+            game.turn_manager.players.get(game.active_player()).is_some(),
+            "whoever may act now must actually be at the table"
+        );
+    }
+
+    /// Removing the player on turn slides the next one into their slot. The
+    /// dice must be reset or that player inherits an already-rolled turn.
+    #[test]
+    fn the_next_player_gets_a_fresh_turn_when_the_current_one_leaves() {
+        let (mut game, ids) = seated_game(3);
+        let first = game.turn_manager.players.get_current_player().id;
+        game.turn_manager.roll_dice().unwrap();
+        assert!(game.turn_manager.dice.was_dice_rolled());
+
+        game.remove_player(first).unwrap();
+
+        assert!(
+            !game.turn_manager.dice.was_dice_rolled(),
+            "the incoming player must be able to roll"
+        );
+        assert!(game.turn_manager.players.get(ids[0]).is_none());
     }
 }

@@ -169,6 +169,7 @@ impl GameInstance {
         Ok(ServerMessage::PlayerRobbed {
             thief_id: pid,
             victim_id,
+            stole_a_card: resource.is_some(),
             resource,
         })
     }

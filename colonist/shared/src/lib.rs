@@ -252,7 +252,14 @@ pub enum ServerMessage {
     PlayerRobbed {
         thief_id: Uuid,
         victim_id: Uuid,
+        /// Which card moved. Only filled in for the thief and the victim -
+        /// everyone else is told a card was taken, not which one, the same
+        /// way hands are hidden in `PlayerInfo`.
         resource: Option<ResourceType>,
+        /// Whether anything was taken at all. Distinguishes "the victim had
+        /// nothing" from "you are not allowed to see what it was".
+        #[serde(default)]
+        stole_a_card: bool,
     },
     MustDiscardCards {
         player_id: Uuid,
