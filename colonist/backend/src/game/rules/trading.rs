@@ -619,4 +619,61 @@ mod tests {
         let err = game.handle_confirm_trade(proposer, offer_id, taker).unwrap_err();
         assert!(err.contains("own turn"), "got: {err}");
     }
+
+    /// A reconnect has to restore the negotiation, or the offer stays live on
+    /// the server while both sides have lost sight of it.
+    #[test]
+    fn a_sync_carries_the_offers_a_player_can_see() {
+        let (mut game, proposer, first, second) = table();
+        let offer_id = offer_brick_for_lumber(&mut game, proposer);
+        game.handle_trade_response(first, offer_id, true).unwrap();
+
+        let for_proposer = game.trade_snapshots_for(proposer);
+        assert_eq!(for_proposer.len(), 1);
+        assert_eq!(for_proposer[0].accepted_by, vec![first], "their bidder is restored");
+        assert!(for_proposer[0].seconds_remaining > 0);
+
+        let for_bidder = game.trade_snapshots_for(first);
+        assert_eq!(for_bidder.len(), 1, "the bidder still sees the offer");
+        assert!(for_bidder[0].accepted_by.contains(&first), "and that they bid on it");
+
+        let for_other = game.trade_snapshots_for(second);
+        assert_eq!(for_other.len(), 1, "an open offer is visible to everyone eligible");
+        assert!(!for_other[0].you_declined);
+    }
+
+    /// `declined_by` is private: a sync tells you whether *you* refused, not
+    /// who else did.
+    #[test]
+    fn a_sync_does_not_leak_who_else_declined() {
+        let (mut game, proposer, first, second) = table();
+        let offer_id = offer_brick_for_lumber(&mut game, proposer);
+        game.handle_trade_response(first, offer_id, false).unwrap();
+
+        let for_decliner = game.trade_snapshots_for(first);
+        assert_eq!(for_decliner.len(), 1);
+        assert!(for_decliner[0].you_declined, "the decliner is told they refused");
+
+        let for_other = game.trade_snapshots_for(second);
+        assert!(!for_other[0].you_declined, "somebody else's refusal is not theirs");
+
+        // The only per-player flag is `you_declined`; the set itself never
+        // travels, so there is nothing else to leak.
+        let for_proposer = game.trade_snapshots_for(proposer);
+        assert!(!for_proposer[0].you_declined);
+    }
+
+    #[test]
+    fn a_targeted_offer_is_only_visible_to_the_two_players_involved() {
+        let (mut game, proposer, first, second) = table();
+        game.handle_trade_offer(proposer, Some(first), res(1, 0), res(0, 1)).unwrap();
+
+        assert_eq!(game.trade_snapshots_for(proposer).len(), 1);
+        assert_eq!(game.trade_snapshots_for(first).len(), 1);
+        assert_eq!(
+            game.trade_snapshots_for(second).len(),
+            0,
+            "a private offer must not show up for a bystander"
+        );
+    }
 }

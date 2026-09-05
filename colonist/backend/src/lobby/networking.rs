@@ -116,6 +116,7 @@ impl Lobby
             last_dice_roll,
             your_resources,
             your_dev_cards,
+            pending_trades: game.trade_snapshots_for(pid),
         };
 
         self.send_server_msg(pid, sync_msg);

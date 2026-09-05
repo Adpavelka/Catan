@@ -138,6 +138,54 @@ impl GameState {
         shared::SeatRequest { name, colour }
     }
 
+    /// Rebuilds the trade panel from a full sync. A reconnect used to drop
+    /// every open negotiation on the floor: the offer stayed live on the
+    /// server, but the proposer could no longer see their bidders and an
+    /// accepter could no longer see the offer at all.
+    fn restore_trades(&self, me: Uuid, snapshots: Vec<shared::TradeSnapshot>) {
+        let now = js_sys::Date::now();
+        let lifetime_ms = shared::TRADE_LIFETIME_SECS as f64 * 1000.0;
+
+        let mut incoming = Vec::new();
+        let mut accepted = Vec::new();
+        let mut mine = None;
+        let mut my_accepters = Vec::new();
+
+        for snapshot in snapshots {
+            if snapshot.accepted_by.contains(&me) {
+                accepted.push(snapshot.offer_id);
+            }
+
+            if snapshot.proposer_id == me {
+                mine = Some(snapshot.offer_id);
+                my_accepters = snapshot.accepted_by;
+                continue;
+            }
+
+            if snapshot.you_declined {
+                continue;
+            }
+
+            // Wind the countdown back to where the server has it, so the bar
+            // does not restart at full on every reconnect.
+            let elapsed_ms = lifetime_ms - (snapshot.seconds_remaining as f64 * 1000.0);
+
+            incoming.push(PendingTradeOffer {
+                offer_id: snapshot.offer_id,
+                proposer_id: snapshot.proposer_id,
+                target_player_id: snapshot.target_player_id,
+                offering: snapshot.offering,
+                requesting: snapshot.requesting,
+                received_at: now - elapsed_ms,
+            });
+        }
+
+        self.incoming_trades.set(incoming);
+        self.my_accepted_offers.set(accepted);
+        self.my_pending_trade.set(mine);
+        self.my_trade_accepters.set(my_accepters);
+    }
+
     /// Display name for a player, falling back to their id if they are not in
     /// our roster yet.
     pub fn player_name(&self, player_id: Uuid) -> String {
@@ -776,6 +824,7 @@ impl GameState {
                     last_dice_roll,
                     your_resources,
                     your_dev_cards,
+                    pending_trades,
                 } => {
                     logging::log!("Full state sync received for player {}", player_id);
                     self.player_id.set(Some(player_id));
@@ -795,6 +844,7 @@ impl GameState {
                     self.my_resources.set(your_resources);
                     self.my_dev_cards.set(your_dev_cards);
                     self.last_dice_roll.set(last_dice_roll);
+                    self.restore_trades(player_id, pending_trades);
                 }
                 ServerMessage::PlayerWon {
                     player_id,

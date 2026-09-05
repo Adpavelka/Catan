@@ -3,6 +3,25 @@ use uuid::Uuid;
 
 fn default_player_count() -> usize { 4 }
 
+/// An open trade offer as it looks to one player, for restoring the trade
+/// panel after a reconnect. Carries only what that player is entitled to see:
+/// acceptances are public, but who declined is not.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct TradeSnapshot {
+    pub offer_id: u64,
+    pub proposer_id: Uuid,
+    pub target_player_id: Option<Uuid>,
+    pub offering: Resources,
+    pub requesting: Resources,
+    /// Players who have bid, oldest first.
+    pub accepted_by: Vec<Uuid>,
+    /// Seconds until the server withdraws the offer, so a reconnecting client
+    /// resumes the countdown instead of restarting it.
+    pub seconds_remaining: u64,
+    /// Whether the player receiving this sync has already refused it.
+    pub you_declined: bool,
+}
+
 /// How long a trade offer stays open before the server withdraws it.
 ///
 /// The server is the authority here; the client only counts down so the
@@ -358,6 +377,11 @@ pub enum ServerMessage {
         /// Your own hand. Never carries another player's cards.
         your_resources: Resources,
         your_dev_cards: Vec<DevCardType>,
+        /// Offers still open that you can see: your own, and any you may
+        /// answer. Without these a reconnect leaves a live negotiation
+        /// invisible until it expires.
+        #[serde(default)]
+        pending_trades: Vec<TradeSnapshot>,
     },
     PlayerWon { player_id: Uuid, secret_victory_points: u8 },
     PlayerSecretVictoryPointsUpdated{secret_victory_points: i32},

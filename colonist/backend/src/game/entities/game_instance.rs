@@ -320,6 +320,39 @@ impl GameInstance {
         self.pending_trades.drain().map(|(id, _)| id).collect()
     }
 
+    /// The open offers `pid` is entitled to see, for restoring their trade
+    /// panel after a reconnect: their own, plus any they may answer.
+    ///
+    /// Acceptances are public, so they travel; `declined_by` does not, beyond
+    /// telling this player whether they themselves refused.
+    pub fn trade_snapshots_for(&self, pid: Uuid) -> Vec<shared::TradeSnapshot> {
+        let now = now_secs();
+
+        let mut snapshots: Vec<shared::TradeSnapshot> = self
+            .pending_trades
+            .values()
+            .filter(|trade| trade.proposer_id == pid || trade.is_open_to(pid))
+            .map(|trade| {
+                let age = now.saturating_sub(trade.created_at_secs);
+
+                shared::TradeSnapshot {
+                    offer_id: trade.offer_id,
+                    proposer_id: trade.proposer_id,
+                    target_player_id: trade.target_player_id,
+                    offering: trade.offering.clone(),
+                    requesting: trade.requesting.clone(),
+                    accepted_by: trade.accepted_by.clone(),
+                    seconds_remaining: TRADE_LIFETIME_SECS.saturating_sub(age),
+                    you_declined: trade.declined_by.contains(&pid),
+                }
+            })
+            .collect();
+
+        // `pending_trades` is a map, so fix an order the client can rely on.
+        snapshots.sort_by_key(|snapshot| snapshot.offer_id);
+        snapshots
+    }
+
     /// Takes a player out of the game and clears everything that referred to
     /// them. The seat is the easy part: what strands a table is the debris -
     /// a discard nobody can now make, a special build nobody can now take, a
