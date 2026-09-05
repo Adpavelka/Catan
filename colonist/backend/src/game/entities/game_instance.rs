@@ -126,6 +126,14 @@ impl GameInstance {
     }
 
 
+    /// Drops the game straight into a phase. Tests only - real transitions go
+    /// through `start_game`, `advance_phase` and the special-building queue.
+    #[cfg(test)]
+    pub (crate) fn force_phase_for_test(&mut self, phase: GamePhase) {
+        self.phase = phase;
+    }
+
+
     pub (crate) fn start_game(&mut self) {
         self.phase = GamePhase::InitialPlacement {
             round: InitialRound::First,

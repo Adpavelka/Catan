@@ -169,11 +169,22 @@ impl GameInstance {
 
         if !accept {
             let already_declined = trade.declined_by.contains(&pid);
-            let trade = self
+            let had_accepted = self
                 .pending_trades
                 .get_mut(&offer_id)
-                .expect("checked above");
-            let had_accepted = trade.decline(pid);
+                .expect("checked above")
+                .decline(pid);
+
+            if !had_accepted && already_declined {
+                return Err("You already declined this trade".to_string());
+            }
+
+            // Has to run for a withdrawal too. Taking back the last acceptance
+            // can be what leaves nobody willing, and returning early here left
+            // the offer stranded: unanswerable, and blocking a replacement.
+            if self.everyone_has_declined(offer_id) {
+                self.pending_trades.remove(&offer_id);
+            }
 
             // Taking back an acceptance is worth telling the proposer about,
             // since it changes who they can settle with.
@@ -182,14 +193,6 @@ impl GameInstance {
                     offer_id,
                     accepter_id: pid,
                 });
-            }
-
-            if already_declined {
-                return Err("You already declined this trade".to_string());
-            }
-
-            if self.everyone_has_declined(offer_id) {
-                self.pending_trades.remove(&offer_id);
             }
 
             return Ok(ServerMessage::TradeDeclined {
@@ -243,6 +246,15 @@ impl GameInstance {
 
         if trade.proposer_id != pid {
             return Err("Only the player who offered the trade can settle it.".to_string());
+        }
+
+        // Offers are cleared when a turn ends, but a 5-6 player table goes
+        // into a special building phase first. Without this guard the player
+        // who just finished could settle while somebody else is building.
+        if self.get_state() != ServerPhase::RegularPlay
+            || pid != self.turn_manager.players.get_current_player().id
+        {
+            return Err("You can only trade on your own turn.".to_string());
         }
 
         if !trade.has_accepted(partner_id) {
@@ -569,5 +581,42 @@ mod tests {
 
         assert_eq!(game.expire_stale_trades(), vec![offer_id]);
         assert!(game.pending_trades.is_empty());
+    }
+
+    /// Regression: an acceptance taken back used to return early, skipping the
+    /// "everyone has declined" cleanup. The offer then stranded - nobody could
+    /// answer it again, and the proposer could not replace it.
+    #[test]
+    fn withdrawing_the_last_acceptance_closes_the_offer() {
+        let (mut game, proposer, first, second) = table();
+        let offer_id = offer_brick_for_lumber(&mut game, proposer);
+
+        game.handle_trade_response(first, offer_id, false).unwrap();
+        game.handle_trade_response(second, offer_id, true).unwrap();
+        game.handle_trade_response(second, offer_id, false).unwrap();
+
+        assert!(
+            !game.pending_trades.contains_key(&offer_id),
+            "every eligible player has now declined, so the offer must close"
+        );
+
+        game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1))
+            .expect("the proposer is free to offer again");
+    }
+
+    /// Regression: at 5-6 players ending a turn opens a special building phase
+    /// and returns PhaseChanged, not NextTurn, so an offer could survive and
+    /// be settled while somebody else was building.
+    #[test]
+    fn an_offer_cannot_be_settled_once_the_turn_is_over() {
+        let (mut game, proposer, taker, _) = table();
+        let offer_id = offer_brick_for_lumber(&mut game, proposer);
+        game.handle_trade_response(taker, offer_id, true).unwrap();
+
+        // Stand in for any phase that is not this player's regular turn.
+        game.force_phase_for_test(ServerPhase::SpecialBuilding { builder: taker });
+
+        let err = game.handle_confirm_trade(proposer, offer_id, taker).unwrap_err();
+        assert!(err.contains("own turn"), "got: {err}");
     }
 }

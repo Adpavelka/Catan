@@ -168,12 +168,19 @@ impl Lobby {
         self.handle_dev_card_side_effects(pid, gid, msg);
         self.handle_robber_flow(pid, gid, msg);
         self.close_trades_on_turn_end(gid, msg);
+        self.announce_dead_offer(gid, msg);
     }
 
     /// An offer belongs to the turn it was made in. Letting one outlive the
     /// turn would move resources while somebody else is playing.
+    ///
+    /// At 5-6 players a turn ends with `PhaseChanged` into the special
+    /// building phase rather than `NextTurn`, so both have to close offers.
     fn close_trades_on_turn_end(&mut self, gid: &str, msg: &ServerMessage) {
-        if !matches!(msg, ServerMessage::NextTurn { .. }) {
+        if !matches!(
+            msg,
+            ServerMessage::NextTurn { .. } | ServerMessage::PhaseChanged { .. }
+        ) {
             return;
         }
 
@@ -181,6 +188,26 @@ impl Lobby {
         let closed = game.clear_trades();
 
         for offer_id in closed {
+            self.broadcast_to_game(gid, ServerMessage::TradeCancelled { offer_id });
+        }
+    }
+
+    /// A decline is private, but the offer disappearing is not: once the last
+    /// eligible player refuses, everyone still showing the offer needs to be
+    /// told it is gone, or it sits on their screen until the expiry sweep.
+    fn announce_dead_offer(&mut self, gid: &str, msg: &ServerMessage) {
+        let offer_id = match msg {
+            ServerMessage::TradeDeclined { offer_id, .. }
+            | ServerMessage::TradeAcceptanceWithdrawn { offer_id, .. } => *offer_id,
+            _ => return,
+        };
+
+        let still_open = self
+            .games
+            .get(gid)
+            .is_some_and(|game| game.pending_trades.contains_key(&offer_id));
+
+        if !still_open {
             self.broadcast_to_game(gid, ServerMessage::TradeCancelled { offer_id });
         }
     }
