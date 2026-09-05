@@ -12,6 +12,13 @@ pub struct PendingTrade {
     pub target_player_id: Option<Uuid>,  // If Some, only this player can accept
     pub offering: Resources,
     pub requesting: Resources,
+    /// Unspecified cards on each side. "Any card" is a request to negotiate:
+    /// the trade cannot be settled while one is outstanding, because nobody
+    /// has said what it stands for. The answer is a counter that names it.
+    #[serde(default)]
+    pub offering_any: u8,
+    #[serde(default)]
+    pub requesting_any: u8,
     pub declined_by: HashSet<Uuid>,
     /// Players who said they would take this trade, oldest first. Accepting
     /// only puts you in this queue - the proposer chooses who to settle with,
@@ -44,6 +51,11 @@ impl PendingTrade {
         self.accepted_by.retain(|id| *id != pid);
         self.declined_by.insert(pid);
         had_accepted
+    }
+
+    /// Whether either side still has an unspecified card in it.
+    pub fn has_wildcards(&self) -> bool {
+        self.offering_any > 0 || self.requesting_any > 0
     }
 
     pub fn is_counter(&self) -> bool {

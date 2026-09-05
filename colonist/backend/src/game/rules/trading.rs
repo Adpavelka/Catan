@@ -75,6 +75,8 @@ impl GameInstance {
         target_player_id: Option<Uuid>,
         offer: shared::Resources,
         request: shared::Resources,
+        offer_any: u8,
+        request_any: u8,
     ) -> Result<ServerMessage, String> {
         self.expire_stale_trades();
 
@@ -90,8 +92,14 @@ impl GameInstance {
 
         // A trade has to be a trade. Without this an empty offer creates a
         // no-op that still has to be answered by everyone.
-        if is_empty(&offer) || is_empty(&request) {
+        if (is_empty(&offer) && offer_any == 0) || (is_empty(&request) && request_any == 0) {
             return Err("A trade needs something on both sides.".to_string());
+        }
+
+        // A wildcard is a placeholder for a card nobody has named yet. Letting
+        // one sit on both sides would be an offer with no content at all.
+        if offer_any > 0 && request_any > 0 {
+            return Err("At least one side has to name its cards.".to_string());
         }
 
         if let Some(target) = target_player_id {
@@ -132,6 +140,8 @@ impl GameInstance {
             requesting: request.clone(),
             declined_by: HashSet::new(),
             accepted_by: Vec::new(),
+            offering_any: offer_any,
+            requesting_any: request_any,
             created_at_secs: crate::game::entities::game_instance::now_secs(),
             counters: None,
         };
@@ -144,6 +154,8 @@ impl GameInstance {
             target_player_id,
             offering: offer,
             requesting: request,
+            offering_any: offer_any,
+            requesting_any: request_any,
             counters: None,
         })
     }
@@ -184,6 +196,7 @@ impl GameInstance {
             return Err("This trade was not offered to you".to_string());
         }
 
+        // A counter names its cards; that is the point of countering.
         if is_empty(&offer) || is_empty(&request) {
             return Err("A trade needs something on both sides.".to_string());
         }
@@ -217,6 +230,8 @@ impl GameInstance {
             requesting: request.clone(),
             declined_by: HashSet::new(),
             accepted_by: Vec::new(),
+            offering_any: 0,
+            requesting_any: 0,
             created_at_secs: crate::game::entities::game_instance::now_secs(),
             counters: Some(offer_id),
         });
@@ -227,6 +242,8 @@ impl GameInstance {
             target_player_id: Some(active),
             offering: offer,
             requesting: request,
+            offering_any: 0,
+            requesting_any: 0,
             counters: Some(offer_id),
         })
     }
@@ -293,6 +310,13 @@ impl GameInstance {
             });
         }
 
+        if trade.has_wildcards() {
+            return Err(
+                "This offer has an unspecified card - counter with what you would give."
+                    .to_string(),
+            );
+        }
+
         if trade.has_accepted(pid) {
             return Err("You have already accepted this trade".to_string());
         }
@@ -348,6 +372,10 @@ impl GameInstance {
         // offer they pick an accepter; for a counter aimed at them they pick
         // the player who countered. Both leave the trade between the active
         // player and one other, never between two players who are waiting.
+        if trade.has_wildcards() {
+            return Err("Wait for a counter that names the unspecified card.".to_string());
+        }
+
         if trade.proposer_id == pid {
             if !trade.has_accepted(partner_id) {
                 return Err("That player has not accepted your offer.".to_string());
@@ -523,7 +551,7 @@ mod tests {
     }
 
     fn offer_brick_for_lumber(game: &mut GameInstance, proposer: Uuid) -> u64 {
-        match game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1)).unwrap() {
+        match game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1), 0, 0).unwrap() {
             ServerMessage::TradeProposed { offer_id, .. } => offer_id,
             other => panic!("expected TradeProposed, got {other:?}"),
         }
@@ -636,7 +664,7 @@ mod tests {
         let (mut game, proposer, _, _) = table();
         offer_brick_for_lumber(&mut game, proposer);
 
-        let err = game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1)).unwrap_err();
+        let err = game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1), 0, 0).unwrap_err();
         assert!(err.contains("already have an offer"), "got: {err}");
     }
 
@@ -645,7 +673,7 @@ mod tests {
         let (mut game, proposer, _, _) = table();
 
         let err = game
-            .handle_trade_offer(proposer, None, res(0, 0), res(0, 1))
+            .handle_trade_offer(proposer, None, res(0, 0), res(0, 1), 0, 0)
             .unwrap_err();
         assert!(err.contains("something on both sides"), "got: {err}");
     }
@@ -655,7 +683,7 @@ mod tests {
         let (mut game, proposer, _, _) = table();
 
         let err = game
-            .handle_trade_offer(proposer, Some(Uuid::from_u128(99)), res(1, 0), res(0, 1))
+            .handle_trade_offer(proposer, Some(Uuid::from_u128(99)), res(1, 0), res(0, 1), 0, 0)
             .unwrap_err();
         assert!(err.contains("not in this game"), "got: {err}");
     }
@@ -737,7 +765,7 @@ mod tests {
             "every eligible player has now declined, so the offer must close"
         );
 
-        game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1))
+        game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1), 0, 0)
             .expect("the proposer is free to offer again");
     }
 
@@ -803,7 +831,7 @@ mod tests {
     #[test]
     fn a_targeted_offer_is_only_visible_to_the_two_players_involved() {
         let (mut game, proposer, first, second) = table();
-        game.handle_trade_offer(proposer, Some(first), res(1, 0), res(0, 1)).unwrap();
+        game.handle_trade_offer(proposer, Some(first), res(1, 0), res(0, 1), 0, 0).unwrap();
 
         assert_eq!(game.trade_snapshots_for(proposer).len(), 1);
         assert_eq!(game.trade_snapshots_for(first).len(), 1);

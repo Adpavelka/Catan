@@ -49,7 +49,9 @@ pub fn handle_game_request(
             target_player_id,
             offer,
             request,
-        } => game.handle_trade_offer(pid, target_player_id, offer, request),
+            offer_any,
+            request_any,
+        } => game.handle_trade_offer(pid, target_player_id, offer, request, offer_any, request_any),
         ClientRequest::TradeResponse { offer_id, accept } => {
             game.handle_trade_response(pid, offer_id, accept)
         }

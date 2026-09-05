@@ -24,6 +24,11 @@ pub struct TurnManager {
 
     robber: Robber,
     game_over: bool,
+    /// Bumped every time a turn ends. The turn clock keys off this rather
+    /// than off whose turn it is: in a one-player game the player never
+    /// changes, so identity alone never told the clock to re-arm.
+    #[serde(default)]
+    turn_seq: u64,
     /// Everything that varies with the number of players.
     #[serde(default = "default_rules")]
     rules: GameRules,
@@ -61,6 +66,7 @@ impl TurnManager {
             board,
             rules,
             game_over: false,
+            turn_seq: 0,
             winner: None,
             robber,
             army_bonus: BiggestArmy::new(),
@@ -95,7 +101,13 @@ impl TurnManager {
     }
 
 
+    /// How many turns have ended. Only meaningful as a change detector.
+    pub fn turn_seq(&self) -> u64 {
+        self.turn_seq
+    }
+
     pub fn end_turn(&mut self) {
+        self.turn_seq = self.turn_seq.wrapping_add(1);
         let prev_player = self.players.get_current_index();
         {
             let pid = self.players.get_current_player().id;

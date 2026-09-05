@@ -10,6 +10,7 @@ pub fn GamePage() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
     let (log_open, set_log_open) = create_signal(true);
+    let (trade_open, set_trade_open) = create_signal(false);
 
     // Check if any modal is open - if so, disable pointer events on main UI
     let is_modal_open = move || {
@@ -211,12 +212,6 @@ pub fn GamePage() -> impl IntoView {
                         // resources.
                     </div>
 
-                    // Trading lives in one place at the bottom of the column
-                    // rather than as two unrelated sections adrift in the
-                    // scroll, so it is always where you left it.
-                    <div class="shrink-0 border-t border-slate-800 bg-slate-900/60">
-                        <TradePanel />
-                    </div>
                 </aside>
 
                 // The board column fills the space rather than floating in
@@ -234,7 +229,33 @@ pub fn GamePage() -> impl IntoView {
                     // when you are deciding what to do.
                     <div class="shrink-0 flex items-end justify-between gap-3">
                         <BuildBar />
-                        <div class="flex items-end gap-2">
+                        <div class="relative flex items-end gap-2">
+                            // The trade drawer opens upward from here, so the
+                            // offer you are building sits directly above the
+                            // hand you are building it from.
+                            <div class="absolute bottom-full right-0 mb-2 w-[340px] z-30">
+                                <Show when=move || trade_open.get()>
+                                    <div class="rounded-xl border border-slate-700 bg-slate-900/95 backdrop-blur-md shadow-2xl animate-in slide-in-from-bottom-2 duration-150">
+                                        <TradePanel on_close=Callback::new(move |_| set_trade_open.set(false)) />
+                                    </div>
+                                </Show>
+                            </div>
+
+                            <button
+                                class=move || format!(
+                                    "h-12 px-3 rounded-xl border-2 text-[10px] font-bold uppercase tracking-wider transition-all {}",
+                                    if trade_open.get() {
+                                        "bg-emerald-600 border-emerald-400 text-white"
+                                    } else {
+                                        "bg-slate-900/70 border-slate-700 text-slate-300 hover:border-slate-500"
+                                    }
+                                )
+                                title="Open the trade panel"
+                                on:click=move |_| set_trade_open.update(|o| *o = !*o)
+                            >
+                                "Trade"
+                            </button>
+
                             <DevCardHand />
                             <ResourceHand />
                         </div>
@@ -572,40 +593,38 @@ fn BuildButton(
 /// The trade panel: build an offer, look at it, send it.
 ///
 /// One builder for both kinds of trade, because they are the same gesture -
-/// put resources on each side. The old panel had them as two unrelated tabs
-/// with different shapes, one of which vanished when it was not your turn.
+/// put resources on each side. Lives in a drawer above your hand, so the
+/// cards you are spending are in view while you spend them.
 #[component]
-fn TradePanel() -> impl IntoView {
+fn TradePanel(on_close: Callback<()>) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
-    let (open, set_open) = create_signal(true);
 
     let can_trade = move || {
         state.can_build_now() && state.game_phase.get() == GamePhase::RegularPlay
     };
 
     view! {
-        <div class="p-2.5 space-y-2">
-            <button
-                class="w-full flex items-center justify-between text-slate-400 hover:text-white transition-colors"
-                on:click=move |_| set_open.update(|o| *o = !*o)
-            >
-                <span class="font-bold text-[10px] uppercase tracking-[0.2em]">"Trade"</span>
-                <span class="text-xs">{move || if open.get() { "\u{25be}" } else { "\u{25b8}" }}</span>
-            </button>
+        <div class="p-3 space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar">
+            <div class="flex items-center justify-between">
+                <span class="font-bold text-[10px] uppercase tracking-[0.2em] text-slate-400">"Trade"</span>
+                <button
+                    class="w-5 h-5 rounded text-slate-500 hover:text-white hover:bg-slate-800 text-xs font-bold leading-none"
+                    title="Close"
+                    on:click=move |_| on_close.call(())
+                >"\u{00d7}"</button>
+            </div>
 
-            <Show when=move || open.get()>
-                <Show
-                    when=can_trade
-                    fallback=move || view! {
-                        <div class="text-[10px] text-slate-500 italic py-2 text-center">
-                            "You can trade on your turn, after rolling."
-                        </div>
-                    }
-                >
-                    <TradeBuilder />
-                </Show>
-                <IncomingTrades />
+            <Show
+                when=can_trade
+                fallback=move || view! {
+                    <div class="text-[10px] text-slate-500 italic py-2 text-center">
+                        "You can trade on your turn, after rolling."
+                    </div>
+                }
+            >
+                <TradeBuilder />
             </Show>
+            <IncomingTrades />
         </div>
     }
 }
@@ -744,6 +763,38 @@ fn TradeCard(
     }
 }
 
+/// The wildcard: a card you have not named. Putting one in a trade is an
+/// invitation to negotiate - the other player answers by countering with
+/// something concrete in its place, rather than accepting as-is.
+#[component]
+fn AnyCard(
+    count: Signal<u8>,
+    on_add: Callback<()>,
+    on_remove: Callback<()>,
+) -> impl IntoView {
+    let has_any = move || count.get() > 0;
+
+    view! {
+        <button
+            class="relative flex flex-col items-center justify-center w-11 h-14 rounded-md border-b-4 border-slate-500 bg-gradient-to-br from-slate-300 to-slate-400 shadow transition-all hover:-translate-y-0.5"
+            title="Any card - they choose which, by countering"
+            on:click=move |_| on_add.call(())
+            on:contextmenu=move |ev| {
+                ev.prevent_default();
+                on_remove.call(());
+            }
+        >
+            <span class="text-lg font-black text-slate-700 leading-none">"?"</span>
+            <span class="text-[6px] font-bold uppercase tracking-wide text-black/60">"Any"</span>
+            <Show when=has_any>
+                <span class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-slate-950 border border-slate-600 text-[10px] font-black text-white flex items-center justify-center tabular-nums">
+                    {move || count.get()}
+                </span>
+            </Show>
+        </button>
+    }
+}
+
 /// One half of the offer under construction, drawn as the cards themselves.
 #[component]
 fn TradeSide(
@@ -788,10 +839,15 @@ fn TradeBuilder() -> impl IntoView {
 
     let give = create_rw_signal(Basket::default());
     let want = create_rw_signal(Basket::default());
+    // "Any card": a card you have not named, for the other player to fill in.
+    let give_any = create_rw_signal(0u8);
+    let want_any = create_rw_signal(0u8);
 
     let clear = move || {
         give.set(Basket::default());
         want.set(Basket::default());
+        give_any.set(0);
+        want_any.set(0);
     };
 
     // You cannot offer what you do not hold.
@@ -815,6 +871,9 @@ fn TradeBuilder() -> impl IntoView {
     // A bank trade is just the special case of n of one kind for exactly one
     // of another, at whatever ratio your harbours allow.
     let bank_deal = move || -> Option<(Res, Res)> {
+        if give_any.get() > 0 || want_any.get() > 0 {
+            return None;
+        }
         let (g, w) = (give.get(), want.get());
         if w.total() != 1 {
             return None;
@@ -829,8 +888,16 @@ fn TradeBuilder() -> impl IntoView {
         (g.get(only) == ratio && only != taken).then_some((only, taken))
     };
 
-    let ready = move || give.get().total() > 0 && want.get().total() > 0;
-    let nothing_picked = move || give.get().total() == 0 && want.get().total() == 0;
+    // A wildcard counts as content, but not on both sides at once - that
+    // would be an offer with nothing named in it at all.
+    let ready = move || {
+        let g = give.get().total() + give_any.get();
+        let w = want.get().total() + want_any.get();
+        g > 0 && w > 0 && !(give_any.get() > 0 && want_any.get() > 0)
+    };
+    let nothing_picked = move || {
+        give.get().total() + want.get().total() + give_any.get() + want_any.get() == 0
+    };
     let not_ready = move || !ready();
     let any_accepters = move || !state.my_trade_accepters.get().is_empty();
     let has_offer = move || state.my_pending_trade.get().is_some();
@@ -859,6 +926,11 @@ fn TradeBuilder() -> impl IntoView {
                             on_remove=del_want
                         />
                     }).collect_view()}
+                    <AnyCard
+                        count=want_any.into()
+                        on_add=Callback::new(move |_| want_any.update(|n| *n += 1))
+                        on_remove=Callback::new(move |_| want_any.update(|n| *n = n.saturating_sub(1)))
+                    />
                 </div>
             </div>
 
@@ -882,6 +954,14 @@ fn TradeBuilder() -> impl IntoView {
                             </span>
                         </div>
                     }).collect_view()}
+                    <div class="flex flex-col items-center">
+                        <AnyCard
+                            count=give_any.into()
+                            on_add=Callback::new(move |_| give_any.update(|n| *n += 1))
+                            on_remove=Callback::new(move |_| give_any.update(|n| *n = n.saturating_sub(1)))
+                        />
+                        <span class="text-[9px] text-slate-500 mt-0.5">"?"</span>
+                    </div>
                 </div>
             </div>
 
@@ -920,6 +1000,8 @@ fn TradeBuilder() -> impl IntoView {
                                         target_player_id: None,
                                         offer: give.get_untracked().to_shared(),
                                         request: want.get_untracked().to_shared(),
+                                        offer_any: give_any.get_untracked(),
+                                        request_any: want_any.get_untracked(),
                                     });
                                 }
                                 clear();

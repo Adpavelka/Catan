@@ -15,6 +15,11 @@ pub struct TradeSnapshot {
     pub requesting: Resources,
     /// Players who have bid, oldest first.
     pub accepted_by: Vec<Uuid>,
+    /// Wildcards on each side of the offer.
+    #[serde(default)]
+    pub offering_any: u8,
+    #[serde(default)]
+    pub requesting_any: u8,
     /// Seconds until the server withdraws the offer, so a reconnecting client
     /// resumes the countdown instead of restarting it.
     pub seconds_remaining: u64,
@@ -152,6 +157,13 @@ pub enum ClientRequest {
         target_player_id: Option<Uuid>,
         offer: Resources,
         request: Resources,
+        /// Unspecified cards on each side - "any card". An offer holding one
+        /// cannot be settled as it stands: the other player has to counter
+        /// with something concrete in its place. See `TradeBasket`.
+        #[serde(default)]
+        offer_any: u8,
+        #[serde(default)]
+        request_any: u8,
     },
     /// Answer someone else's offer. `accept` registers willingness to trade -
     /// it does not move any resources. The proposer still has to pick you with
@@ -169,6 +181,8 @@ pub enum ClientRequest {
         offer: Resources,
         request: Resources,
     },
+    // A counter is always concrete: naming the cards is the whole point of
+    // countering a wildcard, so `CounterOffer` deliberately has no `any`.
     /// Settle a trade. Only the player whose turn it is may do this, which is
     /// what keeps every trade between them and one other player: for their own
     /// offer they pick one of the accepters, for a counter they pick the
@@ -355,6 +369,12 @@ pub enum ServerMessage {
         target_player_id: Option<Uuid>,
         offering: Resources,
         requesting: Resources,
+        /// Wildcards on each side. A trade with any of these can only be
+        /// answered with a counter, never accepted as it stands.
+        #[serde(default)]
+        offering_any: u8,
+        #[serde(default)]
+        requesting_any: u8,
         /// Set when this is a counter to an earlier offer, so clients can show
         /// it against the offer it answers.
         #[serde(default)]

@@ -40,6 +40,11 @@ pub struct GameInstance {
     clock_player: Option<Uuid>,
     #[serde(default)]
     clock_started_secs: u64,
+    /// The turn the clock was armed for. Keyed off the turn counter rather
+    /// than the player: with one player left the player never changes, so the
+    /// clock never re-armed and fired its deadline again every single tick.
+    #[serde(default)]
+    clock_turn_seq: Option<u64>,
 }
 
 /// What the turn clock wants done, once a deadline has passed.
@@ -104,6 +109,7 @@ impl GameInstance {
             last_activity_secs: now_secs(),
             clock_player: None,
             clock_started_secs: 0,
+            clock_turn_seq: None,
         }
     }
 
@@ -347,14 +353,17 @@ impl GameInstance {
     pub fn turn_clock_due(&mut self) -> Option<TurnClockAction> {
         if self.phase != GamePhase::RegularPlay {
             self.clock_player = None;
+            self.clock_turn_seq = None;
             return None;
         }
 
         let current = self.turn_manager.players.get_current_player().id;
+        let seq = self.turn_manager.turn_seq();
         let now = now_secs();
 
-        if self.clock_player != Some(current) {
+        if self.clock_player != Some(current) || self.clock_turn_seq != Some(seq) {
             self.clock_player = Some(current);
+            self.clock_turn_seq = Some(seq);
             self.clock_started_secs = now;
             return None;
         }
@@ -399,6 +408,8 @@ impl GameInstance {
                     offering: trade.offering.clone(),
                     requesting: trade.requesting.clone(),
                     accepted_by: trade.accepted_by.clone(),
+                    offering_any: trade.offering_any,
+                    requesting_any: trade.requesting_any,
                     seconds_remaining: TRADE_LIFETIME_SECS.saturating_sub(age),
                     you_declined: trade.declined_by.contains(&pid),
                     counters: trade.counters,
@@ -716,6 +727,8 @@ mod tests {
                 requesting: Default::default(),
                 declined_by: HashSet::new(),
                 accepted_by: Vec::new(),
+                offering_any: 0,
+                requesting_any: 0,
                 counters: None,
                 created_at_secs: now_secs().saturating_sub(age),
             });
@@ -746,6 +759,8 @@ mod tests {
             requesting: Default::default(),
             declined_by: HashSet::new(),
                 accepted_by: Vec::new(),
+                offering_any: 0,
+                requesting_any: 0,
                 counters: None,
             created_at_secs: now_secs(),
         });
@@ -1116,7 +1131,7 @@ mod tests {
 
         let give = shared::Resources { brick: 1, ..Default::default() };
         let want = shared::Resources { lumber: 1, ..Default::default() };
-        let mine = match game.handle_trade_offer(ids[0], None, give, want).unwrap() {
+        let mine = match game.handle_trade_offer(ids[0], None, give, want, 0, 0).unwrap() {
             shared::ServerMessage::TradeProposed { offer_id, .. } => offer_id,
             other => panic!("{other:?}"),
         };
@@ -1163,5 +1178,42 @@ mod tests {
             "the incoming player must be able to roll"
         );
         assert!(game.turn_manager.players.get(ids[0]).is_none());
+    }
+
+    /// Regression: the clock re-armed by comparing whose turn it was. With one
+    /// player left that never changes, so the deadline stayed passed and the
+    /// sweep ended their turn again on every tick.
+    #[test]
+    fn the_clock_re_arms_even_when_the_same_player_goes_again() {
+        let pid = Uuid::from_u128(1);
+        let mut game =
+            GameInstance::new("t".into(), pid, 2, "solo", shared::PlayerColour::Blue);
+        game.start_game();
+        game.advance_phase();
+        game.advance_phase(); // RegularPlay
+
+        // Arm the clock, then wind it past the roll deadline.
+        assert_eq!(game.turn_clock_due(), None, "first tick only arms it");
+        game.clock_started_secs = now_secs() - shared::TURN_AUTO_ROLL_SECS - 1;
+        assert_eq!(game.turn_clock_due(), Some(TurnClockAction::Roll));
+
+        game.turn_manager.roll_dice().unwrap();
+        game.clock_started_secs = now_secs() - shared::TURN_LIMIT_SECS - 1;
+        assert_eq!(game.turn_clock_due(), Some(TurnClockAction::EndTurn));
+
+        // The turn ends and comes straight back to the same player.
+        game.handle_end_turn(pid).unwrap();
+        assert_eq!(
+            game.turn_manager.players.get_current_player().id,
+            pid,
+            "a one-player table hands the turn back to the same player"
+        );
+
+        assert_eq!(
+            game.turn_clock_due(),
+            None,
+            "the new turn must get a fresh clock, not inherit the expired one"
+        );
+        assert_eq!(game.turn_clock_due(), None, "and stay fresh on the next tick");
     }
 }

@@ -22,6 +22,9 @@ pub struct PendingTradeOffer {
     pub target_player_id: Option<Uuid>,
     pub offering: Resources,
     pub requesting: Resources,
+    /// Unspecified cards on each side; answered by countering, not accepting.
+    pub offering_any: u8,
+    pub requesting_any: u8,
     pub received_at: f64,  // Timestamp when we received this trade (for timer)
     /// Set when this is a counter to an earlier offer.
     pub counters: Option<u64>,
@@ -197,6 +200,8 @@ impl GameState {
                 target_player_id: snapshot.target_player_id,
                 offering: snapshot.offering,
                 requesting: snapshot.requesting,
+                offering_any: snapshot.offering_any,
+                requesting_any: snapshot.requesting_any,
                 received_at: now - elapsed_ms,
                 counters: snapshot.counters,
             });
@@ -707,7 +712,7 @@ impl GameState {
                         }
                     }
                 }
-                ServerMessage::TradeProposed { offer_id, proposer_id, target_player_id, offering, requesting, counters } => {
+                ServerMessage::TradeProposed { offer_id, proposer_id, target_player_id, offering, requesting, offering_any, requesting_any, counters } => {
                     logging::log!("Trade proposed: {} from player {}", offer_id, proposer_id);
 
                     let my_id = self.player_id.get_untracked();
@@ -745,6 +750,8 @@ impl GameState {
                                 target_player_id,
                                 offering,
                                 requesting,
+                                offering_any,
+                                requesting_any,
                                 received_at: now,
                                 counters,
                             });

@@ -203,10 +203,14 @@ impl Lobby {
     /// At 5-6 players a turn ends with `PhaseChanged` into the special
     /// building phase rather than `NextTurn`, so both have to close offers.
     fn close_trades_on_turn_end(&mut self, gid: &str, msg: &ServerMessage) {
-        if !matches!(
+        // Only a turn actually ending closes offers. Setup broadcasts
+        // PhaseChanged for every placement step, and those are not turn ends.
+        let ends_turn = matches!(
             msg,
-            ServerMessage::NextTurn { .. } | ServerMessage::PhaseChanged { .. }
-        ) {
+            ServerMessage::NextTurn { .. }
+                | ServerMessage::PhaseChanged { new_phase: GamePhase::SpecialBuilding { .. } }
+        );
+        if !ends_turn {
             return;
         }
 
@@ -259,6 +263,21 @@ impl Lobby {
     }
 
     fn handle_initial_phase_transition(&mut self, gid: &str, msg: &ServerMessage) {
+        // Placing a settlement during setup moves the step to BuildRoad and
+        // records which settlement the road has to touch. Without announcing
+        // it, clients keep the stale step and cannot tell which edges are
+        // legal, so they offer every edge the player is connected to.
+        if let ServerMessage::Built { structure_type: StructureType::Settlement, .. } = msg {
+            if let Some(phase) = self
+                .games
+                .get(gid)
+                .map(|g| g.get_state())
+                .filter(|p| p.is_initial_phase())
+            {
+                self.broadcast_to_game(gid, ServerMessage::PhaseChanged { new_phase: phase });
+            }
+        }
+
         if let ServerMessage::Built { structure_type: StructureType::Road, .. } = msg {
             {
                 let phase_check = self
@@ -277,6 +296,15 @@ impl Lobby {
                                 new_phase: GamePhase::RegularPlay,
                             },
                         );
+                    }
+
+                    if let Some(phase) = self
+                        .games
+                        .get(gid)
+                        .map(|g| g.get_state())
+                        .filter(|p| p.is_initial_phase())
+                    {
+                        self.broadcast_to_game(gid, ServerMessage::PhaseChanged { new_phase: phase });
                     }
 
                     if let Some(game) = self.games.get(gid) {
