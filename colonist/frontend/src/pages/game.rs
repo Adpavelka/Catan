@@ -49,18 +49,6 @@ pub fn GamePage() -> impl IntoView {
                         <span class="text-[9px] text-slate-500 font-mono tracking-widest uppercase">"Live Session"</span>
                     </div>
 
-                    <div class="hidden md:flex items-center gap-4 bg-black/30 px-4 py-2 rounded-lg border border-slate-800">
-                        {move || {
-                            let resources = state.my_resources.get();
-                            view! {
-                                <ResourceIcon label="Brick" color="text-red-500" count=resources.brick as i32 />
-                                <ResourceIcon label="Wood" color="text-green-500" count=resources.lumber as i32 />
-                                <ResourceIcon label="Sheep" color="text-lime-400" count=resources.wool as i32 />
-                                <ResourceIcon label="Wheat" color="text-yellow-400" count=resources.grain as i32 />
-                                <ResourceIcon label="Ore" color="text-slate-400" count=resources.ore as i32 />
-                            }
-                        }}
-                    </div>
                 </div>
                 <div class="flex items-center gap-4">
                     // Offered while the table is short of a full house, so a
@@ -104,7 +92,7 @@ pub fn GamePage() -> impl IntoView {
             </header>
 
             <div class="flex-1 flex overflow-hidden min-h-0">
-                <aside  class="w-64 bg-slate-900/30 border-r border-slate-800
+                <aside  class="w-72 bg-slate-900/30 border-r border-slate-800
                                 flex flex-col flex-shrink-0 overflow-hidden">
                     <div class="p-4 flex-1 overflow-y-auto min-h-0 custom-scrollbar space-y-6 pb-10">
                         <div>
@@ -217,23 +205,6 @@ pub fn GamePage() -> impl IntoView {
 
                         <div class="space-y-4">
                             <div>
-                                <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Bank Trading"</h3>
-                                <div class="text-xs text-slate-400 mb-2">"Trade resources with the bank"</div>
-                                // Trading is barred during a special build.
-                                <Show when=move || {
-                                    state.can_build_now()
-                                        && state.game_phase.get() == GamePhase::RegularPlay
-                                }>
-                                    <BankTradeUI />
-                                </Show>
-                            </div>
-
-                            <div>
-                                <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Player Trading"</h3>
-                                <PlayerTradeUI />
-                            </div>
-
-                            <div>
                                 <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Development"</h3>
                                 <button
                                     class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -282,12 +253,29 @@ pub fn GamePage() -> impl IntoView {
                             </div>
                         </div>
                     </div>
+
+                    // Trading lives in one place at the bottom of the column
+                    // rather than as two unrelated sections adrift in the
+                    // scroll, so it is always where you left it.
+                    <div class="shrink-0 border-t border-slate-800 bg-slate-900/60">
+                        <TradePanel />
+                    </div>
                 </aside>
 
                 // The board column fills the space rather than floating in
                 // it: no scrolling, no dead band above and below.
-                <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden p-3">
-                    <Board />
+                <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden p-3 gap-2">
+                    <div
+                        class="flex-1 min-h-0 min-w-0 rounded-2xl overflow-hidden ring-1 ring-sky-800/40 shadow-[inset_0_2px_24px_rgba(0,0,0,0.55)]"
+                        style="background: radial-gradient(ellipse 72% 78% at 50% 45%, #1d5b86 0%, #134366 55%, #0a2136 100%);"
+                    >
+                        <Board />
+                    </div>
+                    // Your hand, bottom right under the board, where your eyes
+                    // already are when you are deciding what to build.
+                    <div class="shrink-0 flex justify-end">
+                        <ResourceHand />
+                    </div>
                 </div>
 
                 // The log is worth having but not worth a permanent fifth of
@@ -379,6 +367,126 @@ pub fn GamePage() -> impl IntoView {
                     </div>
                 </Show>
             </div> // Close pointer-events wrapper
+        </div>
+    }
+}
+
+/// Bank and player trading in one place, as two tabs. They were two separate
+/// sections of the sidebar, which meant the bank half vanished whenever it was
+/// not your turn and the player half sat there offering a button that only
+/// ever returned an error.
+#[component]
+fn TradePanel() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+    let (tab, set_tab) = create_signal(TradeTab::Bank);
+    let (open, set_open) = create_signal(true);
+
+    // Trading at all needs your turn and ordinary play; a special build is
+    // for building only.
+    let can_trade = move || {
+        state.can_build_now() && state.game_phase.get() == GamePhase::RegularPlay
+    };
+
+    let tab_class = move |mine: TradeTab| {
+        if tab.get() == mine {
+            "flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md bg-slate-700 text-white"
+        } else {
+            "flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md text-slate-400 hover:text-white hover:bg-slate-800"
+        }
+    };
+
+    view! {
+        <div class="p-3 space-y-2">
+            <button
+                class="w-full flex items-center justify-between text-slate-400 hover:text-white transition-colors"
+                on:click=move |_| set_open.update(|o| *o = !*o)
+            >
+                <span class="font-bold text-[10px] uppercase tracking-[0.2em]">"Trade"</span>
+                <span class="text-xs">{move || if open.get() { "▾" } else { "▸" }}</span>
+            </button>
+
+            <Show when=move || open.get()>
+                <div class="flex gap-1 bg-slate-950/60 p-1 rounded-lg">
+                    <button class=move || tab_class(TradeTab::Bank)
+                            on:click=move |_| set_tab.set(TradeTab::Bank)>"Bank"</button>
+                    <button class=move || tab_class(TradeTab::Players)
+                            on:click=move |_| set_tab.set(TradeTab::Players)>"Players"</button>
+                </div>
+
+                <div class="max-h-[38vh] overflow-y-auto custom-scrollbar pr-1">
+                    <Show
+                        when=can_trade
+                        fallback=move || view! {
+                            <div class="text-[10px] text-slate-500 italic py-3 text-center">
+                                "You can trade on your turn, after rolling."
+                            </div>
+                        }
+                    >
+                        <Show
+                            when=move || tab.get() == TradeTab::Bank
+                            fallback=move || view! { <PlayerTradeUI /> }
+                        >
+                            <BankTradeUI />
+                        </Show>
+                    </Show>
+
+                    // Offers aimed at you arrive whoever's turn it is, so they
+                    // are shown regardless of whether you may start one.
+                    <IncomingTrades />
+                </div>
+            </Show>
+        </div>
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TradeTab {
+    Bank,
+    Players,
+}
+
+/// The cards in your hand. Reads as a row of cards rather than a table of
+/// numbers, so the size of your hand is legible at a glance.
+#[component]
+fn ResourceHand() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let card = move |label: &'static str, tint: &'static str, count: u8| {
+        view! {
+            <div
+                class=format!(
+                    "flex flex-col items-center justify-center w-12 h-12 rounded-lg border-b-4 shadow-lg transition-transform hover:-translate-y-0.5 {tint} {}",
+                    if count == 0 { "opacity-40" } else { "" }
+                )
+                title=format!("{count} {label}")
+            >
+                <span class="text-[9px] font-bold uppercase tracking-wider text-black/60">{label}</span>
+                <span class="text-lg font-black leading-none text-black/85 tabular-nums">{count}</span>
+            </div>
+        }
+    };
+
+    view! {
+        <div class="flex items-end gap-1.5 bg-slate-900/70 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/70 shadow-2xl">
+            {move || {
+                let r = state.my_resources.get();
+                view! {
+                    {card("Brick", "bg-orange-400 border-orange-600", r.brick)}
+                    {card("Wood", "bg-emerald-500 border-emerald-700", r.lumber)}
+                    {card("Sheep", "bg-lime-400 border-lime-600", r.wool)}
+                    {card("Wheat", "bg-amber-400 border-amber-600", r.grain)}
+                    {card("Ore", "bg-slate-400 border-slate-600", r.ore)}
+                }
+            }}
+            <div class="ml-1 pl-3 border-l border-slate-700 flex flex-col items-center justify-center h-12">
+                <span class="text-[9px] font-bold uppercase tracking-wider text-slate-500">"Total"</span>
+                <span class="text-lg font-black leading-none text-slate-200 tabular-nums">
+                    {move || {
+                        let r = state.my_resources.get();
+                        r.brick as u32 + r.lumber as u32 + r.wool as u32 + r.grain as u32 + r.ore as u32
+                    }}
+                </span>
+            </div>
         </div>
     }
 }
@@ -1246,22 +1354,30 @@ fn PlayerTradeUI() -> impl IntoView {
                 </div>
             </Show>
 
-            // Incoming trade offers
-            <Show when=move || !state.incoming_trades.get().is_empty()>
-                <div class="space-y-2">
-                    <div class="text-[9px] text-slate-400 font-bold">"INCOMING TRADES:"</div>
-                    <For
-                        each=move || state.incoming_trades.get()
-                        key=|trade| trade.offer_id
-                        children=move |trade: crate::state::PendingTradeOffer| {
-                            view! {
-                                <IncomingTradeItem trade=trade />
-                            }
-                        }
-                    />
-                </div>
-            </Show>
         </div>
+    }
+}
+
+/// Offers waiting on an answer from you. Pulled out of the propose-a-trade
+/// form because they arrive on other players' turns too, when that form is
+/// correctly hidden.
+#[component]
+fn IncomingTrades() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    view! {
+        <Show when=move || !state.incoming_trades.get().is_empty()>
+            <div class="space-y-2 mt-2 pt-2 border-t border-slate-800">
+                <div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">"Incoming"</div>
+                <For
+                    each=move || state.incoming_trades.get()
+                    key=|trade| trade.offer_id
+                    children=move |trade: crate::state::PendingTradeOffer| {
+                        view! { <IncomingTradeItem trade=trade /> }
+                    }
+                />
+            </div>
+        </Show>
     }
 }
 

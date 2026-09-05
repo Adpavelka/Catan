@@ -216,6 +216,15 @@ pub fn Board() -> impl IntoView {
                 class="w-full flex-1 min-h-0 drop-shadow-2xl relative z-0"
                 preserveAspectRatio="xMidYMid meet"
             >
+                // A few slack rings for a suggestion of water, kept faint so
+                // they never compete with the tiles. The sea itself is painted
+                // on the container: the svg is letterboxed inside it, so an
+                // svg-sized rect would leave dark bands down either side.
+                <g class="pointer-events-none" opacity="0.16">
+                    <circle cx="500" cy="380" r="250" fill="none" stroke="#7dd3fc" stroke-width="1.5"/>
+                    <circle cx="500" cy="380" r="305" fill="none" stroke="#7dd3fc" stroke-width="1"/>
+                    <circle cx="500" cy="380" r="358" fill="none" stroke="#7dd3fc" stroke-width="0.75"/>
+                </g>
                 // Center the board horizontally, move up vertically
                 // The board is drawn at a fixed hex size and then scaled as a
                 // whole, so the 30-hex extension board fits the same viewport
@@ -335,8 +344,8 @@ pub fn Board() -> impl IntoView {
                                 let (out_nx, out_ny) = if away >= 0.0 { (nx, ny) } else { (-nx, -ny) };
 
                                 // Push port marker outward from the edge
-                                let port_x = mid_x + out_nx * 45.0;
-                                let port_y = mid_y + out_ny * 45.0;
+                                let port_x = mid_x + out_nx * 56.0;
+                                let port_y = mid_y + out_ny * 56.0;
 
                                 // Get port display properties from server-sent port type
                                 let label = port_label(&port.port_type);
@@ -345,67 +354,51 @@ pub fn Board() -> impl IntoView {
                                 let bg_color = port_bg_color(&port.port_type);
 
                                 view! {
-                                    <g transform=format!("translate({}, {})", port_x, port_y)>
-                                        // Dock line pointing toward the island
+                                    <g>
+                                        // Two piers running out to the coast,
+                                        // so it is obvious which corners the
+                                        // harbour actually serves.
                                         <line
-                                            x1="0"
-                                            y1="0"
-                                            x2={format!("{}", -out_nx * 30.0)}
-                                            y2={format!("{}", -out_ny * 30.0)}
-                                            stroke=color
-                                            stroke-width="3"
-                                            stroke-linecap="round"
+                                            x1=v1x y1=v1y x2=port_x y2=port_y
+                                            stroke=color stroke-width="2.5" stroke-linecap="round"
+                                            opacity="0.65"
                                         />
-                                        // Small circles at vertex connection points
-                                        <circle
-                                            cx={format!("{}", v1x - port_x)}
-                                            cy={format!("{}", v1y - port_y)}
-                                            r="4"
-                                            fill=color
+                                        <line
+                                            x1=v2x y1=v2y x2=port_x y2=port_y
+                                            stroke=color stroke-width="2.5" stroke-linecap="round"
+                                            opacity="0.65"
                                         />
-                                        <circle
-                                            cx={format!("{}", v2x - port_x)}
-                                            cy={format!("{}", v2y - port_y)}
-                                            r="4"
-                                            fill=color
-                                        />
-                                        // Port background
-                                        <rect
-                                            x="-22"
-                                            y="-14"
-                                            width="44"
-                                            height={if resource.is_some() { "32" } else { "22" }}
-                                            rx="4"
-                                            fill=bg_color
-                                            stroke=color
-                                            stroke-width="2"
-                                        />
-                                        // Ratio text
-                                        <text
-                                            x="0"
-                                            y={if resource.is_some() { "-2" } else { "4" }}
-                                            text-anchor="middle"
-                                            fill=color
-                                            font-size="14"
-                                            font-weight="bold"
-                                            style="text-shadow: 1px 1px 2px rgba(0,0,0,0.8)"
-                                        >
-                                            {label}
-                                        </text>
-                                        // Resource name (for 2:1 ports)
-                                        {resource.map(|res| view! {
+                                        <circle cx=v1x cy=v1y r="3.5" fill=color opacity="0.9" />
+                                        <circle cx=v2x cy=v2y r="3.5" fill=color opacity="0.9" />
+
+                                        <g transform=format!("translate({}, {})", port_x, port_y)>
+                                            // A round buoy rather than a
+                                            // floating rectangle: it sits on
+                                            // the water without looking like a
+                                            // stray label.
+                                            <circle r="21" fill="#0b1b2b" opacity="0.55" />
+                                            <circle r="19" fill=bg_color stroke=color stroke-width="2.5" />
                                             <text
-                                                x="0"
-                                                y="12"
+                                                y=if resource.is_some() { "-3" } else { "1" }
                                                 text-anchor="middle"
+                                                dominant-baseline="central"
                                                 fill=color
-                                                font-size="8"
-                                                font-weight="bold"
-                                                style="text-shadow: 1px 1px 2px rgba(0,0,0,0.8)"
+                                                class="text-[13px] font-black"
                                             >
-                                                {res}
+                                                {label}
                                             </text>
-                                        })}
+                                            {resource.map(|res| view! {
+                                                <text
+                                                    y="9"
+                                                    text-anchor="middle"
+                                                    dominant-baseline="central"
+                                                    fill=color
+                                                    class="text-[7px] font-bold tracking-wider"
+                                                >
+                                                    {res}
+                                                </text>
+                                            })}
+                                        </g>
                                     </g>
                                 }
                             }
@@ -814,45 +807,57 @@ fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
     let color = resource_color(&hex.resource);
     let label = resource_label(&hex.resource);
 
+    // How many of the 36 dice combinations make this number: 6 and 8 are the
+    // richest, 2 and 12 the poorest. Shown as pips, the way the real tokens do.
+    let pips = if hex.number == 0 { 0 } else { 6u8.saturating_sub((7i8 - hex.number as i8).unsigned_abs()) };
+    let hot = hex.number == 6 || hex.number == 8;
+
     view! {
         <g transform=format!("translate({}, {})", x, y) class="group">
-            <polygon
-                points=points
-                class=format!("{} stroke-black/20 stroke-2", color)
-            />
-
-            // Background circle for text contrast
-            <circle
-                cx="0"
-                cy="8"
-                r="28"
-                class="fill-black/40"
-            />
+            <polygon points=points class=format!("{} stroke-black/30 [stroke-width:2]", color) />
+            // A little inner shading so the tiles read as solid, not flat.
+            <polygon points=points class="fill-none stroke-white/10" stroke-width="1"
+                     transform="scale(0.93)" />
 
             <text
-                y="0"
+                y="-26"
                 text-anchor="middle"
-                class="fill-white text-[14px] font-black pointer-events-none uppercase tracking-wide"
-                style="text-shadow: 2px 2px 4px rgba(0,0,0,0.8), -1px -1px 2px rgba(0,0,0,0.8)"
+                class="fill-white/80 text-[11px] font-bold pointer-events-none uppercase tracking-[0.15em]"
+                style="text-shadow: 0 1px 3px rgba(0,0,0,0.9)"
             >
                 {label}
             </text>
+
+            // The number token, centred in the hex like the cardboard chit it
+            // stands in for - it used to be an off-centre dark blob shared
+            // with the resource label.
             <Show when=move || hex.number != 0 && hex.number != 7>
-                <text
-                    y="22"
-                    text-anchor="middle"
-                    class=move || {
-                        let base = "text-[18px] font-black pointer-events-none";
-                        if hex.number == 6 || hex.number == 8 {
-                            format!("{} fill-red-400", base)
+                <g transform="translate(0, 8)" class="pointer-events-none">
+                    <circle r="21" class="fill-black/25" cy="2" />
+                    <circle r="20" fill="#f4ecd8" stroke="#0f172a" stroke-opacity="0.35" stroke-width="1.5" />
+                    <text
+                        y="-1"
+                        text-anchor="middle"
+                        dominant-baseline="central"
+                        class=move || if hot {
+                            "text-[21px] font-black fill-red-600"
                         } else {
-                            format!("{} fill-white", base)
+                            "text-[21px] font-black fill-slate-900"
                         }
-                    }
-                    style="text-shadow: 2px 2px 4px rgba(0,0,0,0.9), -1px -1px 2px rgba(0,0,0,0.9)"
-                >
-                    {hex.number}
-                </text>
+                    >
+                        {hex.number}
+                    </text>
+                    {(0..pips).map(|i| {
+                        let spread = 4.5;
+                        let cx = (i as f32 - (pips as f32 - 1.0) / 2.0) * spread;
+                        view! {
+                            <circle
+                                cx=cx cy="12.5" r="1.5"
+                                class=move || if hot { "fill-red-600" } else { "fill-slate-900" }
+                            />
+                        }
+                    }).collect_view()}
+                </g>
             </Show>
         </g>
     }
