@@ -9,6 +9,8 @@ use shared::{ClientRequest, GamePhase, PlayerColour};
 pub fn GamePage() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
+    let (log_open, set_log_open) = create_signal(true);
+
     // Check if any modal is open - if so, disable pointer events on main UI
     let is_modal_open = move || {
         state.must_discard_count.get().is_some() ||
@@ -282,28 +284,59 @@ pub fn GamePage() -> impl IntoView {
                     </div>
                 </aside>
 
-                <div class="flex-1 flex items-start justify-center overflow-y-auto overflow-x-hidden min-h-0 min-w-0 py-4">
+                // The board column fills the space rather than floating in
+                // it: no scrolling, no dead band above and below.
+                <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden p-3">
                     <Board />
                 </div>
 
-                <aside class="w-72 bg-slate-900/30 border-l border-slate-800 flex flex-col overflow-hidden shrink-0">
-                    <div class="p-4 border-b border-slate-800">
-                        <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em]">"Event Log"</h3>
-                    </div>
-                    <div class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                        <For
-                            each=move || state.messages.get().into_iter().rev()
-                            key=|msg| msg.clone()
-                            children=move |msg| view! {
-                                <div class="text-[11px] font-mono text-slate-400 border-l-2 border-slate-700 pl-2 py-1 bg-slate-800/20">
-                                    {msg}
-                                </div>
-                            }
-                        />
-                        <Show when=move || state.messages.get().is_empty()>
-                            <div class="text-xs text-slate-600 italic">"Waiting for actions..."</div>
+                // The log is worth having but not worth a permanent fifth of
+                // the screen, so it collapses to a spine and hands the width
+                // back to the board.
+                <aside class=move || format!(
+                    "bg-slate-900/30 border-l border-slate-800 flex flex-col overflow-hidden shrink-0 transition-[width] duration-200 {}",
+                    if log_open.get() { "w-64" } else { "w-10" }
+                )>
+                    <div class="flex items-center justify-between gap-2 p-2 border-b border-slate-800 shrink-0">
+                        <Show when=move || log_open.get()>
+                            <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] pl-2 truncate">"Event Log"</h3>
                         </Show>
+                        <button
+                            class="w-6 h-6 shrink-0 rounded text-slate-500 hover:text-white hover:bg-slate-800 font-bold text-xs transition-colors"
+                            title=move || if log_open.get() { "Hide the event log" } else { "Show the event log" }
+                            on:click=move |_| set_log_open.update(|o| *o = !*o)
+                        >
+                            {move || if log_open.get() { "›" } else { "‹" }}
+                        </button>
                     </div>
+
+                    <Show
+                        when=move || log_open.get()
+                        fallback=move || view! {
+                            // Collapsed: a vertical label, so the strip still
+                            // says what it is.
+                            <div class="flex-1 flex items-start justify-center pt-3">
+                                <span class="text-[9px] uppercase tracking-[0.3em] text-slate-600 font-bold [writing-mode:vertical-rl]">
+                                    "Event Log"
+                                </span>
+                            </div>
+                        }
+                    >
+                        <div class="flex-1 overflow-y-auto p-3 space-y-1.5 custom-scrollbar min-h-0">
+                            <For
+                                each=move || state.messages.get().into_iter().rev()
+                                key=|msg| msg.clone()
+                                children=move |msg| view! {
+                                    <div class="text-[11px] font-mono text-slate-400 border-l-2 border-slate-700 pl-2 py-1 bg-slate-800/20">
+                                        {msg}
+                                    </div>
+                                }
+                            />
+                            <Show when=move || state.messages.get().is_empty()>
+                                <div class="text-xs text-slate-600 italic">"Waiting for actions..."</div>
+                            </Show>
+                        </div>
+                    </Show>
                 </aside>
             </div>
 

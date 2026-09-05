@@ -208,10 +208,12 @@ pub fn Board() -> impl IntoView {
     let has_rolled = move || state.last_dice_roll.get().is_some();
 
     view! {
-        <div class="relative w-full h-full flex flex-col items-center justify-start pt-2 overflow-y-auto min-h-0">
+        <div class="relative w-full h-full flex flex-col min-h-0 min-w-0 gap-2">
+            // The board takes every pixel the column can spare; the control
+            // bar below is the only fixed-height part.
             <svg
                 viewBox="0 0 1000 800"
-                class="w-full h-auto max-h-[70vh] drop-shadow-2xl relative z-0"
+                class="w-full flex-1 min-h-0 drop-shadow-2xl relative z-0"
                 preserveAspectRatio="xMidYMid meet"
             >
                 // Center the board horizontally, move up vertically
@@ -236,9 +238,11 @@ pub fn Board() -> impl IntoView {
                     let min_y = points.iter().map(|p| p.1).fold(f32::INFINITY, f32::min) - margin;
                     let max_y = points.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max) + margin;
 
+                    // No upper clamp: a 19-hex board is smaller than the
+                    // viewport, and capping at 1.0 left it marooned in the
+                    // middle of a mostly empty column.
                     let scale = (980.0 / (max_x - min_x))
-                        .min(780.0 / (max_y - min_y))
-                        .min(1.0);
+                        .min(780.0 / (max_y - min_y));
 
                     format!(
                         "translate(500, 400) scale({:.4}) translate({:.1}, {:.1})",
@@ -253,6 +257,7 @@ pub fn Board() -> impl IntoView {
                         key=|hex| (hex.q, hex.r)
                         children=move |hex: HexInfo| {
                             let (px, py) = axial_to_pixel(hex.q, hex.r, 60.0);
+                            let (hex_q, hex_r) = (hex.q, hex.r);
                             let hex_clone = hex.clone();
                             let state_click = state.clone();
 
@@ -263,12 +268,19 @@ pub fn Board() -> impl IntoView {
                                         y=py
                                         hex=hex
                                     />
-                                    // Overlay for robber movement
-                                    <Show when=move || state_click.must_move_robber.get()>
+                                    // Robber placement targets. Only the hexes
+                                    // that are actually legal light up: the one
+                                    // the robber already sits on is not a move,
+                                    // and filling every hex turned the whole
+                                    // board red instead of pointing anywhere.
+                                    <Show when=move || {
+                                        state_click.must_move_robber.get()
+                                            && state_click.robber_pos.get() != Some((hex_q, hex_r))
+                                    }>
                                         <polygon
                                             points="0,-50 43,-25 43,25 0,50 -43,25 -43,-25"
                                             transform=format!("translate({}, {})", px, py)
-                                            class="fill-red-500/20 hover:fill-red-500/40 stroke-red-500 stroke-2 cursor-pointer transition-all"
+                                            class="fill-transparent hover:fill-red-500/30 stroke-red-400/70 hover:stroke-red-400 [stroke-width:3] [stroke-dasharray:6_5] hover:[stroke-dasharray:none] cursor-pointer transition-all"
                                             on:click=move |_| {
                                                 state_click.send(ClientRequest::MoveRobber {
                                                     q: hex_clone.q,
@@ -597,9 +609,10 @@ pub fn Board() -> impl IntoView {
                 </g>
             </svg>
 
-            // Control panel
-            <div class="mt-4 w-full flex justify-center">
-                <div class="flex flex-col gap-3 bg-gray-900/80 backdrop-blur-md p-4 rounded-2xl border border-white/10 shadow-2xl">
+            // Control bar: one row, pinned under the board, so the dice and
+            // the build buttons sit with the thing they act on.
+            <div class="shrink-0 w-full flex justify-center pb-1">
+                <div class="flex flex-wrap items-center justify-center gap-3 bg-gray-900/80 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10 shadow-2xl">
                 // Show initial placement instructions
                 {move || {
                     let phase = move || state.game_phase.get();
