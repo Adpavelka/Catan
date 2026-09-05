@@ -43,8 +43,9 @@ const _: () = assert!(
     "every seat must be able to claim a distinct colour",
 );
 
-/// Trade offers older than this are treated as withdrawn.
-pub const TRADE_LIFETIME_SECS: u64 = 120;
+/// Trade offers older than this are treated as withdrawn. Shared with the
+/// client so its countdown and the server's expiry cannot drift apart.
+pub const TRADE_LIFETIME_SECS: u64 = shared::TRADE_LIFETIME_SECS;
 
 fn first_trade_id() -> u64 {
     1
@@ -284,10 +285,31 @@ impl GameInstance {
 
     /// Forgets offers nobody answered in time, so they cannot be accepted
     /// hours later against a hand that has completely changed.
-    pub fn expire_stale_trades(&mut self) {
+    ///
+    /// Returns the offers that were dropped. Callers must tell the table about
+    /// them: an offer that vanishes silently leaves the proposer's client
+    /// believing it is still open, and they can never propose another.
+    pub fn expire_stale_trades(&mut self) -> Vec<u64> {
         let now = now_secs();
-        self.pending_trades
-            .retain(|_, trade| now.saturating_sub(trade.created_at_secs) <= TRADE_LIFETIME_SECS);
+
+        let expired: Vec<u64> = self
+            .pending_trades
+            .iter()
+            .filter(|(_, trade)| now.saturating_sub(trade.created_at_secs) > TRADE_LIFETIME_SECS)
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in &expired {
+            self.pending_trades.remove(id);
+        }
+
+        expired
+    }
+
+    /// Drops every open offer. Called when the turn ends: an offer belongs to
+    /// the turn it was made in, and must not be settled during someone else's.
+    pub fn clear_trades(&mut self) -> Vec<u64> {
+        self.pending_trades.drain().map(|(id, _)| id).collect()
     }
 
     /// Who may act right now. During a special building phase that is the
@@ -546,6 +568,7 @@ mod tests {
                 offering: Default::default(),
                 requesting: Default::default(),
                 declined_by: HashSet::new(),
+                accepted_by: Vec::new(),
                 created_at_secs: now_secs().saturating_sub(age),
             });
         };
@@ -574,6 +597,7 @@ mod tests {
             offering: Default::default(),
             requesting: Default::default(),
             declined_by: HashSet::new(),
+                accepted_by: Vec::new(),
             created_at_secs: now_secs(),
         });
 

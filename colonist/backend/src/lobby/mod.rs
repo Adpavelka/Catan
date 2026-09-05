@@ -1,6 +1,7 @@
 use crate::game::entities::game_instance::GameInstance;
 use crate::network::message::ServerMessage;
 use crate::repository::game_repository::GameRepository;
+use shared::ServerMessage as ServerMsg;
 use actix::prelude::*;
 use std::time::Duration;
 use std::collections::HashMap;
@@ -27,12 +28,17 @@ pub struct Lobby {
 const SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 /// How long a game may sit with no connected players before it is dropped.
 const ABANDONED_AFTER: u64 = 60 * 60;
+/// How often to retire trade offers that have run out of time. Much shorter
+/// than `SWEEP_INTERVAL`, so an offer dies close to when the clients say it
+/// will rather than up to five minutes later.
+const TRADE_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 
 impl Actor for Lobby {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.run_interval(SWEEP_INTERVAL, |lobby, ctx| lobby.sweep_stale_games(ctx));
+        ctx.run_interval(TRADE_SWEEP_INTERVAL, |lobby, _| lobby.sweep_expired_trades());
     }
 }
 
@@ -69,6 +75,25 @@ impl Lobby {
 }
 
 impl Lobby {
+    /// Retires trade offers that have run out of time, telling the table about
+    /// each one. The server owns trade expiry: clients only display a
+    /// countdown, so without this an offer would sit on screen forever.
+    fn sweep_expired_trades(&mut self) {
+        let expired: Vec<(String, Vec<u64>)> = self
+            .games
+            .iter_mut()
+            .map(|(gid, game)| (gid.clone(), game.expire_stale_trades()))
+            .filter(|(_, ids)| !ids.is_empty())
+            .collect();
+
+        for (gid, offer_ids) in expired {
+            for offer_id in offer_ids {
+                log::info!("Trade offer {} in game {} expired", offer_id, gid);
+                self.broadcast_to_game(&gid, ServerMsg::TradeCancelled { offer_id });
+            }
+        }
+    }
+
     /// Drops games that are finished, or that have had no connected player for
     /// a while. Without this the in-memory map and the lobby list grow forever.
     fn sweep_stale_games(&mut self, ctx: &mut Context<Self>) {

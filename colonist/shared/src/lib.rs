@@ -3,6 +3,13 @@ use uuid::Uuid;
 
 fn default_player_count() -> usize { 4 }
 
+/// How long a trade offer stays open before the server withdraws it.
+///
+/// The server is the authority here; the client only counts down so the
+/// players can see it coming. Both sides read this one constant so a UI that
+/// says "expired" always agrees with a server that has actually expired it.
+pub const TRADE_LIFETIME_SECS: u64 = 120;
+
 /// Which physical board a game is played on.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -115,9 +122,17 @@ pub enum ClientRequest {
         offer: Resources,
         request: Resources,
     },
+    /// Answer someone else's offer. `accept` registers willingness to trade -
+    /// it does not move any resources. The proposer still has to pick you with
+    /// `ConfirmTrade`. Sending `accept: false` afterwards withdraws again.
     TradeResponse {
         offer_id: u64,
         accept: bool,
+    },
+    /// Proposer settles their own offer with one of the players who accepted.
+    ConfirmTrade {
+        offer_id: u64,
+        partner_id: Uuid,
     },
     CancelTrade {
         offer_id: u64,
@@ -291,7 +306,19 @@ pub enum ServerMessage {
         offering: Resources,
         requesting: Resources,
     },
-    /// A trade was completed successfully
+    /// Someone is willing to take the offer. Nothing has moved yet: the
+    /// proposer picks one of these players with `ConfirmTrade` to settle.
+    TradeAccepted {
+        offer_id: u64,
+        accepter_id: Uuid,
+    },
+    /// An earlier acceptance was taken back, so this player is no longer a
+    /// candidate for the offer.
+    TradeAcceptanceWithdrawn {
+        offer_id: u64,
+        accepter_id: Uuid,
+    },
+    /// A trade was settled and the resources have moved.
     TradeCompleted {
         offer_id: u64,
         proposer_id: Uuid,
@@ -301,13 +328,16 @@ pub enum ServerMessage {
         /// What the accepter gave
         accepter_gave: Resources,
     },
-    /// A trade offer was cancelled by the proposer
+    /// A trade offer is no longer open - withdrawn by the proposer, expired,
+    /// or dropped because the proposer can no longer cover it.
     TradeCancelled {
         offer_id: u64,
     },
-    /// A trade offer was declined (only sent to proposer)
+    /// A trade offer was declined. Only sent to the proposer and the decliner,
+    /// so the rest of the table cannot read who is refusing what.
     TradeDeclined {
         offer_id: u64,
+        proposer_id: Uuid,
         decliner_id: Uuid,
     },
     FullStateSync {

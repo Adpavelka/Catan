@@ -53,6 +53,9 @@ pub fn handle_game_request(
         ClientRequest::TradeResponse { offer_id, accept } => {
             game.handle_trade_response(pid, offer_id, accept)
         }
+        ClientRequest::ConfirmTrade { offer_id, partner_id } => {
+            game.handle_confirm_trade(pid, offer_id, partner_id)
+        }
         ClientRequest::CancelTrade { offer_id } => game.handle_cancel_trade(pid, offer_id),
 
         ClientRequest::DiscardCards { resources } => game.handle_discard_cards(pid, resources),

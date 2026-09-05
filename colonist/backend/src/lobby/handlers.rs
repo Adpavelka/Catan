@@ -133,8 +133,21 @@ impl Lobby {
         }
         self.handle_victory_if_needed(gid);
         self.save_game_async(gid, ctx);
-        self.broadcast_to_game(gid, msg.clone());
+        self.deliver_action_result(gid, msg.clone());
         self.handle_post_message_effects(pid, gid, &msg);
+    }
+
+    /// Most results go to the whole table. A decline is between the two
+    /// players involved - broadcasting it would tell everyone who refused
+    /// what, which is information they should have to ask for.
+    fn deliver_action_result(&mut self, gid: &str, msg: ServerMessage) {
+        if let ServerMessage::TradeDeclined { proposer_id, decliner_id, .. } = msg {
+            self.send_server_msg(proposer_id, msg.clone());
+            self.send_server_msg(decliner_id, msg);
+            return;
+        }
+
+        self.broadcast_to_game(gid, msg);
     }
 
     fn handle_victory_if_needed(&mut self, gid: &str) {
@@ -154,6 +167,22 @@ impl Lobby {
         self.handle_initial_phase_transition(gid, msg);
         self.handle_dev_card_side_effects(pid, gid, msg);
         self.handle_robber_flow(pid, gid, msg);
+        self.close_trades_on_turn_end(gid, msg);
+    }
+
+    /// An offer belongs to the turn it was made in. Letting one outlive the
+    /// turn would move resources while somebody else is playing.
+    fn close_trades_on_turn_end(&mut self, gid: &str, msg: &ServerMessage) {
+        if !matches!(msg, ServerMessage::NextTurn { .. }) {
+            return;
+        }
+
+        let Some(game) = self.games.get_mut(gid) else { return };
+        let closed = game.clear_trades();
+
+        for offer_id in closed {
+            self.broadcast_to_game(gid, ServerMessage::TradeCancelled { offer_id });
+        }
     }
 
     fn handle_resource_updates(&mut self, gid: &str, msg: &ServerMessage) {

@@ -1085,10 +1085,44 @@ fn PlayerTradeUI() -> impl IntoView {
 
     view! {
         <div class="flex flex-col space-y-2 min-h-0 overflow-y-auto">
-            // Show pending trade if I have one
+            // My own offer, plus whoever has said they will take it. Accepting
+            // is only a bid: I choose which of them to actually trade with.
             <Show when=move || state.my_pending_trade.get().is_some()>
-                <div class="bg-yellow-900/30 border border-yellow-700/50 rounded p-2 text-[10px]">
-                    <div class="text-yellow-400 font-bold mb-1">"Your trade offer is pending..."</div>
+                <div class="bg-yellow-900/30 border border-yellow-700/50 rounded p-2 text-[10px] space-y-2">
+                    <div class="text-yellow-400 font-bold">"Your trade offer is pending..."</div>
+
+                    <Show
+                        when=move || !state.my_trade_accepters.get().is_empty()
+                        fallback=move || view! {
+                            <div class="text-slate-400 italic">"Waiting for someone to accept..."</div>
+                        }
+                    >
+                        <div class="text-[9px] text-slate-400 font-bold">"ACCEPTED - PICK ONE:"</div>
+                        <For
+                            each=move || state.my_trade_accepters.get()
+                            key=|id| *id
+                            children=move |accepter_id| {
+                                let name = state.player_name(accepter_id);
+                                view! {
+                                    <button
+                                        class="w-full py-1 bg-green-700 hover:bg-green-600 rounded text-white font-bold flex items-center justify-between px-2"
+                                        on:click=move |_| {
+                                            if let Some(offer_id) = state.my_pending_trade.get_untracked() {
+                                                state.send(ClientRequest::ConfirmTrade {
+                                                    offer_id,
+                                                    partner_id: accepter_id,
+                                                });
+                                            }
+                                        }
+                                    >
+                                        <span>{name}</span>
+                                        <span class="opacity-70">"TRADE ▸"</span>
+                                    </button>
+                                }
+                            }
+                        />
+                    </Show>
+
                     <button
                         class="w-full py-1 bg-red-700 hover:bg-red-600 rounded text-white font-bold"
                         on:click=cancel_my_trade
@@ -1169,8 +1203,9 @@ fn PlayerTradeUI() -> impl IntoView {
     }
 }
 
-/// Trade timeout in seconds
-const TRADE_TIMEOUT_SECONDS: f64 = 30.0;
+/// How long an offer lives, shown as a countdown. The server owns expiry and
+/// will send `TradeCancelled`; this is display only, so the two cannot drift.
+const TRADE_TIMEOUT_SECONDS: f64 = shared::TRADE_LIFETIME_SECS as f64;
 
 #[component]
 fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
@@ -1181,33 +1216,35 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
     // Timer state - seconds remaining
     let (seconds_left, set_seconds_left) = create_signal(TRADE_TIMEOUT_SECONDS);
 
-    // Set up timer interval to update countdown
-    create_effect(move |prev_handle: Option<Option<leptos_dom::helpers::IntervalHandle>>| {
-        // Clean up previous interval if it exists
-        if let Some(Some(handle)) = prev_handle {
+    // Tick the countdown. The handle has to be cleared when this row goes
+    // away: leptos only runs the effect's own cleanup when it re-runs, so an
+    // interval left behind here would keep firing after the row is gone.
+    let timer = store_value(None::<leptos_dom::helpers::IntervalHandle>);
+
+    create_effect(move |_| {
+        if let Some(handle) = timer.get_value() {
             handle.clear();
         }
 
-        // Start a new interval that updates every second
         let handle = set_interval_with_handle(
             move || {
-                let now = js_sys::Date::now();
-                let elapsed = (now - received_at) / 1000.0; // Convert ms to seconds
-                let remaining = TRADE_TIMEOUT_SECONDS - elapsed;
-
-                if remaining < 0.0 {
-                    // Auto-decline the trade
-                    set_seconds_left.set(0.0);
-                    state.send(ClientRequest::TradeResponse { offer_id, accept: false });
-                } else {
-                    set_seconds_left.set(remaining);
-                }
+                let elapsed = (js_sys::Date::now() - received_at) / 1000.0;
+                set_seconds_left.set((TRADE_TIMEOUT_SECONDS - elapsed).max(0.0));
             },
             std::time::Duration::from_secs(1),
         );
 
-        handle.ok()
+        timer.set_value(handle.ok());
     });
+
+    on_cleanup(move || {
+        if let Some(handle) = timer.get_value() {
+            handle.clear();
+        }
+    });
+
+    // Whether I have already bid on this offer and am waiting to be picked.
+    let i_accepted = move || state.my_accepted_offers.get().contains(&offer_id);
 
     let proposer_name = state.players.get()
         .iter()
@@ -1289,25 +1326,46 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
             <div class="text-slate-300">
                 <span class="text-red-400">"Wants: "</span>{requesting_str}
             </div>
-            <div class="flex gap-1 mt-2">
-                <button
-                    class="flex-1 py-1 bg-red-700 hover:bg-red-600 rounded font-bold"
-                    on:click=move |_| {
-                        state.send(ClientRequest::TradeResponse { offer_id, accept: false });
-                    }
-                >
-                    "DECLINE"
-                </button>
-                <button
-                    class="flex-1 py-1 bg-green-700 hover:bg-green-600 rounded font-bold disabled:opacity-40"
-                    disabled=move || !can_afford()
-                    on:click=move |_| {
-                        state.send(ClientRequest::TradeResponse { offer_id, accept: true });
-                    }
-                >
-                    "ACCEPT"
-                </button>
-            </div>
+            <Show
+                when=i_accepted
+                fallback=move || view! {
+                    <div class="flex gap-1 mt-2">
+                        <button
+                            class="flex-1 py-1 bg-red-700 hover:bg-red-600 rounded font-bold"
+                            on:click=move |_| {
+                                state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+                            }
+                        >
+                            "DECLINE"
+                        </button>
+                        <button
+                            class="flex-1 py-1 bg-green-700 hover:bg-green-600 rounded font-bold disabled:opacity-40"
+                            disabled=move || !can_afford()
+                            on:click=move |_| {
+                                state.send(ClientRequest::TradeResponse { offer_id, accept: true });
+                            }
+                        >
+                            "ACCEPT"
+                        </button>
+                    </div>
+                }
+            >
+                // Bid placed. It is the proposer's move now: they may pick
+                // somebody else, so this stays until they settle or it lapses.
+                <div class="mt-2 space-y-1">
+                    <div class="text-green-400 font-bold text-center">
+                        "✓ Accepted - waiting for them to choose"
+                    </div>
+                    <button
+                        class="w-full py-1 bg-slate-700 hover:bg-slate-600 rounded font-bold"
+                        on:click=move |_| {
+                            state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+                        }
+                    >
+                        "WITHDRAW"
+                    </button>
+                </div>
+            </Show>
         </div>
     }
 }

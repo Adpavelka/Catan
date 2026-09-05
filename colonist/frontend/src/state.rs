@@ -79,6 +79,11 @@ pub struct GameState {
     // Player-to-player trading state
     pub incoming_trades: RwSignal<Vec<PendingTradeOffer>>,
     pub my_pending_trade: RwSignal<Option<u64>>,  // Trade ID of trade I proposed
+    /// Players who have said they will take my offer, oldest bid first. I pick
+    /// one of them to settle with; accepting alone moves nothing.
+    pub my_trade_accepters: RwSignal<Vec<Uuid>>,
+    /// Offer ids I have accepted and am waiting on the proposer to settle.
+    pub my_accepted_offers: RwSignal<Vec<u64>>,
 
     // Winner
     pub secret_victory_points:RwSignal<i32>,
@@ -131,6 +136,17 @@ impl GameState {
         }
 
         shared::SeatRequest { name, colour }
+    }
+
+    /// Display name for a player, falling back to their id if they are not in
+    /// our roster yet.
+    pub fn player_name(&self, player_id: Uuid) -> String {
+        self.players
+            .get_untracked()
+            .iter()
+            .find(|p| p.player_id == player_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("Player {}", player_id))
     }
 
     pub fn send(&self, req: ClientRequest) {
@@ -617,6 +633,7 @@ impl GameState {
                     // If I'm the proposer, track my trade
                     if Some(proposer_id) == my_id {
                         self.my_pending_trade.set(Some(offer_id));
+                        self.my_trade_accepters.set(Vec::new());
                     }
 
                     // If this trade is for me (or open to everyone) and I'm not the proposer, add to incoming
@@ -644,6 +661,46 @@ impl GameState {
                         .unwrap_or_else(|| format!("Player {}", proposer_id));
                     self.messages.update(|m| m.push(format!("{} proposed a trade", proposer_name)));
                 }
+                ServerMessage::TradeAccepted { offer_id, accepter_id } => {
+                    logging::log!("Trade {} accepted by {}", offer_id, accepter_id);
+                    let my_id = self.player_id.get_untracked();
+
+                    // Nothing has moved yet: this only adds a candidate the
+                    // proposer can settle with.
+                    if self.my_pending_trade.get_untracked() == Some(offer_id) {
+                        self.my_trade_accepters.update(|ids| {
+                            if !ids.contains(&accepter_id) {
+                                ids.push(accepter_id);
+                            }
+                        });
+                    }
+
+                    if Some(accepter_id) == my_id {
+                        self.my_accepted_offers.update(|ids| {
+                            if !ids.contains(&offer_id) {
+                                ids.push(offer_id);
+                            }
+                        });
+                    }
+
+                    let name = self.player_name(accepter_id);
+                    self.messages.update(|m| m.push(format!("{} is willing to trade", name)));
+                }
+                ServerMessage::TradeAcceptanceWithdrawn { offer_id, accepter_id } => {
+                    logging::log!("Trade {} acceptance withdrawn by {}", offer_id, accepter_id);
+                    let my_id = self.player_id.get_untracked();
+
+                    if self.my_pending_trade.get_untracked() == Some(offer_id) {
+                        self.my_trade_accepters.update(|ids| ids.retain(|id| *id != accepter_id));
+                    }
+
+                    if Some(accepter_id) == my_id {
+                        self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
+                        self.incoming_trades.update(|trades| {
+                            trades.retain(|t| t.offer_id != offer_id);
+                        });
+                    }
+                }
                 ServerMessage::TradeCompleted { offer_id, proposer_id, accepter_id, proposer_gave: _, accepter_gave: _ } => {
                     logging::log!("Trade completed: {} between {} and {}", offer_id, proposer_id, accepter_id);
 
@@ -651,10 +708,12 @@ impl GameState {
                     self.incoming_trades.update(|trades| {
                         trades.retain(|t| t.offer_id != offer_id);
                     });
+                    self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
 
                     // Clear my pending trade if it was mine
                     if self.my_pending_trade.get_untracked() == Some(offer_id) {
                         self.my_pending_trade.set(None);
+                        self.my_trade_accepters.set(Vec::new());
                     }
 
                     // Show message
@@ -679,26 +738,33 @@ impl GameState {
                     self.incoming_trades.update(|trades| {
                         trades.retain(|t| t.offer_id != offer_id);
                     });
+                    self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
 
-                    // Clear my pending trade if it was mine
+                    // Clear my pending trade if it was mine. The server is the
+                    // only thing that can retire an offer, so this is also how
+                    // an expired offer releases the proposer to make another.
                     if self.my_pending_trade.get_untracked() == Some(offer_id) {
                         self.my_pending_trade.set(None);
+                        self.my_trade_accepters.set(Vec::new());
+                        self.messages.update(|m| m.push("Your trade offer closed.".to_string()));
                     }
                 }
-                ServerMessage::TradeDeclined { offer_id, decliner_id } => {
+                ServerMessage::TradeDeclined { offer_id, proposer_id, decliner_id } => {
                     logging::log!("Trade declined: {} by player {}", offer_id, decliner_id);
 
-                    let decliner_name = self.players.get_untracked()
-                        .iter()
-                        .find(|p| p.player_id == decliner_id)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| format!("Player {}", decliner_id));
+                    let decliner_name = self.player_name(decliner_id);
+                    let my_id = self.player_id.get_untracked();
+
+                    if Some(proposer_id) == my_id {
+                        self.my_trade_accepters.update(|ids| ids.retain(|id| *id != decliner_id));
+                    }
 
                     // If I'm the one who declined, remove from my incoming trades
-                    if Some(decliner_id) == self.player_id.get_untracked() {
+                    if Some(decliner_id) == my_id {
                         self.incoming_trades.update(|trades| {
                             trades.retain(|t| t.offer_id != offer_id);
                         });
+                        self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
                     }
 
                     self.messages.update(|m| m.push(format!("{} declined the trade", decliner_name)));
@@ -874,6 +940,8 @@ pub fn provide_game_state() {
         // Player-to-player trading state
         incoming_trades: create_rw_signal(Vec::new()),
         my_pending_trade: create_rw_signal(None),
+        my_trade_accepters: create_rw_signal(Vec::new()),
+        my_accepted_offers: create_rw_signal(Vec::new()),
         // Winner
         winner_player_id: create_rw_signal(None),
         secret_victory_points: create_rw_signal(0),

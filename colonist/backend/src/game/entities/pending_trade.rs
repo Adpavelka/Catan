@@ -13,6 +13,41 @@ pub struct PendingTrade {
     pub offering: Resources,
     pub requesting: Resources,
     pub declined_by: HashSet<Uuid>,
+    /// Players who said they would take this trade, oldest first. Accepting
+    /// only puts you in this queue - the proposer chooses who to settle with,
+    /// so the order they are shown in is the order they answered.
+    #[serde(default)]
+    pub accepted_by: Vec<Uuid>,
     /// When the offer was made, in seconds since the epoch.
     pub created_at_secs: u64,
+}
+
+impl PendingTrade {
+    /// Records `pid` as willing to trade. Accepting twice is harmless, and
+    /// accepting after declining replaces the decline.
+    pub fn accept(&mut self, pid: Uuid) {
+        self.declined_by.remove(&pid);
+        if !self.accepted_by.contains(&pid) {
+            self.accepted_by.push(pid);
+        }
+    }
+
+    /// Records `pid` as unwilling, taking back any earlier acceptance.
+    /// Returns whether they had previously accepted.
+    pub fn decline(&mut self, pid: Uuid) -> bool {
+        let had_accepted = self.accepted_by.contains(&pid);
+        self.accepted_by.retain(|id| *id != pid);
+        self.declined_by.insert(pid);
+        had_accepted
+    }
+
+    pub fn has_accepted(&self, pid: Uuid) -> bool {
+        self.accepted_by.contains(&pid)
+    }
+
+    /// Whether `pid` is allowed to answer this offer at all.
+    pub fn is_open_to(&self, pid: Uuid) -> bool {
+        pid != self.proposer_id
+            && self.target_player_id.map_or(true, |target| target == pid)
+    }
 }
