@@ -1,7 +1,7 @@
 use leptos::*;
 use uuid::Uuid;
 use crate::components::board::{player_color_hex, Board};
-use crate::state::GameState;
+use crate::state::{BuildMode, GameState};
 use crate::components::icons::{Icon, IconKind};
 use shared::{ClientRequest, GamePhase, PlayerColour};
 
@@ -205,20 +205,9 @@ pub fn GamePage() -> impl IntoView {
 
                         <div class="space-y-4">
                             <div>
-                                <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Development"</h3>
-                                <button
-                                    class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    on:click=move |_| {
-                                        state.send(ClientRequest::BuyDevelopmentCard);
-                                    }
-                                    // Buying a card is allowed in a special build.
-                                    disabled=move || !state.can_build_now()
-                                >
-                                    "BUY CARD"
-                                </button>
+                                <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Development Cards"</h3>
 
-                                <div class="mt-3 space-y-1">
-                                    <div class="text-[10px] text-slate-400 mb-1">"Your Cards:"</div>
+                                <div class="space-y-1">
                                     {move || {
                                         let cards = state.my_dev_cards.get();
                                         if cards.is_empty() {
@@ -265,15 +254,18 @@ pub fn GamePage() -> impl IntoView {
                 // The board column fills the space rather than floating in
                 // it: no scrolling, no dead band above and below.
                 <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden p-3 gap-2">
+                    <TurnTimer />
                     <div
                         class="flex-1 min-h-0 min-w-0 rounded-2xl overflow-hidden ring-1 ring-sky-800/40 shadow-[inset_0_2px_24px_rgba(0,0,0,0.55)]"
                         style="background: radial-gradient(ellipse 72% 78% at 50% 45%, #1d5b86 0%, #134366 55%, #0a2136 100%);"
                     >
                         <Board />
                     </div>
-                    // Your hand, bottom right under the board, where your eyes
-                    // already are when you are deciding what to build.
-                    <div class="shrink-0 flex justify-end">
+                    // What you can build on the left, what you hold on the
+                    // right, both under the board where your eyes already are
+                    // when you are deciding what to do.
+                    <div class="shrink-0 flex items-end justify-between gap-3">
+                        <BuildBar />
                         <ResourceHand />
                     </div>
                 </div>
@@ -367,6 +359,265 @@ pub fn GamePage() -> impl IntoView {
                     </div>
                 </Show>
             </div> // Close pointer-events wrapper
+        </div>
+    }
+}
+
+/// How long a player gets before the dice are rolled for them.
+const AUTO_ROLL_SECS: f64 = 10.0;
+/// How long a whole turn may run before it is ended for them.
+const TURN_LIMIT_SECS: f64 = 60.0;
+
+/// The turn clock, as a bar above the board.
+///
+/// Only the player whose turn it is acts on the deadline - everyone else just
+/// watches it run down. That does mean a player who closes their tab stalls
+/// the table, because nothing server-side is counting; see the note in the
+/// commit. It is the same trap trade expiry had, and wants the same fix.
+#[component]
+fn TurnTimer() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let (elapsed, set_elapsed) = create_signal(0.0f64);
+    let started = store_value(js_sys::Date::now());
+
+    // Restart whenever the turn changes hands.
+    create_effect(move |_| {
+        let _ = state.current_turn_player.get();
+        started.set_value(js_sys::Date::now());
+        set_elapsed.set(0.0);
+    });
+
+    let running = move || state.game_phase.get() == GamePhase::RegularPlay;
+    let my_turn = move || state.player_id.get() == Some(state.current_turn_player.get());
+    let rolled = move || state.last_dice_roll.get().is_some();
+
+    // Nothing should be forced through while the player owes the game an
+    // answer - a discard, a robber move, a resource pick.
+    let blocked = move || {
+        state.must_discard_count.get().is_some()
+            || state.must_move_robber.get()
+            || !state.must_steal_from_players.get().is_empty()
+            || state.year_of_plenty_pending.get()
+            || state.monopoly_pending.get()
+    };
+
+    let handle = store_value(None::<leptos_dom::helpers::IntervalHandle>);
+    create_effect(move |_| {
+        if let Some(h) = handle.get_value() {
+            h.clear();
+        }
+        let h = set_interval_with_handle(
+            move || {
+                if !running() {
+                    return;
+                }
+                let secs = (js_sys::Date::now() - started.get_value()) / 1000.0;
+                set_elapsed.set(secs);
+
+                if !my_turn() || blocked() {
+                    return;
+                }
+                if !rolled() && secs >= AUTO_ROLL_SECS {
+                    state.send(ClientRequest::RollDice);
+                } else if rolled() && secs >= TURN_LIMIT_SECS {
+                    state.send(ClientRequest::EndTurn);
+                }
+            },
+            std::time::Duration::from_millis(250),
+        )
+        .ok();
+        handle.set_value(h);
+    });
+    on_cleanup(move || {
+        if let Some(h) = handle.get_value() {
+            h.clear();
+        }
+    });
+
+    // Before the roll the bar counts down the shorter auto-roll window, after
+    // it the rest of the turn.
+    let fraction = move || {
+        let secs = elapsed.get();
+        if rolled() {
+            (1.0 - (secs / TURN_LIMIT_SECS)).clamp(0.0, 1.0)
+        } else {
+            (1.0 - (secs / AUTO_ROLL_SECS)).clamp(0.0, 1.0)
+        }
+    };
+    let remaining = move || {
+        let secs = elapsed.get();
+        let limit = if rolled() { TURN_LIMIT_SECS } else { AUTO_ROLL_SECS };
+        (limit - secs).max(0.0).ceil() as i32
+    };
+
+    view! {
+        <Show when=running>
+            <div class="shrink-0 flex items-center gap-3">
+                <span class=move || format!(
+                    "text-[10px] font-bold uppercase tracking-[0.2em] shrink-0 {}",
+                    if my_turn() { "text-orange-400" } else { "text-slate-500" }
+                )>
+                    {move || if my_turn() {
+                        if rolled() { "Your turn".to_string() } else { "Roll".to_string() }
+                    } else {
+                        format!("{}'s turn", state.player_name(state.current_turn_player.get()))
+                    }}
+                </span>
+                <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                        class=move || format!(
+                            "h-full rounded-full transition-[width] duration-200 {}",
+                            if remaining() <= 5 { "bg-red-500" }
+                            else if remaining() <= 15 { "bg-amber-500" }
+                            else if my_turn() { "bg-orange-500" }
+                            else { "bg-slate-600" }
+                        )
+                        style=move || format!("width: {:.1}%", fraction() * 100.0)
+                    ></div>
+                </div>
+                <span class="text-[10px] font-mono text-slate-400 tabular-nums w-8 text-right shrink-0">
+                    {move || format!("{}s", remaining())}
+                </span>
+            </div>
+        </Show>
+    }
+}
+
+/// Everything you can buy, in one row under the board. Hovering a button
+/// shows what it costs, so the prices do not have to be memorised or looked
+/// up somewhere else on the page.
+#[component]
+fn BuildBar() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    // (brick, lumber, wool, grain, ore)
+    const ROAD: [u8; 5] = [1, 1, 0, 0, 0];
+    const SETTLEMENT: [u8; 5] = [1, 1, 1, 1, 0];
+    const CITY: [u8; 5] = [0, 0, 0, 2, 3];
+    const DEV_CARD: [u8; 5] = [0, 0, 1, 1, 1];
+
+    let affords = move |cost: [u8; 5]| {
+        let r = state.my_resources.get();
+        r.brick >= cost[0] && r.lumber >= cost[1] && r.wool >= cost[2]
+            && r.grain >= cost[3] && r.ore >= cost[4]
+    };
+
+    // During initial placement you place for free, and only these two.
+    let placing = move || state.game_phase.get().is_initial_phase();
+    let my_turn = move || state.player_id.get() == Some(state.current_turn_player.get());
+
+    let enabled = move |mode: Option<BuildMode>, cost: [u8; 5]| {
+        if placing() {
+            return my_turn() && matches!(mode, Some(BuildMode::Settlement) | Some(BuildMode::Road));
+        }
+        state.can_build_now() && (affords(cost) || state.free_roads_remaining.get() > 0)
+    };
+
+    view! {
+        <div class="flex items-end gap-1.5 bg-slate-900/70 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/70 shadow-2xl">
+            <BuildButton
+                label="Road" kind=IconKind::Road mode=Some(BuildMode::Road)
+                cost=ROAD tint="hover:border-emerald-500 hover:text-emerald-300"
+                active_tint="border-emerald-500 text-emerald-300 bg-emerald-600/20"
+                enabled=Signal::derive(move || enabled(Some(BuildMode::Road), ROAD))
+            />
+            <BuildButton
+                label="Settlement" kind=IconKind::Settlement mode=Some(BuildMode::Settlement)
+                cost=SETTLEMENT tint="hover:border-orange-500 hover:text-orange-300"
+                active_tint="border-orange-500 text-orange-300 bg-orange-600/20"
+                enabled=Signal::derive(move || enabled(Some(BuildMode::Settlement), SETTLEMENT))
+            />
+            <BuildButton
+                label="City" kind=IconKind::City mode=Some(BuildMode::City)
+                cost=CITY tint="hover:border-purple-500 hover:text-purple-300"
+                active_tint="border-purple-500 text-purple-300 bg-purple-600/20"
+                enabled=Signal::derive(move || enabled(Some(BuildMode::City), CITY))
+            />
+            <BuildButton
+                label="Dev Card" kind=IconKind::DevCard mode=None
+                cost=DEV_CARD tint="hover:border-sky-500 hover:text-sky-300"
+                active_tint=""
+                enabled=Signal::derive(move || enabled(None, DEV_CARD))
+            />
+        </div>
+    }
+}
+
+/// One purchase. `mode` of `None` buys a development card outright; anything
+/// else arms a placement mode for the next board click.
+#[component]
+fn BuildButton(
+    label: &'static str,
+    kind: IconKind,
+    mode: Option<BuildMode>,
+    cost: [u8; 5],
+    tint: &'static str,
+    active_tint: &'static str,
+    enabled: Signal<bool>,
+) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+    let armed = move || mode.is_some_and(|m| state.build_mode.get() == m);
+
+    let parts: Vec<(&'static str, &'static str, u8)> = vec![
+        ("Brick", "bg-orange-400 border-orange-600", cost[0]),
+        ("Wood", "bg-emerald-500 border-emerald-700", cost[1]),
+        ("Sheep", "bg-lime-400 border-lime-600", cost[2]),
+        ("Wheat", "bg-amber-400 border-amber-600", cost[3]),
+        ("Ore", "bg-slate-400 border-slate-600", cost[4]),
+    ];
+
+    view! {
+        <div class="relative group">
+            <button
+                class=move || format!(
+                    "w-[62px] h-[54px] flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 transition-all                      disabled:opacity-35 disabled:cursor-not-allowed {} {}",
+                    if armed() { active_tint } else { "border-slate-700 text-slate-300" },
+                    tint,
+                )
+                disabled=move || !enabled.get()
+                on:click=move |_| match mode {
+                    Some(m) => state.build_mode.update(|current| {
+                        *current = if *current == m { BuildMode::None } else { m };
+                    }),
+                    None => state.send(ClientRequest::BuyDevelopmentCard),
+                }
+            >
+                <Icon kind=kind size="w-5 h-5" />
+                <span class="text-[8px] font-bold uppercase tracking-wider leading-none">{label}</span>
+            </button>
+
+            // Cost card, on hover. `pointer-events-none` so it can never sit
+            // between the cursor and the button underneath it.
+            <div class="pointer-events-none absolute bottom-full left-0 mb-2 hidden group-hover:block z-50">
+                <div class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 shadow-2xl whitespace-nowrap">
+                    <div class="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                        {label} " costs"
+                    </div>
+                    // One card per unit, drawn like the cards in your hand
+                    // only slightly smaller: "brick brick" reads as a price
+                    // faster than "2 x brick" does.
+                    <div class="flex items-end gap-1">
+                        {parts.into_iter()
+                            .filter(|(_, _, n)| *n > 0)
+                            .flat_map(|(name, colour, n)| {
+                                (0..n).map(move |_| view! {
+                                    <span
+                                        class=format!(
+                                            "flex items-end justify-center w-10 h-10 rounded-md border-b-4 shadow {colour}"
+                                        )
+                                        title=name
+                                    >
+                                        <span class="text-[7px] font-bold uppercase tracking-wide text-black/70 pb-0.5">
+                                            {name}
+                                        </span>
+                                    </span>
+                                }).collect::<Vec<_>>()
+                            })
+                            .collect_view()}
+                    </div>
+                </div>
+            </div>
         </div>
     }
 }

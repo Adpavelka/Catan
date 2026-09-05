@@ -1,123 +1,168 @@
 //! Inline SVG icons.
 //!
-//! These used to be emoji. Emoji are not a dependency you can rely on: they
-//! need a colour emoji font installed, and on a machine without one - which
-//! includes plenty of Linux desktops and every headless browser we test in -
-//! every one of them renders as a tofu box. Drawn inline, they cost nothing,
-//! scale with the text and inherit `currentColor`.
+//! The UI used emoji until these existed, and every one of them rendered as a
+//! tofu box on a machine with no colour emoji font - which includes plenty of
+//! Linux desktops and every headless browser we test in.
+//!
+//! The shapes are Lucide's (<https://lucide.dev>, ISC licence): a real icon
+//! set, drawn on a consistent 24x24 grid with a 2px stroke, rather than
+//! something freehand. They are inlined instead of pulled from a package so
+//! the wasm bundle stays dependency-free, and they inherit `currentColor` and
+//! `em` sizing so they match whatever text they sit beside.
 
 use leptos::*;
 
-/// Shared attributes: sized in `em` so an icon matches whatever text it sits
-/// next to, and painted in `currentColor` so it follows the surrounding class.
-const BOX: &str = "0 0 16 16";
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IconKind {
+    /// Cards in hand.
+    Resource,
+    /// Development cards.
+    DevCard,
+    Knight,
+    Road,
+    Settlement,
+    City,
+    Trophy,
+    Robber,
+    Warning,
+    Refresh,
+    Wheat,
+}
 
 #[component]
 pub fn Icon(
-    /// One of the shapes below, by name.
     kind: IconKind,
     /// Extra classes, e.g. a colour or a margin.
     #[prop(default = "")]
     class: &'static str,
+    /// Override the default 1em square.
+    #[prop(default = "w-[1em] h-[1em]")]
+    size: &'static str,
 ) -> impl IntoView {
+    // Every shape is stroke-only on the same grid, so one <svg> wrapper with
+    // shared stroke attributes covers all of them.
     let body = match kind {
+        // layers
         IconKind::Resource => view! {
             <>
-                <rect x="2.5" y="1.5" width="8" height="12" rx="1.5"
-                      fill="none" stroke="currentColor" stroke-width="1.3"/>
-                <path d="M11.5 3.2A1.5 1.5 0 0 1 13.5 4.6v8A1.5 1.5 0 0 1 12 14H5"
-                      fill="none" stroke="currentColor" stroke-width="1.3"
-                      stroke-linecap="round"/>
+                <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/>
+                <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>
+                <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>
             </>
         }.into_view(),
 
+        // scroll-text
         IconKind::DevCard => view! {
             <>
-                <rect x="2" y="2" width="12" height="12" rx="1.5"
-                      fill="none" stroke="currentColor" stroke-width="1.3"/>
-                <path d="M8 4.8v6.4M4.8 8h6.4" stroke="currentColor"
-                      stroke-width="1.3" stroke-linecap="round"/>
+                <path d="M15 12h-5"/>
+                <path d="M15 8h-5"/>
+                <path d="M19 17V5a2 2 0 0 0-2-2H4"/>
+                <path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>
             </>
         }.into_view(),
 
+        // swords
         IconKind::Knight => view! {
             <>
-                <path d="M11.8 2.2 6.4 7.6M4 12l2.6-2.6M2.6 13.4 5.2 10.8"
-                      stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                <path d="M10.4 2.2h3.4v3.4L8.4 11 5 7.6z" fill="none"
-                      stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-                <path d="M2 14l2-2" stroke="currentColor" stroke-width="1.6"
-                      stroke-linecap="round"/>
+                <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/>
+                <line x1="13" x2="19" y1="19" y2="13"/>
+                <line x1="16" x2="20" y1="16" y2="20"/>
+                <line x1="19" x2="21" y1="21" y2="19"/>
+                <polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5"/>
+                <line x1="5" x2="9" y1="14" y2="18"/>
+                <line x1="7" x2="4" y1="17" y2="20"/>
+                <line x1="3" x2="5" y1="19" y2="21"/>
             </>
         }.into_view(),
 
+        // route
         IconKind::Road => view! {
             <>
-                <path d="M1.5 12.5 6 3.5M14.5 12.5 10 3.5" stroke="currentColor"
-                      stroke-width="1.3" stroke-linecap="round"/>
-                <path d="M8 4v1.6M8 7.2v1.6M8 10.4V12" stroke="currentColor"
-                      stroke-width="1.3" stroke-linecap="round"/>
+                <circle cx="6" cy="19" r="3"/>
+                <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/>
+                <circle cx="18" cy="5" r="3"/>
             </>
         }.into_view(),
 
+        // house
+        IconKind::Settlement => view! {
+            <>
+                <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>
+                <path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            </>
+        }.into_view(),
+
+        // building-2
+        IconKind::City => view! {
+            <>
+                <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/>
+                <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/>
+                <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/>
+                <path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/>
+            </>
+        }.into_view(),
+
+        // trophy
         IconKind::Trophy => view! {
             <>
-                <path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z" fill="none"
-                      stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-                <path d="M4.5 3H2.6v1.2A2.4 2.4 0 0 0 5 6.6M11.5 3h1.9v1.2a2.4 2.4 0 0 1-2.4 2.4"
-                      fill="none" stroke="currentColor" stroke-width="1.2"/>
-                <path d="M8 9.2V11M5.6 14h4.8M6.6 11h2.8l.6 3H6z"
-                      fill="none" stroke="currentColor" stroke-width="1.3"
-                      stroke-linejoin="round" stroke-linecap="round"/>
+                <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/>
+                <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>
+                <path d="M4 22h16"/>
+                <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>
+                <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>
+                <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
             </>
         }.into_view(),
 
+        // venetian-mask
         IconKind::Robber => view! {
             <>
-                <circle cx="8" cy="5" r="2.6" fill="currentColor"/>
-                <path d="M2.6 14c0-3 2.4-5 5.4-5s5.4 2 5.4 5z" fill="currentColor"/>
-                <path d="M4.2 5.6h7.6" stroke="#0b1120" stroke-width="1.6"
-                      stroke-linecap="round"/>
+                <path d="M18 11c-1.5 0-2.5.5-3 2"/>
+                <path d="M4 6a2 2 0 0 0-2 2v4a5 5 0 0 0 5 5 8 8 0 0 1 5 2 8 8 0 0 1 5-2 5 5 0 0 0 5-5V8a2 2 0 0 0-2-2h-3a8 8 0 0 0-5 2 8 8 0 0 0-5-2z"/>
+                <path d="M6 11c1.5 0 2.5.5 3 2"/>
             </>
         }.into_view(),
 
+        // triangle-alert
         IconKind::Warning => view! {
             <>
-                <path d="M8 1.8 15 14H1z" fill="none" stroke="currentColor"
-                      stroke-width="1.3" stroke-linejoin="round"/>
-                <path d="M8 6v3.4" stroke="currentColor" stroke-width="1.4"
-                      stroke-linecap="round"/>
-                <circle cx="8" cy="11.6" r="0.85" fill="currentColor"/>
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>
+                <path d="M12 9v4"/>
+                <path d="M12 17h.01"/>
             </>
         }.into_view(),
 
+        // refresh-cw
         IconKind::Refresh => view! {
             <>
-                <path d="M13.5 8a5.5 5.5 0 1 1-1.7-4" fill="none"
-                      stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                <path d="M13.6 1.4v3.2h-3.2" fill="none" stroke="currentColor"
-                      stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                <path d="M21 3v5h-5"/>
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                <path d="M8 16H3v5"/>
             </>
         }.into_view(),
 
+        // wheat
         IconKind::Wheat => view! {
             <>
-                <path d="M8 14V5.5" stroke="currentColor" stroke-width="1.3"
-                      stroke-linecap="round"/>
-                <path d="M8 5.2c0-1.6.8-2.8 1.9-3.4.5 1.5.2 3-1.9 3.4z" fill="currentColor"/>
-                <path d="M8 5.2c0-1.6-.8-2.8-1.9-3.4-.5 1.5-.2 3 1.9 3.4z" fill="currentColor"/>
-                <path d="M8 9c0-1.5.8-2.6 1.9-3.2.5 1.4.2 2.8-1.9 3.2z" fill="currentColor"/>
-                <path d="M8 9c0-1.5-.8-2.6-1.9-3.2-.5 1.4-.2 2.8 1.9 3.2z" fill="currentColor"/>
+                <path d="M2 22 16 8"/>
+                <path d="M3.47 12.53 5 11l1.53 1.53a3.5 3.5 0 0 1 0 4.94L5 19l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z"/>
+                <path d="M7.47 8.53 9 7l1.53 1.53a3.5 3.5 0 0 1 0 4.94L9 15l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z"/>
+                <path d="M11.47 4.53 13 3l1.53 1.53a3.5 3.5 0 0 1 0 4.94L13 11l-1.53-1.53a3.5 3.5 0 0 1 0-4.94Z"/>
+                <path d="M20 2h2v2a4 4 0 0 1-4 4h-2V6a4 4 0 0 1 4-4Z"/>
             </>
         }.into_view(),
-
     };
 
     view! {
         <svg
-            class=format!("inline-block align-[-0.125em] w-[1em] h-[1em] shrink-0 {class}")
-            viewBox=BOX
+            class=format!("inline-block align-[-0.15em] shrink-0 {size} {class}")
+            viewBox="0 0 24 24"
             fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
             aria-hidden="true"
             focusable="false"
         >
@@ -126,24 +171,10 @@ pub fn Icon(
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IconKind {
-    Resource,
-    DevCard,
-    Knight,
-    Road,
-    Trophy,
-    Robber,
-    Warning,
-    Refresh,
-    Wheat,
-}
-
-/// A die face, 1-6, drawn as pips. Used instead of the Unicode die characters,
-/// which are missing from most default font stacks.
+/// A die face, 1-6, drawn as pips. The Unicode die characters are missing from
+/// most default font stacks, so they get the same treatment as the emoji did.
 #[component]
 pub fn DieFace(value: u8, #[prop(default = "")] class: &'static str) -> impl IntoView {
-    // Pip positions on a 3x3 grid, per face.
     let pips: &[(f32, f32)] = match value {
         1 => &[(8.0, 8.0)],
         2 => &[(5.0, 5.0), (11.0, 11.0)],
@@ -156,7 +187,7 @@ pub fn DieFace(value: u8, #[prop(default = "")] class: &'static str) -> impl Int
     view! {
         <svg
             class=format!("inline-block align-[-0.2em] w-[1.35em] h-[1.35em] shrink-0 {class}")
-            viewBox=BOX
+            viewBox="0 0 16 16"
             aria-label=format!("die showing {value}")
         >
             <rect x="1" y="1" width="14" height="14" rx="3"

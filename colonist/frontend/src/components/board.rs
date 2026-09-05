@@ -190,10 +190,6 @@ fn calculate_all_edges(hexes: &[HexInfo]) -> Vec<((i32, i32), (i32, i32), (i32, 
 pub fn Board() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let state_roll = state.clone();
-    let state_build_settlement = state.clone();
-    let state_build_city = state.clone();
-    let state_build_road = state.clone();
 
     // Check if it's my turn
     let is_my_turn = move || {
@@ -204,8 +200,21 @@ pub fn Board() -> impl IntoView {
         }
     };
 
-    // Check if dice has been rolled this turn
-    let has_rolled = move || state.last_dice_roll.get().is_some();
+
+    // View transform on top of the fit-to-viewport one. Kept here rather than
+    // in GameState because nothing outside the board cares about it.
+    let (zoom, set_zoom) = create_signal(1.0f64);
+    let (pan, set_pan) = create_signal((0.0f64, 0.0f64));
+    let (dragging, set_dragging) = create_signal(Option::<(f64, f64)>::None);
+
+    const MIN_ZOOM: f64 = 0.6;
+    const MAX_ZOOM: f64 = 3.0;
+    let clamp_zoom = |z: f64| z.clamp(MIN_ZOOM, MAX_ZOOM);
+
+    let reset_view = move || {
+        set_zoom.set(1.0);
+        set_pan.set((0.0, 0.0));
+    };
 
     view! {
         <div class="relative w-full h-full flex flex-col min-h-0 min-w-0 gap-2">
@@ -213,22 +222,42 @@ pub fn Board() -> impl IntoView {
             // bar below is the only fixed-height part.
             <svg
                 viewBox="0 0 1000 800"
-                class="w-full flex-1 min-h-0 drop-shadow-2xl relative z-0"
+                class=move || format!(
+                    "w-full flex-1 min-h-0 drop-shadow-2xl relative z-0 {}",
+                    if dragging.get().is_some() { "cursor-grabbing" } else { "cursor-grab" }
+                )
                 preserveAspectRatio="xMidYMid meet"
+                on:wheel=move |ev| {
+                    ev.prevent_default();
+                    let factor = if ev.delta_y() < 0.0 { 1.12 } else { 1.0 / 1.12 };
+                    set_zoom.update(|z| *z = clamp_zoom(*z * factor));
+                }
+                on:pointerdown=move |ev| set_dragging.set(Some((ev.client_x() as f64, ev.client_y() as f64)))
+                on:pointermove=move |ev| {
+                    let Some((lx, ly)) = dragging.get() else { return };
+                    let (x, y) = (ev.client_x() as f64, ev.client_y() as f64);
+                    // Undo the zoom so a drag moves the board with the cursor
+                    // rather than racing ahead of it when zoomed in.
+                    let z = zoom.get().max(0.01);
+                    set_pan.update(|(px, py)| {
+                        *px += (x - lx) / z;
+                        *py += (y - ly) / z;
+                    });
+                    set_dragging.set(Some((x, y)));
+                }
+                on:pointerup=move |_| set_dragging.set(None)
+                on:pointerleave=move |_| set_dragging.set(None)
             >
-                // A few slack rings for a suggestion of water, kept faint so
-                // they never compete with the tiles. The sea itself is painted
-                // on the container: the svg is letterboxed inside it, so an
-                // svg-sized rect would leave dark bands down either side.
-                <g class="pointer-events-none" opacity="0.16">
-                    <circle cx="500" cy="380" r="250" fill="none" stroke="#7dd3fc" stroke-width="1.5"/>
-                    <circle cx="500" cy="380" r="305" fill="none" stroke="#7dd3fc" stroke-width="1"/>
-                    <circle cx="500" cy="380" r="358" fill="none" stroke="#7dd3fc" stroke-width="0.75"/>
-                </g>
+
                 // Center the board horizontally, move up vertically
                 // The board is drawn at a fixed hex size and then scaled as a
                 // whole, so the 30-hex extension board fits the same viewport
                 // as the 19-hex one without touching every coordinate.
+                <g transform=move || {
+                    let (px, py) = pan.get();
+                    format!("translate(500, 400) scale({:.4}) translate({:.2}, {:.2}) translate(-500, -400)",
+                            zoom.get(), px, py)
+                }>
                 <g transform=move || {
                     let hexes = state.hexes.get();
                     if hexes.is_empty() {
@@ -260,6 +289,50 @@ pub fn Board() -> impl IntoView {
                         -(min_y + max_y) / 2.0,
                     )
                 }>
+                    // The island itself. Drawn as one layer of oversized
+                    // hexes before any tile, so the gaps between tiles read as
+                    // ground rather than sea showing through. It has to be its
+                    // own pass: done inside each tile, a later tile's ground
+                    // would paint over the previous tile's face.
+                    // Hex centres are 60*sqrt(3) apart but the tiles are only
+                    // drawn at radius 50, so they never touch. These fill the
+                    // grid cell and then some: at radius 62 neighbouring
+                    // ground hexes overlap, so the island is one continuous
+                    // mass with no sea showing through the joins.
+                    <g class="pointer-events-none">
+                        <For
+                            each=move || state.hexes.get()
+                            key=|hex| (hex.q, hex.r)
+                            children=move |hex: HexInfo| {
+                                let (px, py) = axial_to_pixel(hex.q, hex.r, 60.0);
+                                view! {
+                                    <polygon
+                                        points="0,-62 53.7,-31 53.7,31 0,62 -53.7,31 -53.7,-31"
+                                        transform=format!("translate({}, {})", px, py)
+                                        fill="#5f5433"
+                                    />
+                                }
+                            }
+                        />
+                        // A lighter wash inside it, so the ground has some
+                        // depth and the tile joins read as furrows rather than
+                        // as a flat brown mat.
+                        <For
+                            each=move || state.hexes.get()
+                            key=|hex| (hex.q, hex.r)
+                            children=move |hex: HexInfo| {
+                                let (px, py) = axial_to_pixel(hex.q, hex.r, 60.0);
+                                view! {
+                                    <polygon
+                                        points="0,-59 51,-29.5 51,29.5 0,59 -51,29.5 -51,-29.5"
+                                        transform=format!("translate({}, {})", px, py)
+                                        fill="#7a6d44"
+                                    />
+                                }
+                            }
+                        />
+                    </g>
+
                     // Render all hexes
                     <For
                         each=move || state.hexes.get()
@@ -600,12 +673,45 @@ pub fn Board() -> impl IntoView {
                         }
                     />
                 </g>
+                </g>
             </svg>
 
-            // Control bar: one row, pinned under the board, so the dice and
-            // the build buttons sit with the thing they act on.
-            <div class="shrink-0 w-full flex justify-center pb-1">
-                <div class="flex flex-wrap items-center justify-center gap-3 bg-gray-900/80 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10 shadow-2xl">
+            // The dice sit in the bottom-right of the board, always showing
+            // the last roll so the table can see it, and doubling as the roll
+            // button on your own turn.
+            <div class="absolute bottom-3 right-3 z-10">
+                <DiceTray />
+            </div>
+
+            // Zoom controls, floated over the top-right of the water.
+            <div class="absolute top-2 right-2 z-10 flex flex-col gap-1">
+                <button
+                    class="w-7 h-7 rounded-md bg-slate-900/80 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 font-bold leading-none transition-colors"
+                    title="Zoom in"
+                    on:click=move |_| set_zoom.update(|z| *z = clamp_zoom(*z * 1.25))
+                >"+"</button>
+                <button
+                    class="w-7 h-7 rounded-md bg-slate-900/80 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 font-bold leading-none transition-colors"
+                    title="Zoom out"
+                    on:click=move |_| set_zoom.update(|z| *z = clamp_zoom(*z / 1.25))
+                >"\u{2212}"</button>
+                <button
+                    class="w-7 h-7 rounded-md bg-slate-900/80 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 text-[9px] font-bold transition-colors"
+                    title="Reset the view"
+                    on:click=move |_| reset_view()
+                >"FIT"</button>
+            </div>
+
+            // Status banner, floated over the foot of the board. Only rendered
+            // when it has something to say - the dice and build buttons moved
+            // out from under here, and an always-on container left an empty
+            // pill sitting on the water.
+            <Show when=move || {
+                let phase = state.game_phase.get();
+                phase.is_initial_phase() || phase.special_builder().is_some()
+            }>
+            <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex justify-center">
+                <div class="flex flex-wrap items-center justify-center gap-3 bg-gray-900/85 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10 shadow-2xl">
                 // Show initial placement instructions
                 {move || {
                     let phase = move || state.game_phase.get();
@@ -657,147 +763,104 @@ pub fn Board() -> impl IntoView {
                     </div>
                 </Show>
 
-                // Dice roll section (only in regular play)
-                <Show when=move || state.game_phase.get() == shared::GamePhase::RegularPlay>
-                    <div class="flex gap-3 items-center">
-                        <Show when=move || is_my_turn() && !has_rolled()>
-                            <button
-                                class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold transition-all"
-                                on:click=move |_| state_roll.send(ClientRequest::RollDice)
-                            >
-                                "ROLL DICE"
-                            </button>
-                        </Show>
 
-                        <Show when=move || has_rolled()>
-                            <div class="flex gap-2 items-center text-white font-bold">
-                                {move || state.last_dice_roll.get().map(|(d1, d2)| view! {
-                                    <DieFace value=d1 />
-                                    <DieFace value=d2 />
-                                    <span class="ml-1 text-lg tabular-nums">{d1 + d2}</span>
-                                })}
-                            </div>
-                        </Show>
-                    </div>
-                </Show>
-
-                // Build buttons during initial placement (show if it's your turn)
-                <Show when=move || {
-                    let phase = move || state.game_phase.get();
-                    is_my_turn() && phase().is_initial_phase()
-                }>
-                    <div class="flex gap-2">
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Settlement {
-                                    format!("{} bg-orange-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_settlement.build_mode.get();
-                                if current == BuildMode::Settlement {
-                                    state_build_settlement.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_settlement.build_mode.set(BuildMode::Settlement);
-                                }
-                            }
-                        >
-                            "Settlement"
-                        </button>
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Road {
-                                    format!("{} bg-green-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_road.build_mode.get();
-                                if current == BuildMode::Road {
-                                    state_build_road.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_road.build_mode.set(BuildMode::Road);
-                                }
-                            }
-                        >
-                            "Road"
-                        </button>
-                    </div>
-                </Show>
-
-                // Build buttons during regular play (only show after rolling)
-                <Show when=move || state.can_build_now()>
-                    <div class="flex gap-2">
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Settlement {
-                                    format!("{} bg-orange-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_settlement.build_mode.get();
-                                if current == BuildMode::Settlement {
-                                    state_build_settlement.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_settlement.build_mode.set(BuildMode::Settlement);
-                                }
-                            }
-                        >
-                            "Settlement"
-                        </button>
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::City {
-                                    format!("{} bg-purple-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_city.build_mode.get();
-                                if current == BuildMode::City {
-                                    state_build_city.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_city.build_mode.set(BuildMode::City);
-                                }
-                            }
-                        >
-                            "City"
-                        </button>
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Road {
-                                    format!("{} bg-green-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_road.build_mode.get();
-                                if current == BuildMode::Road {
-                                    state_build_road.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_road.build_mode.set(BuildMode::Road);
-                                }
-                            }
-                        >
-                            "Road"
-                        </button>
-                    </div>
-                </Show>
                 </div>
             </div>
+            </Show>
         </div>
+    }
+}
+
+/// The dice. Always on screen, showing whatever was last rolled - by anybody -
+/// so the table never has to go hunting in the log for it. On your own turn,
+/// before you have rolled, it is also the roll button, and it tumbles for a
+/// moment rather than snapping straight to the answer.
+#[component]
+fn DiceTray() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let (tumbling, set_tumbling) = create_signal(false);
+    let (shown, set_shown) = create_signal((1u8, 1u8));
+
+    let is_my_turn = move || state.player_id.get() == Some(state.current_turn_player.get());
+    let can_roll = move || {
+        is_my_turn()
+            && state.last_dice_roll.get().is_none()
+            && state.game_phase.get() == shared::GamePhase::RegularPlay
+            && !tumbling.get()
+    };
+
+    // While tumbling, show nonsense; the effect below settles on the real
+    // numbers the moment the server's answer lands.
+    create_effect(move |prev: Option<Option<leptos_dom::helpers::IntervalHandle>>| {
+        if let Some(Some(h)) = prev {
+            h.clear();
+        }
+        if !tumbling.get() {
+            return None;
+        }
+        set_interval_with_handle(
+            move || {
+                let t = js_sys::Date::now() as u64;
+                set_shown.set(((t % 6) as u8 + 1, ((t / 7) % 6) as u8 + 1));
+            },
+            std::time::Duration::from_millis(70),
+        )
+        .ok()
+    });
+
+    create_effect(move |_| {
+        if let Some((a, b)) = state.last_dice_roll.get() {
+            set_tumbling.set(false);
+            set_shown.set((a, b));
+        }
+    });
+
+    let roll = move |_| {
+        if !can_roll() {
+            return;
+        }
+        set_tumbling.set(true);
+        state.send(ClientRequest::RollDice);
+        // A floor on the animation, so a fast reply still reads as a roll.
+        set_timeout(move || set_tumbling.set(false), std::time::Duration::from_millis(550));
+    };
+
+    view! {
+        <button
+            class=move || format!(
+                "flex items-center gap-2 px-3 py-2 rounded-xl border-2 backdrop-blur-md transition-all shadow-2xl {}",
+                if can_roll() {
+                    "bg-blue-600/90 border-blue-300 hover:bg-blue-500 cursor-pointer"
+                } else {
+                    "bg-slate-900/80 border-slate-700 cursor-default"
+                }
+            )
+            disabled=move || !can_roll()
+            title=move || if can_roll() { "Roll the dice" } else { "The last roll" }
+            on:click=roll
+        >
+            <div class=move || if tumbling.get() {
+                "flex gap-1.5 text-2xl animate-bounce"
+            } else {
+                "flex gap-1.5 text-2xl"
+            }>
+                {move || {
+                    let (a, b) = shown.get();
+                    view! { <DieFace value=a /> <DieFace value=b /> }
+                }}
+            </div>
+            <Show
+                when=can_roll
+                fallback=move || view! {
+                    <span class="text-lg font-black text-white tabular-nums w-6 text-center">
+                        {move || { let (a, b) = shown.get(); a + b }}
+                    </span>
+                }
+            >
+                <span class="text-xs font-bold uppercase tracking-wider text-white pr-1">"Roll"</span>
+            </Show>
+        </button>
     }
 }
 

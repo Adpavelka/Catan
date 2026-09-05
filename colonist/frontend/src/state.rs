@@ -6,7 +6,7 @@ use futures::{SinkExt, StreamExt};
 use futures::channel::mpsc::UnboundedSender;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildMode {
     None,
     Settlement,
