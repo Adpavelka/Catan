@@ -69,8 +69,11 @@ pub fn GamePage() -> impl IntoView {
                         </button>
                     </Show>
 
+                    // `pointer-events-auto` because a modal switches the rest
+                    // of the UI off, and a player who owes a discard must
+                    // still be able to walk away.
                     <button
-                    class="bg-red-900/40 hover:bg-red-700 text-red-200 px-4 py-2 rounded-lg font-bold transition-all border border-red-800/50 active:scale-95 text-xs"
+                    class="pointer-events-auto bg-red-900/40 hover:bg-red-700 text-red-200 px-4 py-2 rounded-lg font-bold transition-all border border-red-800/50 active:scale-95 text-xs"
                     on:click=move |_| {
                         if let Some(game_id) = state.game_id.get() {
                             state.send(ClientRequest::LeaveGame { game_id });
@@ -515,7 +518,7 @@ fn BuildButton(
         <div class="relative group">
             <button
                 class=move || format!(
-                    "w-[62px] h-[54px] flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 transition-all                      disabled:opacity-35 disabled:cursor-not-allowed {} {}",
+                    "w-[62px] h-[54px] flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 transition-all                      disabled:grayscale disabled:opacity-40 disabled:!border-slate-800 disabled:!text-slate-600 disabled:cursor-not-allowed {} {}",
                     if armed() { active_tint } else { "border-slate-700 text-slate-300" },
                     tint,
                 )
@@ -566,78 +569,425 @@ fn BuildButton(
     }
 }
 
-/// Bank and player trading in one place, as two tabs. They were two separate
-/// sections of the sidebar, which meant the bank half vanished whenever it was
-/// not your turn and the player half sat there offering a button that only
-/// ever returned an error.
+/// The trade panel: build an offer, look at it, send it.
+///
+/// One builder for both kinds of trade, because they are the same gesture -
+/// put resources on each side. The old panel had them as two unrelated tabs
+/// with different shapes, one of which vanished when it was not your turn.
 #[component]
 fn TradePanel() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
-    let (tab, set_tab) = create_signal(TradeTab::Bank);
     let (open, set_open) = create_signal(true);
 
-    // Trading at all needs your turn and ordinary play; a special build is
-    // for building only.
     let can_trade = move || {
         state.can_build_now() && state.game_phase.get() == GamePhase::RegularPlay
     };
 
-    let tab_class = move |mine: TradeTab| {
-        if tab.get() == mine {
-            "flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md bg-slate-700 text-white"
-        } else {
-            "flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md text-slate-400 hover:text-white hover:bg-slate-800"
-        }
-    };
-
     view! {
-        <div class="p-3 space-y-2">
+        <div class="p-2.5 space-y-2">
             <button
                 class="w-full flex items-center justify-between text-slate-400 hover:text-white transition-colors"
                 on:click=move |_| set_open.update(|o| *o = !*o)
             >
                 <span class="font-bold text-[10px] uppercase tracking-[0.2em]">"Trade"</span>
-                <span class="text-xs">{move || if open.get() { "▾" } else { "▸" }}</span>
+                <span class="text-xs">{move || if open.get() { "\u{25be}" } else { "\u{25b8}" }}</span>
             </button>
 
             <Show when=move || open.get()>
-                <div class="flex gap-1 bg-slate-950/60 p-1 rounded-lg">
-                    <button class=move || tab_class(TradeTab::Bank)
-                            on:click=move |_| set_tab.set(TradeTab::Bank)>"Bank"</button>
-                    <button class=move || tab_class(TradeTab::Players)
-                            on:click=move |_| set_tab.set(TradeTab::Players)>"Players"</button>
-                </div>
+                <Show
+                    when=can_trade
+                    fallback=move || view! {
+                        <div class="text-[10px] text-slate-500 italic py-2 text-center">
+                            "You can trade on your turn, after rolling."
+                        </div>
+                    }
+                >
+                    <TradeBuilder />
+                </Show>
+                <IncomingTrades />
+            </Show>
+        </div>
+    }
+}
 
-                <div class="max-h-[38vh] overflow-y-auto custom-scrollbar pr-1">
-                    <Show
-                        when=can_trade
-                        fallback=move || view! {
-                            <div class="text-[10px] text-slate-500 italic py-3 text-center">
-                                "You can trade on your turn, after rolling."
-                            </div>
-                        }
-                    >
-                        <Show
-                            when=move || tab.get() == TradeTab::Bank
-                            fallback=move || view! { <PlayerTradeUI /> }
-                        >
-                            <BankTradeUI />
-                        </Show>
-                    </Show>
+/// A pile of resources on one side of a trade being assembled.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Basket {
+    brick: u8,
+    lumber: u8,
+    wool: u8,
+    grain: u8,
+    ore: u8,
+}
 
-                    // Offers aimed at you arrive whoever's turn it is, so they
-                    // are shown regardless of whether you may start one.
-                    <IncomingTrades />
+impl Basket {
+    fn total(&self) -> u8 {
+        self.brick + self.lumber + self.wool + self.grain + self.ore
+    }
+    fn get(&self, k: Res) -> u8 {
+        match k {
+            Res::Brick => self.brick,
+            Res::Wood => self.lumber,
+            Res::Sheep => self.wool,
+            Res::Wheat => self.grain,
+            Res::Ore => self.ore,
+        }
+    }
+    fn set(&mut self, k: Res, v: u8) {
+        match k {
+            Res::Brick => self.brick = v,
+            Res::Wood => self.lumber = v,
+            Res::Sheep => self.wool = v,
+            Res::Wheat => self.grain = v,
+            Res::Ore => self.ore = v,
+        }
+    }
+    fn to_shared(self) -> shared::Resources {
+        shared::Resources {
+            brick: self.brick,
+            lumber: self.lumber,
+            wool: self.wool,
+            grain: self.grain,
+            ore: self.ore,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Res {
+    Brick,
+    Wood,
+    Sheep,
+    Wheat,
+    Ore,
+}
+
+impl Res {
+    const ALL: [Res; 5] = [Res::Brick, Res::Wood, Res::Sheep, Res::Wheat, Res::Ore];
+
+    fn label(self) -> &'static str {
+        match self {
+            Res::Brick => "Brick",
+            Res::Wood => "Wood",
+            Res::Sheep => "Sheep",
+            Res::Wheat => "Wheat",
+            Res::Ore => "Ore",
+        }
+    }
+    fn tint(self) -> &'static str {
+        match self {
+            Res::Brick => "bg-orange-400 border-orange-600",
+            Res::Wood => "bg-emerald-500 border-emerald-700",
+            Res::Sheep => "bg-lime-400 border-lime-600",
+            Res::Wheat => "bg-amber-400 border-amber-600",
+            Res::Ore => "bg-slate-400 border-slate-600",
+        }
+    }
+    fn shared(self) -> shared::ResourceType {
+        match self {
+            Res::Brick => shared::ResourceType::Brick,
+            Res::Wood => shared::ResourceType::Wood,
+            Res::Sheep => shared::ResourceType::Sheep,
+            Res::Wheat => shared::ResourceType::Wheat,
+            Res::Ore => shared::ResourceType::Ore,
+        }
+    }
+    fn in_hand(self, r: &shared::Resources) -> u8 {
+        match self {
+            Res::Brick => r.brick,
+            Res::Wood => r.lumber,
+            Res::Sheep => r.wool,
+            Res::Wheat => r.grain,
+            Res::Ore => r.ore,
+        }
+    }
+}
+
+/// One resource card. Click adds it to its side, right-click takes it back.
+/// The count rides on a badge so the card stays a recognisable colour block
+/// rather than turning into a line of text.
+#[component]
+fn TradeCard(
+    kind: Res,
+    count: Signal<u8>,
+    enabled: Signal<bool>,
+    on_add: Callback<Res>,
+    on_remove: Callback<Res>,
+) -> impl IntoView {
+    // Hoisted: `>` inside the view macro parses as a closing tag.
+    let has_any = move || count.get() > 0;
+
+    view! {
+        <button
+            class=move || format!(
+                "relative flex items-end justify-center w-11 h-14 rounded-md border-b-4 shadow transition-all {} {}",
+                kind.tint(),
+                if enabled.get() { "hover:-translate-y-0.5" } else { "grayscale opacity-40 cursor-not-allowed" },
+            )
+            disabled=move || !enabled.get()
+            title=move || format!("{} - click to add, right-click to remove", kind.label())
+            on:click=move |_| on_add.call(kind)
+            on:contextmenu=move |ev| {
+                ev.prevent_default();
+                on_remove.call(kind);
+            }
+        >
+            <span class="text-[7px] font-bold uppercase tracking-wide text-black/70 pb-1">
+                {kind.label()}
+            </span>
+            <Show when=has_any>
+                <span class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-slate-950 border border-slate-600 text-[10px] font-black text-white flex items-center justify-center tabular-nums">
+                    {move || count.get()}
+                </span>
+            </Show>
+        </button>
+    }
+}
+
+/// One half of the offer under construction, drawn as the cards themselves.
+#[component]
+fn TradeSide(
+    label: &'static str,
+    accent: &'static str,
+    basket: Signal<Basket>,
+) -> impl IntoView {
+    let has_any = move || basket.get().total() > 0;
+
+    view! {
+        <div class="flex items-center gap-2 min-h-[26px]">
+            <span class=format!("text-[9px] font-bold uppercase tracking-wider w-14 shrink-0 {accent}")>
+                {label}
+            </span>
+            <Show
+                when=has_any
+                fallback=move || view! {
+                    <span class="text-[10px] text-slate-600 italic">"nothing yet"</span>
+                }
+            >
+                <div class="flex flex-wrap gap-0.5">
+                    {move || Res::ALL.into_iter().flat_map(|k| {
+                        (0..basket.get().get(k)).map(move |_| view! {
+                            <span
+                                class=format!("w-4 h-6 rounded-sm border-b-2 {}", k.tint())
+                                title=k.label()
+                            ></span>
+                        }).collect::<Vec<_>>()
+                    }).collect_view()}
                 </div>
             </Show>
         </div>
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TradeTab {
-    Bank,
-    Players,
+/// Assemble an offer: what you give, what you want, then send it. If the two
+/// sides happen to be a legal bank ratio it goes to the bank instead of the
+/// table, so there is nothing extra to learn.
+#[component]
+fn TradeBuilder() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let give = create_rw_signal(Basket::default());
+    let want = create_rw_signal(Basket::default());
+
+    let clear = move || {
+        give.set(Basket::default());
+        want.set(Basket::default());
+    };
+
+    // You cannot offer what you do not hold.
+    let spare = move |k: Res| {
+        k.in_hand(&state.my_resources.get()).saturating_sub(give.get().get(k))
+    };
+
+    let add_give = Callback::new(move |k: Res| {
+        if spare(k) > 0 {
+            give.update(|b| b.set(k, b.get(k) + 1));
+        }
+    });
+    let del_give = Callback::new(move |k: Res| {
+        give.update(|b| b.set(k, b.get(k).saturating_sub(1)));
+    });
+    let add_want = Callback::new(move |k: Res| want.update(|b| b.set(k, b.get(k) + 1)));
+    let del_want = Callback::new(move |k: Res| {
+        want.update(|b| b.set(k, b.get(k).saturating_sub(1)));
+    });
+
+    // A bank trade is just the special case of n of one kind for exactly one
+    // of another, at whatever ratio your harbours allow.
+    let bank_deal = move || -> Option<(Res, Res)> {
+        let (g, w) = (give.get(), want.get());
+        if w.total() != 1 {
+            return None;
+        }
+        let taken = Res::ALL.into_iter().find(|k| w.get(*k) == 1)?;
+        let given: Vec<Res> = Res::ALL.into_iter().filter(|k| g.get(*k) > 0).collect();
+        if given.len() != 1 {
+            return None;
+        }
+        let only = given[0];
+        let ratio = state.get_best_ratio(only.shared());
+        (g.get(only) == ratio && only != taken).then_some((only, taken))
+    };
+
+    let ready = move || give.get().total() > 0 && want.get().total() > 0;
+    let nothing_picked = move || give.get().total() == 0 && want.get().total() == 0;
+    let not_ready = move || !ready();
+    let any_accepters = move || !state.my_trade_accepters.get().is_empty();
+    let has_offer = move || state.my_pending_trade.get().is_some();
+
+    view! {
+        <div class="space-y-2">
+            <div class="rounded-lg bg-slate-950/60 border border-slate-800 p-2 space-y-1.5">
+                <TradeSide label="You give" accent="text-red-300" basket=give.into() />
+                <div class="flex items-center gap-2">
+                    <div class="flex-1 h-px bg-slate-800"></div>
+                    <span class="text-slate-500 text-sm font-black leading-none">"\u{21c5}"</span>
+                    <div class="flex-1 h-px bg-slate-800"></div>
+                </div>
+                <TradeSide label="You get" accent="text-emerald-300" basket=want.into() />
+            </div>
+
+            <div class="space-y-1">
+                <div class="text-[9px] font-bold uppercase tracking-wider text-emerald-400">"Ask for"</div>
+                <div class="flex gap-1">
+                    {Res::ALL.into_iter().map(|k| view! {
+                        <TradeCard
+                            kind=k
+                            count=Signal::derive(move || want.get().get(k))
+                            enabled=Signal::derive(|| true)
+                            on_add=add_want
+                            on_remove=del_want
+                        />
+                    }).collect_view()}
+                </div>
+            </div>
+
+            <div class="space-y-1">
+                <div class="text-[9px] font-bold uppercase tracking-wider text-red-400">
+                    "Offer from your hand"
+                </div>
+                <div class="flex gap-1">
+                    {Res::ALL.into_iter().map(|k| view! {
+                        <div class="flex flex-col items-center">
+                            <TradeCard
+                                kind=k
+                                count=Signal::derive(move || give.get().get(k))
+                                enabled=Signal::derive(move || spare(k) > 0)
+                                on_add=add_give
+                                on_remove=del_give
+                            />
+                            // What is left in hand, so you can see the cost.
+                            <span class="text-[9px] text-slate-500 tabular-nums mt-0.5">
+                                {move || spare(k)}
+                            </span>
+                        </div>
+                    }).collect_view()}
+                </div>
+            </div>
+
+            <div class="flex gap-1.5 pt-0.5">
+                <button
+                    class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
+                    disabled=nothing_picked
+                    on:click=move |_| clear()
+                >
+                    "Clear"
+                </button>
+
+                <Show
+                    when=has_offer
+                    fallback=move || view! {
+                        <button
+                            class=move || format!(
+                                "flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all {}",
+                                if bank_deal().is_some() {
+                                    "bg-sky-600 hover:bg-sky-500 text-white"
+                                } else if ready() {
+                                    "bg-emerald-600 hover:bg-emerald-500 text-white"
+                                } else {
+                                    "bg-slate-800 text-slate-600 cursor-not-allowed"
+                                }
+                            )
+                            disabled=not_ready
+                            on:click=move |_| {
+                                if let Some((g, w)) = bank_deal() {
+                                    state.send(ClientRequest::BankTrade {
+                                        give: g.shared(),
+                                        receive: w.shared(),
+                                    });
+                                } else {
+                                    state.send(ClientRequest::TradeOffer {
+                                        target_player_id: None,
+                                        offer: give.get_untracked().to_shared(),
+                                        request: want.get_untracked().to_shared(),
+                                    });
+                                }
+                                clear();
+                            }
+                        >
+                            {move || if bank_deal().is_some() {
+                                "Trade with bank"
+                            } else if ready() {
+                                "Offer to players"
+                            } else {
+                                "Pick both sides"
+                            }}
+                        </button>
+                    }
+                >
+                    <div class="flex-1 flex gap-1.5">
+                        <span class="flex-1 flex items-center justify-center text-[10px] font-bold text-amber-400">
+                            {move || {
+                                let n = state.my_trade_accepters.get().len();
+                                if n == 0 { "Offer sent...".to_string() } else { format!("{n} accepted") }
+                            }}
+                        </span>
+                        <button
+                            class="px-3 py-2 rounded-lg bg-red-800 hover:bg-red-700 text-white text-[10px] font-bold uppercase tracking-wider"
+                            on:click=move |_| {
+                                if let Some(id) = state.my_pending_trade.get_untracked() {
+                                    state.send(ClientRequest::CancelTrade { offer_id: id });
+                                }
+                            }
+                        >
+                            "Cancel"
+                        </button>
+                    </div>
+                </Show>
+            </div>
+
+            <Show when=any_accepters>
+                <div class="space-y-1 pt-1 border-t border-slate-800">
+                    <div class="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                        "Pick who to trade with"
+                    </div>
+                    <For
+                        each=move || state.my_trade_accepters.get()
+                        key=|id| *id
+                        children=move |accepter_id| {
+                            let name = state.player_name(accepter_id);
+                            view! {
+                                <button
+                                    class="w-full py-1.5 px-2 rounded-md bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold flex items-center justify-between"
+                                    on:click=move |_| {
+                                        if let Some(id) = state.my_pending_trade.get_untracked() {
+                                            state.send(ClientRequest::ConfirmTrade {
+                                                offer_id: id,
+                                                partner_id: accepter_id,
+                                            });
+                                        }
+                                    }
+                                >
+                                    <span>{name}</span>
+                                    <span class="opacity-70">"Trade \u{25b8}"</span>
+                                </button>
+                            }
+                        }
+                    />
+                </div>
+            </Show>
+        </div>
+    }
 }
 
 /// Development cards you hold, as a hand beside your resources.
@@ -1260,406 +1610,6 @@ fn RobPlayerModal() -> impl IntoView {
                     />
                 </div>
             </div>
-        </div>
-    }
-}
-
-#[component]
-fn BankTradeUI() -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-
-    // Track selected resources for trading
-    let (give_resource, set_give_resource) = create_signal::<Option<shared::ResourceType>>(None);
-    let (receive_resource, set_receive_resource) = create_signal::<Option<shared::ResourceType>>(None);
-
-    // Get ratio for a resource based on player's ports
-    let get_ratio = move |res: shared::ResourceType| -> u8 {
-        state.get_best_ratio(res)
-    };
-
-    let get_resource_count = move |res: shared::ResourceType| {
-        let r = state.my_resources.get();
-        match res {
-            shared::ResourceType::Brick => r.brick,
-            shared::ResourceType::Wood => r.lumber,
-            shared::ResourceType::Sheep => r.wool,
-            shared::ResourceType::Wheat => r.grain,
-            shared::ResourceType::Ore => r.ore,
-            _ => 0,
-        }
-    };
-    // Check if player can afford to trade a resource (using correct ratio)
-    let can_give = move |res: shared::ResourceType| -> bool {
-        let ratio = get_ratio(res);
-        let count = get_resource_count(res);
-        count >= ratio
-    };
-
-    // Check if trade is valid (give and receive selected, different resources, can afford)
-    let can_trade = move || {
-        if let (Some(give), Some(receive)) = (give_resource.get(), receive_resource.get()) {
-            give != receive && can_give(give)
-        } else {
-            false
-        }
-    };
-
-    let execute_trade = move |_| {
-        if let (Some(give), Some(receive)) = (give_resource.get(), receive_resource.get()) {
-            state.send(ClientRequest::BankTrade { give, receive });
-            // Reset selections after trade
-            set_give_resource.set(None);
-            set_receive_resource.set(None);
-        }
-    };
-
-    // Resource button with ratio display
-    let resource_btn = move |res: shared::ResourceType, name: &'static str, is_give: bool,
-                              selected: Option<shared::ResourceType>,
-                              set_resource: WriteSignal<Option<shared::ResourceType>>| {
-        let is_selected = selected == Some(res);
-
-        let base = "px-1 py-1 rounded text-[9px] font-bold transition-all border flex flex-col items-center";
-
-        view! {
-            <button
-                class=move || {
-                    let can_afford = can_give(res);
-                    if is_give && !can_afford {
-                        format!("{} bg-slate-800/30 text-slate-600 border-slate-700 cursor-not-allowed", base)
-                    } else if is_selected {
-                        format!("{} bg-orange-600 text-white border-orange-500", base)
-                    } else {
-                        format!("{} bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600", base)
-                    }
-                }
-                disabled=move || is_give && !can_give(res)
-                on:click=move |_| set_resource.set(Some(res))
-            >
-                <span>{name}</span>
-                {if is_give {
-                    view! { <span class=move || {
-                        let ratio = get_ratio(res);
-                        if ratio == 2 {
-                            "text-green-400"
-                        } else if ratio == 3 {
-                            "text-yellow-400"
-                        } else {
-                            "text-slate-500"
-                        }
-                    }>{move || format!("{}:1", get_ratio(res))}</span> }.into_view()
-                } else {
-                    view! { <span></span> }.into_view()
-                }}
-            </button>
-        }
-    };
-
-    // Calculate best overall ratio for display
-    let best_ratio = move || {
-        let mut best = 4u8;
-        for res in [shared::ResourceType::Brick, shared::ResourceType::Wood,
-                    shared::ResourceType::Sheep, shared::ResourceType::Wheat, shared::ResourceType::Ore] {
-            best = best.min(get_ratio(res));
-        }
-        best
-    };
-
-    view! {
-        <div class="space-y-2">
-            // Show port bonus indicator if player has any
-            <Show when=move || best_ratio() < 4>
-                <div class="text-[9px] text-green-400 bg-green-900/30 px-2 py-1 rounded border border-green-700/50">
-                    {move || {
-                        let ports = state.my_ports.get();
-                        let has_3to1 = ports.iter().any(|p| matches!(p, shared::PortType::ThreeToOne));
-                        let two_to_one: Vec<_> = ports.iter().filter_map(|p| {
-                            if let shared::PortType::TwoToOne(res) = p {
-                                Some(match res {
-                                    shared::ResourceType::Brick => "Brick",
-                                    shared::ResourceType::Wood => "Wood",
-                                    shared::ResourceType::Sheep => "Sheep",
-                                    shared::ResourceType::Wheat => "Wheat",
-                                    shared::ResourceType::Ore => "Ore",
-                                    _ => "?",
-                                })
-                            } else { None }
-                        }).collect();
-
-                        let mut parts = Vec::new();
-                        if has_3to1 { parts.push("3:1 any".to_string()); }
-                        for r in two_to_one { parts.push(format!("2:1 {}", r)); }
-                        format!("Ports: {}", parts.join(", "))
-                    }}
-                </div>
-            </Show>
-
-            // Give section
-            <div>
-                <div class="text-[10px] text-slate-500 mb-1">"Give:"</div>
-                <div class="flex flex-wrap gap-1">
-                    {move || resource_btn(shared::ResourceType::Brick, "Brick", true, give_resource.get(), set_give_resource)}
-                    {move || resource_btn(shared::ResourceType::Wood, "Wood", true, give_resource.get(), set_give_resource)}
-                    {move || resource_btn(shared::ResourceType::Sheep, "Sheep", true, give_resource.get(), set_give_resource)}
-                    {move || resource_btn(shared::ResourceType::Wheat, "Wheat", true, give_resource.get(), set_give_resource)}
-                    {move || resource_btn(shared::ResourceType::Ore, "Ore", true, give_resource.get(), set_give_resource)}
-                </div>
-            </div>
-
-            // Receive section
-            <div>
-                <div class="text-[10px] text-slate-500 mb-1">"Receive 1:"</div>
-                <div class="flex flex-wrap gap-1">
-                    {move || resource_btn(shared::ResourceType::Brick, "Brick", false, receive_resource.get(), set_receive_resource)}
-                    {move || resource_btn(shared::ResourceType::Wood, "Wood", false, receive_resource.get(), set_receive_resource)}
-                    {move || resource_btn(shared::ResourceType::Sheep, "Sheep", false, receive_resource.get(), set_receive_resource)}
-                    {move || resource_btn(shared::ResourceType::Wheat, "Wheat", false, receive_resource.get(), set_receive_resource)}
-                    {move || resource_btn(shared::ResourceType::Ore, "Ore", false, receive_resource.get(), set_receive_resource)}
-                </div>
-            </div>
-
-            // Trade button with dynamic ratio
-            <button
-                class="w-full py-2 bg-green-700 hover:bg-green-600 rounded text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                disabled=move || !can_trade()
-                on:click=execute_trade
-            >
-                {move || {
-                    if let Some(give) = give_resource.get() {
-                        format!("TRADE {} for 1", get_ratio(give))
-                    } else {
-                        "TRADE".to_string()
-                    }
-                }}
-            </button>
-        </div>
-    }
-}
-
-#[component]
-fn PlayerTradeUI() -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-
-    // Trade offer form state
-    let (show_form, set_show_form) = create_signal(false);
-    let (offer_brick, set_offer_brick) = create_signal(0u8);
-    let (offer_lumber, set_offer_lumber) = create_signal(0u8);
-    let (offer_wool, set_offer_wool) = create_signal(0u8);
-    let (offer_grain, set_offer_grain) = create_signal(0u8);
-    let (offer_ore, set_offer_ore) = create_signal(0u8);
-    let (request_brick, set_request_brick) = create_signal(0u8);
-    let (request_lumber, set_request_lumber) = create_signal(0u8);
-    let (request_wool, set_request_wool) = create_signal(0u8);
-    let (request_grain, set_request_grain) = create_signal(0u8);
-    let (request_ore, set_request_ore) = create_signal(0u8);
-
-    // Check if player can afford the offered resources
-    let can_afford_offer = move || {
-        let res = state.my_resources.get();
-        offer_brick.get() <= res.brick &&
-        offer_lumber.get() <= res.lumber &&
-        offer_wool.get() <= res.wool &&
-        offer_grain.get() <= res.grain &&
-        offer_ore.get() <= res.ore
-    };
-
-    // Check if trade offer is valid (at least offering or requesting something)
-    let is_valid_offer = move || {
-        let offering_something = offer_brick.get() > 0 || offer_lumber.get() > 0 ||
-            offer_wool.get() > 0 || offer_grain.get() > 0 || offer_ore.get() > 0;
-        let requesting_something = request_brick.get() > 0 || request_lumber.get() > 0 ||
-            request_wool.get() > 0 || request_grain.get() > 0 || request_ore.get() > 0;
-        offering_something && requesting_something && can_afford_offer()
-    };
-
-    let reset_form = move || {
-        set_offer_brick.set(0);
-        set_offer_lumber.set(0);
-        set_offer_wool.set(0);
-        set_offer_grain.set(0);
-        set_offer_ore.set(0);
-        set_request_brick.set(0);
-        set_request_lumber.set(0);
-        set_request_wool.set(0);
-        set_request_grain.set(0);
-        set_request_ore.set(0);
-    };
-
-    let submit_trade = move |_| {
-        let offer = shared::Resources {
-            brick: offer_brick.get(),
-            lumber: offer_lumber.get(),
-            wool: offer_wool.get(),
-            grain: offer_grain.get(),
-            ore: offer_ore.get(),
-        };
-        let request = shared::Resources {
-            brick: request_brick.get(),
-            lumber: request_lumber.get(),
-            wool: request_wool.get(),
-            grain: request_grain.get(),
-            ore: request_ore.get(),
-        };
-        state.send(ClientRequest::TradeOffer {
-            target_player_id: None, // Open to all players
-            offer,
-            request,
-        });
-        reset_form();
-        set_show_form.set(false);
-    };
-
-    let cancel_my_trade = move |_| {
-        if let Some(offer_id) = state.my_pending_trade.get() {
-            state.send(ClientRequest::CancelTrade { offer_id });
-        }
-    };
-
-    // Resource counter component
-    let resource_counter = move |name: &'static str, color: &'static str,
-                                  value: ReadSignal<u8>, setter: WriteSignal<u8>,
-                                  max: u8, _is_offer: bool| {
-        // Define closures outside the view! macro to avoid parsing issues with >= and <=
-        let dec_disabled = move || value.get() == 0;
-        let inc_disabled = {
-            let max = max;
-            move || value.get() >= max
-        };
-        let on_dec = move |_| {
-            if value.get() > 0 {
-                setter.set(value.get() - 1);
-            }
-        };
-        let on_inc = {
-            let max = max;
-            move |_| {
-                if value.get() < max {
-                    setter.set(value.get() + 1);
-                }
-            }
-        };
-
-        view! {
-            <div class="flex items-center justify-between text-[10px]">
-                <span class=format!("font-bold {}", color)>{name}</span>
-                <div class="flex items-center gap-1">
-                    <button
-                        class="flex-shrink-0 w-5 h-5 bg-red-700 hover:bg-red-600 rounded text-white font-bold text-xs disabled:opacity-30"
-                        on:click=on_dec
-                        disabled=dec_disabled
-                    >"-"</button>
-                    <span class="w-4 text-center text-white flex-shrink-0">{move || value.get()}</span>
-                    <button
-                        class="flex-shrink-0 w-5 h-5 bg-green-700 hover:bg-green-600 rounded text-white font-bold text-xs disabled:opacity-30"
-                        on:click=on_inc
-                        disabled=inc_disabled
-                    >"+"</button>
-                </div>
-            </div>
-        }
-    };
-
-    view! {
-        <div class="flex flex-col space-y-2 min-h-0 overflow-y-auto">
-            // My own offer, plus whoever has said they will take it. Accepting
-            // is only a bid: I choose which of them to actually trade with.
-            <Show when=move || state.my_pending_trade.get().is_some()>
-                <div class="bg-yellow-900/30 border border-yellow-700/50 rounded p-2 text-[10px] space-y-2">
-                    <div class="text-yellow-400 font-bold">"Your trade offer is pending..."</div>
-
-                    <Show
-                        when=move || !state.my_trade_accepters.get().is_empty()
-                        fallback=move || view! {
-                            <div class="text-slate-400 italic">"Waiting for someone to accept..."</div>
-                        }
-                    >
-                        <div class="text-[9px] text-slate-400 font-bold">"ACCEPTED - PICK ONE:"</div>
-                        <For
-                            each=move || state.my_trade_accepters.get()
-                            key=|id| *id
-                            children=move |accepter_id| {
-                                let name = state.player_name(accepter_id);
-                                view! {
-                                    <button
-                                        class="w-full py-1 bg-green-700 hover:bg-green-600 rounded text-white font-bold flex items-center justify-between px-2"
-                                        on:click=move |_| {
-                                            if let Some(offer_id) = state.my_pending_trade.get_untracked() {
-                                                state.send(ClientRequest::ConfirmTrade {
-                                                    offer_id,
-                                                    partner_id: accepter_id,
-                                                });
-                                            }
-                                        }
-                                    >
-                                        <span>{name}</span>
-                                        <span class="opacity-70">"TRADE ▸"</span>
-                                    </button>
-                                }
-                            }
-                        />
-                    </Show>
-
-                    <button
-                        class="w-full py-1 bg-red-700 hover:bg-red-600 rounded text-white font-bold"
-                        on:click=cancel_my_trade
-                    >
-                        "CANCEL TRADE"
-                    </button>
-                </div>
-            </Show>
-
-            // Show create trade button (only if no pending trade)
-            <Show when=move || state.my_pending_trade.get().is_none() && !show_form.get()>
-                <button
-                    class="w-full py-2 bg-blue-700 hover:bg-blue-600 rounded text-[10px] font-bold transition-colors"
-                    on:click=move |_| set_show_form.set(true)
-                >
-                    "PROPOSE TRADE"
-                </button>
-            </Show>
-
-            // Trade creation form
-            <Show when=move || show_form.get()>
-                <div class="bg-slate-800/50 rounded p-2 space-y-2">
-                    <div class="text-[9px] text-slate-400 font-bold">"YOU GIVE:"</div>
-                    <div class="space-y-1">
-                        {resource_counter("Brick", "text-red-400", offer_brick, set_offer_brick, state.my_resources.get().brick, true)}
-                        {resource_counter("Wood", "text-green-400", offer_lumber, set_offer_lumber, state.my_resources.get().lumber, true)}
-                        {resource_counter("Sheep", "text-lime-400", offer_wool, set_offer_wool, state.my_resources.get().wool, true)}
-                        {resource_counter("Wheat", "text-yellow-400", offer_grain, set_offer_grain, state.my_resources.get().grain, true)}
-                        {resource_counter("Ore", "text-slate-300", offer_ore, set_offer_ore, state.my_resources.get().ore, true)}
-                    </div>
-
-                    <div class="text-[9px] text-slate-400 font-bold mt-2">"YOU WANT:"</div>
-                    <div class="space-y-1">
-                        {resource_counter("Brick", "text-red-400", request_brick, set_request_brick, 19, false)}
-                        {resource_counter("Wood", "text-green-400", request_lumber, set_request_lumber, 19, false)}
-                        {resource_counter("Sheep", "text-lime-400", request_wool, set_request_wool, 19, false)}
-                        {resource_counter("Wheat", "text-yellow-400", request_grain, set_request_grain, 19, false)}
-                        {resource_counter("Ore", "text-slate-300", request_ore, set_request_ore, 19, false)}
-                    </div>
-
-                    <div class="flex gap-1 mt-2">
-                        <button
-                            class="flex-1 py-1 bg-slate-700 hover:bg-slate-600 rounded text-[10px] font-bold"
-                            on:click=move |_| {
-                                reset_form();
-                                set_show_form.set(false);
-                            }
-                        >
-                            "CANCEL"
-                        </button>
-                        <button
-                            class="flex-1 py-1 bg-green-700 hover:bg-green-600 rounded text-[10px] font-bold disabled:opacity-40"
-                            disabled=move || !is_valid_offer()
-                            on:click=submit_trade
-                        >
-                            "SEND"
-                        </button>
-                    </div>
-                </div>
-            </Show>
-
         </div>
     }
 }

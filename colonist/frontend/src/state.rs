@@ -56,7 +56,12 @@ pub struct GameState {
     pub board_ports: RwSignal<Vec<PortInfo>>,
 
     // UI state
+    /// The roll for *this* turn, cleared when the turn changes. Drives "have
+    /// I rolled yet", so it must not outlive the turn.
     pub last_dice_roll: RwSignal<Option<(u8, u8)>>,
+    /// The last roll anybody made, never cleared. What the dice tray shows, so
+    /// it keeps displaying the previous player's roll instead of blanking.
+    pub table_last_roll: RwSignal<Option<(u8, u8)>>,
     pub build_mode: RwSignal<BuildMode>,
     pub my_dev_cards: RwSignal<Vec<shared::DevCardType>>,
     /// Cards drawn this turn. They cannot be played until the next one, so
@@ -313,6 +318,7 @@ impl GameState {
                     let total = dice_1 + dice_2;
                     logging::log!("Player {} rolled: {} + {} = {}, discards_pending: {}", player_id, dice_1, dice_2, total, discards_pending);
                     self.last_dice_roll.set(Some((dice_1, dice_2)));
+                    self.table_last_roll.set(Some((dice_1, dice_2)));
 
                     // If I rolled a 7 and others need to discard, show waiting message
                     if total == 7 && Some(player_id) == self.player_id.get_untracked() && discards_pending > 0 {
@@ -893,6 +899,9 @@ impl GameState {
                     self.my_resources.set(your_resources);
                     self.my_dev_cards.set(your_dev_cards);
                     self.last_dice_roll.set(last_dice_roll);
+                    if last_dice_roll.is_some() {
+                        self.table_last_roll.set(last_dice_roll);
+                    }
                     self.restore_trades(player_id, pending_trades);
                     // We cannot tell from a sync which cards were drawn this
                     // turn, so treat them all as fresh: refusing a legal play
@@ -1016,6 +1025,7 @@ pub fn provide_game_state() {
 
         // UI state
         last_dice_roll: create_rw_signal(None),
+        table_last_roll: create_rw_signal(None),
         build_mode: create_rw_signal(BuildMode::None),
         my_dev_cards: create_rw_signal(Vec::new()),
         fresh_dev_cards: create_rw_signal(Vec::new()),

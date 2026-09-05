@@ -1,7 +1,7 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
 use crate::components::icons::DieFace;
-use shared::{ClientRequest, ResourceType, HexInfo, PlayerColour, PortType, PortInfo};
+use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PlayerColour, PortType, PortInfo};
 use uuid::Uuid;
 
 // Convert axial coordinates (q, r) to pixel coordinates for SVG
@@ -132,6 +132,97 @@ fn vertex_to_pixel(vx: i32, vy: i32, hex_size: f32) -> (f32, f32) {
 }
 
 
+
+/// Vertices where `me` may put a settlement.
+///
+/// Mirrors the server: the space must be empty, no neighbouring vertex may be
+/// built on, and outside initial placement it has to touch one of your roads.
+/// Offering anything else just invites a click that comes back as an error.
+fn legal_settlements(
+    hexes: &[HexInfo],
+    settlements: &[BuildingInfo],
+    cities: &[BuildingInfo],
+    roads: &[BuildingInfo],
+    me: Uuid,
+    initial: bool,
+) -> Vec<(i32, i32)> {
+    use std::collections::HashSet;
+
+    let taken: HashSet<(i32, i32)> = settlements
+        .iter()
+        .chain(cities.iter())
+        .map(|b| (b.x, b.y))
+        .collect();
+
+    let edges = calculate_all_edges(hexes);
+    let my_edges: HashSet<(i32, i32)> = roads
+        .iter()
+        .filter(|r| r.player_id == me)
+        .map(|r| (r.x, r.y))
+        .collect();
+
+    // Vertices touched by one of my roads.
+    let mine_reach: HashSet<(i32, i32)> = edges
+        .iter()
+        .filter(|(_, _, e)| my_edges.contains(e))
+        .flat_map(|(a, b, _)| [*a, *b])
+        .collect();
+
+    calculate_all_vertices(hexes)
+        .into_iter()
+        .filter(|v| !taken.contains(v))
+        .filter(|v| {
+            // Distance rule: no neighbour along a shared edge may be occupied.
+            !edges.iter().any(|(a, b, _)| {
+                (a == v && taken.contains(b)) || (b == v && taken.contains(a))
+            })
+        })
+        .filter(|v| initial || mine_reach.contains(v))
+        .collect()
+}
+
+/// Edges where `me` may put a road: empty, and touching something of theirs.
+/// During initial placement it must touch the settlement just placed.
+fn legal_roads(
+    hexes: &[HexInfo],
+    settlements: &[BuildingInfo],
+    cities: &[BuildingInfo],
+    roads: &[BuildingInfo],
+    me: Uuid,
+    must_touch: Option<(i32, i32)>,
+) -> Vec<(i32, i32)> {
+    use std::collections::HashSet;
+
+    let occupied: HashSet<(i32, i32)> = roads.iter().map(|r| (r.x, r.y)).collect();
+    let my_buildings: HashSet<(i32, i32)> = settlements
+        .iter()
+        .chain(cities.iter())
+        .filter(|b| b.player_id == me)
+        .map(|b| (b.x, b.y))
+        .collect();
+
+    let edges = calculate_all_edges(hexes);
+    let my_road_ends: HashSet<(i32, i32)> = edges
+        .iter()
+        .filter(|(_, _, e)| roads.iter().any(|r| r.player_id == me && (r.x, r.y) == *e))
+        .flat_map(|(a, b, _)| [*a, *b])
+        .collect();
+
+    edges
+        .into_iter()
+        .filter(|(_, _, e)| !occupied.contains(e))
+        .filter(|(a, b, _)| match must_touch {
+            Some(v) => *a == v || *b == v,
+            None => {
+                my_buildings.contains(a)
+                    || my_buildings.contains(b)
+                    || my_road_ends.contains(a)
+                    || my_road_ends.contains(b)
+            }
+        })
+        .map(|(_, _, e)| e)
+        .collect()
+}
 
 // Calculate all unique vertices from hexes
 fn calculate_all_vertices(hexes: &[HexInfo]) -> Vec<(i32, i32)> {
@@ -513,8 +604,29 @@ pub fn Board() -> impl IntoView {
                     }>
                         <For
                             each=move || {
+                                let me = state.player_id.get().unwrap_or_else(Uuid::nil);
                                 let hexes = state.hexes.get();
-                                calculate_all_vertices(&hexes)
+                                let settlements = state.settlements.get();
+                                let cities = state.cities.get();
+
+                                // Upgrading shows your own settlements; placing
+                                // shows only the spots the server will accept.
+                                if state.build_mode.get() == BuildMode::City {
+                                    settlements
+                                        .iter()
+                                        .filter(|b| b.player_id == me)
+                                        .map(|b| (b.x, b.y))
+                                        .collect::<Vec<_>>()
+                                } else {
+                                    legal_settlements(
+                                        &hexes,
+                                        &settlements,
+                                        &cities,
+                                        &state.roads.get(),
+                                        me,
+                                        state.game_phase.get().is_initial_phase(),
+                                    )
+                                }
                             }
                             key=|v| *v
                             children=move |vertex| {
@@ -566,15 +678,30 @@ pub fn Board() -> impl IntoView {
                         {move || {
                             let hexes = state.hexes.get();
                             let roads = state.roads.get();
+                            let me = state.player_id.get().unwrap_or_else(Uuid::nil);
 
-                            // Calculate all edges from hexes (proper backend formula)
+                            // In initial placement the road has to touch the
+                            // settlement just placed, and the phase carries
+                            // which one that was.
+                            let must_touch = match state.game_phase.get() {
+                                shared::GamePhase::InitialPlacement {
+                                    step: shared::PlacementStep::BuildRoad { settlement }, ..
+                                } => Some(settlement),
+                                _ => None,
+                            };
+
+                            let legal = legal_roads(
+                                &hexes,
+                                &state.settlements.get(),
+                                &state.cities.get(),
+                                &roads,
+                                me,
+                                must_touch,
+                            );
+
                             let all_edges = calculate_all_edges(&hexes);
-
-                            // Filter out edges that already have roads
                             let available_edges: Vec<_> = all_edges.into_iter()
-                                .filter(|(_, _, edge_coord)| {
-                                    !roads.iter().any(|r| (r.x, r.y) == *edge_coord)
-                                })
+                                .filter(|(_, _, edge_coord)| legal.contains(edge_coord))
                                 .collect();
 
                             view! {
@@ -810,7 +937,7 @@ fn DiceTray() -> impl IntoView {
     });
 
     create_effect(move |_| {
-        if let Some((a, b)) = state.last_dice_roll.get() {
+        if let Some((a, b)) = state.table_last_roll.get() {
             set_tumbling.set(false);
             set_shown.set((a, b));
         }
