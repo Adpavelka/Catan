@@ -143,9 +143,17 @@ fn TurnClockProvider(children: Children) -> impl IntoView {
     let (elapsed, set_elapsed) = create_signal(0.0f64);
     let started = store_value(js_sys::Date::now());
 
-    // Restart whenever the turn changes hands.
+    // Restart on every turn the server hands out.
+    //
+    // Not on `current_turn_player`: a signal only notifies when its value
+    // changes, so when the same player takes two turns in a row - the last
+    // one left in the game, say - that never fires, `started` keeps pointing
+    // at the previous turn, and the countdown reads zero for the rest of the
+    // game. Entering regular play counts as a fresh start too, since the
+    // server only arms its clock once setup is over.
     create_effect(move |_| {
-        let _ = state.current_turn_player.get();
+        let _ = state.turn_epoch.get();
+        let _ = state.game_phase.get();
         started.set_value(js_sys::Date::now());
         set_elapsed.set(0.0);
     });

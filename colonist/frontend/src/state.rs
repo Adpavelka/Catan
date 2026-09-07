@@ -85,6 +85,15 @@ pub struct GameState {
     /// eights in a row are the same number but two different events, and a
     /// signal that only carried the total would not fire for the second.
     pub last_roll_event: RwSignal<Option<(u8, u64)>>,
+    /// Ticks once per turn handed out by the server.
+    ///
+    /// The turn clock resets off this rather than off `current_turn_player`.
+    /// A signal only notifies when its value actually changes, so keying the
+    /// reset on the player's id silently skipped every turn where the same
+    /// person went twice - one player left in the game, say - and the
+    /// countdown stayed wherever the previous turn had left it. The server
+    /// keys its own clock on a turn sequence for exactly this reason.
+    pub turn_epoch: RwSignal<u64>,
     pub build_mode: RwSignal<BuildMode>,
     pub my_dev_cards: RwSignal<Vec<shared::DevCardType>>,
     /// Cards drawn this turn. They cannot be played until the next one, so
@@ -458,6 +467,7 @@ impl GameState {
                 ServerMessage::NextTurn { player_id } => {
                     logging::log!("Next turn: Player {}", player_id);
                     self.current_turn_player.set(player_id);
+                    self.turn_epoch.update(|n| *n += 1);
                     self.last_dice_roll.set(None); // Clear dice roll for new turn
                     self.fresh_dev_cards.set(Vec::new());
                     self.dev_card_played_this_turn.set(false);
@@ -1086,6 +1096,7 @@ pub fn provide_game_state() {
         messages: create_rw_signal(Vec::new()),
         chat: create_rw_signal(Vec::new()),
         last_roll_event: create_rw_signal(None),
+        turn_epoch: create_rw_signal(0),
         my_trade_decliners: create_rw_signal(Vec::new()),
         my_offer_terms: create_rw_signal(None),
         bank: create_rw_signal(shared::BankInfo::default()),

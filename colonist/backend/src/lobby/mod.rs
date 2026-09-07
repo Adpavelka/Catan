@@ -165,6 +165,20 @@ impl Lobby {
                         self.player_to_game.remove(&player.id);
                     }
                 }
+
+                // Retire their session tokens with the game. A token cannot be
+                // dropped on disconnect - reclaiming a seat after a dropped
+                // connection is the whole point of it - but once the game it
+                // belonged to is gone there is nothing left to reclaim, and
+                // keeping it means the map only ever grows.
+                let gone: std::collections::HashSet<Uuid> = (0..game
+                    .turn_manager
+                    .players
+                    .len())
+                    .filter_map(|idx| game.turn_manager.players.get_by_index(idx))
+                    .map(|player| player.id)
+                    .collect();
+                self.tokens.retain(|_, pid| !gone.contains(pid));
             }
 
             let repo = self.repo.clone();
