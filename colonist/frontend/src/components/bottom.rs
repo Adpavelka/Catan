@@ -510,12 +510,15 @@ fn ActionBar() -> impl IntoView {
     let settlements_left = move || MAX_SETTLEMENTS.saturating_sub(mine(state.settlements));
     let cities_left = move || MAX_CITIES.saturating_sub(mine(state.cities));
 
-    let can_build = move |mode: BuildMode, cost: [u8; 5], left: usize| {
+    let can_build = move |cost: [u8; 5], left: usize| {
         if left == 0 {
             return false;
         }
+        // Setup drives itself: the board arms the right mode from the phase
+        // and offers only the legal spots. Leaving these live would let a
+        // click here disarm the very thing the player has to do next.
         if placing() {
-            return my_turn() && matches!(mode, BuildMode::Settlement | BuildMode::Road);
+            return false;
         }
         state.can_build_now() && (affords(cost) || state.free_roads_remaining.get() > 0)
     };
@@ -551,7 +554,7 @@ fn ActionBar() -> impl IntoView {
 
             <HudButton
                 label="Build a road"
-                enabled=Signal::derive(move || can_build(BuildMode::Road, ROAD, roads_left()))
+                enabled=Signal::derive(move || can_build(ROAD, roads_left()))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::Road)
                 badge=Signal::derive(move || roads_left().to_string())
                 cost=ROAD
@@ -564,7 +567,7 @@ fn ActionBar() -> impl IntoView {
 
             <HudButton
                 label="Build a settlement"
-                enabled=Signal::derive(move || can_build(BuildMode::Settlement, SETTLEMENT, settlements_left()))
+                enabled=Signal::derive(move || can_build(SETTLEMENT, settlements_left()))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::Settlement)
                 badge=Signal::derive(move || settlements_left().to_string())
                 cost=SETTLEMENT
@@ -577,7 +580,7 @@ fn ActionBar() -> impl IntoView {
 
             <HudButton
                 label="Upgrade to a city"
-                enabled=Signal::derive(move || can_build(BuildMode::City, CITY, cities_left()))
+                enabled=Signal::derive(move || can_build(CITY, cities_left()))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::City)
                 badge=Signal::derive(move || cities_left().to_string())
                 cost=CITY

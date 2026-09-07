@@ -152,9 +152,11 @@ pub fn DieFace(
 
             <rect x="1.1" y="1.1" width="13.8" height="13.8" rx="2.6"
                   fill=format!("url(#{body})") stroke="#8d9aa1" stroke-width="0.3"/>
-            // A highlight along the top edge: the die catches the light.
-            <rect x="2.2" y="2.2" width="11.6" height="10.6" rx="1.8"
-                  fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.4"/>
+            // An inner bevel line. Concentric with the face - inset by the
+            // same amount on all four sides - because anything else reads as
+            // a crooked border rather than a highlight.
+            <rect x="2.6" y="2.6" width="10.8" height="10.8" rx="1.8"
+                  fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.4"/>
 
             {pips.iter()
                 .map(|(cx, cy)| view! {

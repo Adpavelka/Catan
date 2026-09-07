@@ -265,6 +265,30 @@ pub fn Board() -> impl IntoView {
     };
 
 
+    // During setup there is exactly one thing you may do at any moment, and
+    // the phase already says which. Making the player arm a build mode for it
+    // is a click that can only be made one way, so the board arms itself and
+    // moves on to the road the moment the settlement lands.
+    create_effect(move |_| {
+        let phase = state.game_phase.get();
+        let mine = state.player_id.get() == Some(state.current_turn_player.get());
+
+        let wanted = match (phase, mine) {
+            (shared::GamePhase::InitialPlacement { step, .. }, true) => match step {
+                shared::PlacementStep::BuildSettlement => BuildMode::Settlement,
+                shared::PlacementStep::BuildRoad { .. } => BuildMode::Road,
+            },
+            // Somebody else's placement, or setup is over: leave whatever the
+            // player has armed alone once we are in regular play.
+            (shared::GamePhase::InitialPlacement { .. }, false) => BuildMode::None,
+            _ => return,
+        };
+
+        if state.build_mode.get_untracked() != wanted {
+            state.build_mode.set(wanted);
+        }
+    });
+
     // View transform on top of the fit-to-viewport one. Kept here rather than
     // in GameState because nothing outside the board cares about it.
     let (zoom, set_zoom) = create_signal(1.0f64);
@@ -506,30 +530,26 @@ pub fn Board() -> impl IntoView {
                                 let (out_nx, out_ny) = if away >= 0.0 { (nx, ny) } else { (-nx, -ny) };
 
                                 // Push port marker outward from the edge
-                                let port_x = mid_x + out_nx * 56.0;
-                                let port_y = mid_y + out_ny * 56.0;
+                                let port_x = mid_x + out_nx * 62.0;
+                                let port_y = mid_y + out_ny * 62.0;
 
                                 // Get port display properties from server-sent port type
                                 let label = port_label(&port.port_type);
                                 let color = port_color(&port.port_type);
 
+                                // The piers run almost the whole way out and
+                                // stop just short of the hull: a walkway that
+                                // vanishes under the boat reads as a mistake,
+                                // one that stops halfway reads as a stub.
+                                let dock_x = mid_x + out_nx * 44.0;
+                                let dock_y = mid_y + out_ny * 44.0;
+
                                 view! {
                                     <g>
-                                        // Two piers running out to the coast,
-                                        // so it is obvious which corners the
-                                        // harbour actually serves.
-                                        <line
-                                            x1=v1x y1=v1y x2=port_x y2=port_y
-                                            stroke=color stroke-width="2.5" stroke-linecap="round"
-                                            opacity="0.65"
-                                        />
-                                        <line
-                                            x1=v2x y1=v2y x2=port_x y2=port_y
-                                            stroke=color stroke-width="2.5" stroke-linecap="round"
-                                            opacity="0.65"
-                                        />
-                                        <circle cx=v1x cy=v1y r="3.5" fill=color opacity="0.9" />
-                                        <circle cx=v2x cy=v2y r="3.5" fill=color opacity="0.9" />
+                                        // A plank walkway out to each of the
+                                        // two corners this harbour serves.
+                                        <Pier from=(v1x, v1y) to=(dock_x, dock_y) />
+                                        <Pier from=(v2x, v2y) to=(dock_x, dock_y) />
 
                                         <g transform=format!("translate({}, {})", port_x, port_y)>
                                             // The drawn harbour badge, with the
@@ -722,6 +742,33 @@ pub fn Board() -> impl IntoView {
                         }}
                     </Show>
 
+                    // Roads, drawn before the buildings on purpose: a
+                    // road ends at a vertex somebody has built on, and drawn
+                    // afterwards it would cover their piece.
+                    <For
+                        each=move || state.roads.get()
+                        key=|r| (r.x, r.y, r.player_id)
+                        children=move |road| {
+                            let hexes = state.hexes.get();
+                            let Some((v1, v2)) = find_vertices_for_edge((road.x, road.y), &hexes)
+                            else {
+                                return view! { <g></g> }.into_view();
+                            };
+
+                            let (v1x, v1y) = vertex_to_pixel(v1.0, v1.1, 60.0);
+                            let (v2x, v2y) = vertex_to_pixel(v2.0, v2.1, 60.0);
+                            let colour = player_color(road.player_id, &state);
+
+                            view! {
+                                <PlacedRoad
+                                    from=(v1x, v1y)
+                                    to=(v2x, v2y)
+                                    colour=colour
+                                />
+                            }.into_view()
+                        }
+                    />
+
                     // Render settlements
                     <For
                         each=move || state.settlements.get()
@@ -754,40 +801,6 @@ pub fn Board() -> impl IntoView {
                         }
                     />
 
-                    // Render roads (as lines between vertices)
-                    <For
-                        each=move || state.roads.get()
-                        key=|r| (r.x, r.y, r.player_id)
-                        children=move |road| {
-                            let hexes = state.hexes.get();
-                            // Find the two vertices this edge connects
-                            if let Some((v1, v2)) = find_vertices_for_edge((road.x, road.y), &hexes) {
-                                let (v1x, v1y) = vertex_to_pixel(v1.0, v1.1, 60.0);
-                                let (v2x, v2y) = vertex_to_pixel(v2.0, v2.1, 60.0);
-
-                                // Get stroke color based on player (look up from player list)
-                                let stroke_color = state.players.get()
-                                    .iter()
-                                    .find(|p| p.player_id == road.player_id)
-                                    .map(|p| p.colour.hex())
-                                    .unwrap_or("#a855f7");
-
-                                view! {
-                                    <line
-                                        x1=v1x
-                                        y1=v1y
-                                        x2=v2x
-                                        y2=v2y
-                                        stroke=stroke_color
-                                        stroke-width="5"
-                                        stroke-linecap="round"
-                                    />
-                                }.into_view()
-                            } else {
-                                view! { <g></g> }.into_view()
-                            }
-                        }
-                    />
                 </g>
                 </g>
             </svg>
@@ -821,29 +834,21 @@ pub fn Board() -> impl IntoView {
             // pill sitting on the water.
             <Show when=move || {
                 let phase = state.game_phase.get();
-                phase.is_initial_phase() || phase.special_builder().is_some()
+                (phase.is_initial_phase() && !is_my_turn()) || phase.special_builder().is_some()
             }>
             <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex justify-center">
                 <div class="panel flex flex-wrap items-center justify-center gap-3 px-4 py-2.5">
                 // Show initial placement instructions
+                // On your own setup turn the board arms itself and lights up
+                // the legal spots, so there is nothing to say. It is only worth
+                // a line when you are waiting on somebody else.
                 {move || {
-                    let phase = move || state.game_phase.get();
-
-
-                    if phase().is_initial_phase() {
-                        if is_my_turn() {
-                            view! {
-                                <div class="text-[#8a5a00] font-black text-sm bg-[#ffe9bd] px-4 py-2 rounded-lg border-2 border-[#d8a53c]">
-                                    "Place 1 settlement, then 1 road"
-                                </div>
-                            }.into_view()
-                        } else {
-                            view! {
-                                <div class="text-[#6b6354] text-sm font-bold px-4 py-2">
-                                    "Waiting for other players..."
-                                </div>
-                            }.into_view()
-                        }
+                    if state.game_phase.get().is_initial_phase() && !is_my_turn() {
+                        view! {
+                            <div class="text-[#6b6354] text-sm font-bold px-4 py-2">
+                                "Waiting for other players..."
+                            </div>
+                        }.into_view()
                     } else {
                         view! { <div></div> }.into_view()
                     }
@@ -1080,6 +1085,69 @@ fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
                     }).collect_view()}
                 </g>
             </Show>
+        </g>
+    }
+}
+
+/// Lay a piece of artwork along the line from `from` to `to`.
+///
+/// The road and pier assets are both drawn standing up, so putting one on an
+/// edge is: move to the middle, turn to face along the edge, then draw it
+/// centred. Returns the SVG transform for that.
+fn along(from: (f32, f32), to: (f32, f32)) -> (String, f32) {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = (dx * dx + dy * dy).sqrt();
+    // The artwork's long axis points down the +y axis, which is 90 degrees,
+    // so the turn needed is the edge's bearing less that.
+    let angle = dy.atan2(dx).to_degrees() - 90.0;
+    let (mx, my) = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
+    (format!("translate({mx:.2}, {my:.2}) rotate({angle:.2})"), length)
+}
+
+/// A road on the board: the same artwork the buy button shows, tinted to its
+/// owner and laid along the edge.
+#[component]
+fn PlacedRoad(from: (f32, f32), to: (f32, f32), colour: &'static str) -> impl IntoView {
+    let (transform, length) = along(from, to);
+    // Short of the full edge, so two roads meeting at a vertex leave the
+    // piece standing there room to breathe.
+    let long = length * 0.84;
+    let thick = 15.0_f32;
+
+    view! {
+        <g transform=transform>
+            <image
+                href="/assets/build-road.svg"
+                x=-thick / 2.0
+                y=-long / 2.0
+                width=thick
+                height=long
+                preserveAspectRatio="none"
+                style=format!(
+                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.45));",
+                    tint_id(colour)
+                )
+            />
+        </g>
+    }
+}
+
+/// A plank walkway from a shore vertex out to a harbour.
+#[component]
+fn Pier(from: (f32, f32), to: (f32, f32)) -> impl IntoView {
+    let (transform, length) = along(from, to);
+
+    view! {
+        <g transform=transform>
+            <image
+                href="/assets/pier.svg"
+                x="-7"
+                y=-length / 2.0
+                width="14"
+                height=length
+                preserveAspectRatio="none"
+                style="filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.4));"
+            />
         </g>
     }
 }
