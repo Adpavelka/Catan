@@ -1,7 +1,7 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
 use crate::components::icons::{port_art, DieFace};
-use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PlayerColour, PortType, PortInfo};
+use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PortType, PortInfo};
 use uuid::Uuid;
 
 // Convert axial coordinates (q, r) to pixel coordinates for SVG
@@ -62,9 +62,6 @@ fn resource_label(resource: &ResourceType) -> &'static str {
     }
 }
 
-pub(crate) fn player_color_hex(colour: PlayerColour) -> &'static str {
-    colour.hex()
-}
 
 // Get player color (for rendering buildings)
 /// The player's colour as a literal hex, applied via the SVG `fill` attribute.
@@ -767,14 +764,11 @@ pub fn Board() -> impl IntoView {
                 </g>
             </svg>
 
-            // The dice sit in the bottom-right of the board, always showing
-            // the last roll so the table can see it, and doubling as the roll
-            // button on your own turn.
-            <div class="absolute bottom-3 right-3 z-10">
-                <DiceTray />
-            </div>
+            // Zoom controls, floated over the top-right of the water. The dice
+            // are not here: they belong to the bottom HUD, stacked above the
+            // turn panel, so the whole right-hand column reads top to bottom.
 
-            // Zoom controls, floated over the top-right of the water.
+
             <div class="absolute top-2 right-2 z-10 flex flex-col gap-1">
                 <button
                     class="game-btn game-btn-cream w-8 h-8 font-black leading-none"
@@ -864,10 +858,13 @@ pub fn Board() -> impl IntoView {
 
 /// The dice. Always on screen, showing whatever was last rolled - by anybody -
 /// so the table never has to go hunting in the log for it. On your own turn,
-/// before you have rolled, it is also the roll button, and it tumbles for a
-/// moment rather than snapping straight to the answer.
+/// before you have rolled, they are also the roll button, and they tumble for
+/// a moment rather than snapping straight to the answer.
+///
+/// They sit loose on the water rather than in a panel, and are set very
+/// slightly askew, because dice that have just been thrown do not line up.
 #[component]
-fn DiceTray() -> impl IntoView {
+pub fn DiceTray() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
     let (tumbling, set_tumbling) = create_signal(false);
@@ -920,32 +917,42 @@ fn DiceTray() -> impl IntoView {
     view! {
         <button
             class=move || format!(
-                "game-btn flex items-center gap-2 px-3 py-2 {}",
-                if can_roll() { "" } else { "game-btn-cream cursor-default" }
+                "flex items-start gap-3 rounded-2xl transition-transform {}",
+                if can_roll() { "hover:scale-[1.04] cursor-pointer" } else { "cursor-default" }
             )
             disabled=move || !can_roll()
-            title=move || if can_roll() { "Roll the dice" } else { "The last roll" }
+            title=move || if can_roll() {
+                "Roll the dice".to_string()
+            } else {
+                let (a, b) = shown.get();
+                format!("The last roll: {}", a + b)
+            }
             on:click=roll
         >
-            <div class=move || if tumbling.get() {
-                "flex gap-2 animate-bounce"
-            } else {
-                "flex gap-2"
-            }>
-                {move || {
-                    let (a, b) = shown.get();
-                    view! { <DieFace value=a size="w-11 h-11" /> <DieFace value=b size="w-11 h-11" /> }
-                }}
-            </div>
-            <Show
-                when=can_roll
-                fallback=move || view! {
-                    <span class="text-2xl font-black text-[#2f2a1f] tabular-nums w-8 text-center">
-                        {move || { let (a, b) = shown.get(); a + b }}
-                    </span>
+            {move || {
+                let (a, b) = shown.get();
+                let shake = if tumbling.get() { "animate-bounce" } else { "" };
+                view! {
+                    // A degree or two apart, so they read as thrown rather
+                    // than placed.
+                    <div class=format!("drop-shadow-[0_4px_6px_rgba(0,0,0,0.4)] {shake}")
+                         style="transform: rotate(-4deg)">
+                        <DieFace value=a size="w-[120px] h-[120px]" />
+                    </div>
+                    <div class=format!("drop-shadow-[0_4px_6px_rgba(0,0,0,0.4)] mt-2 {shake}")
+                         style="transform: rotate(5deg)">
+                        <DieFace value=b size="w-[120px] h-[120px]" />
+                    </div>
                 }
-            >
-                <span class="text-sm font-black uppercase tracking-wider pr-1">"Roll"</span>
+            }}
+
+            // Only shown when they are live: otherwise the dice speak for
+            // themselves and a word next to them is noise.
+            <Show when=can_roll>
+                <span class="self-center px-3 py-2 rounded-lg game-btn text-[15px] font-black
+                             uppercase tracking-wider">
+                    "Roll"
+                </span>
             </Show>
         </button>
     }

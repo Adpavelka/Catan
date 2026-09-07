@@ -18,6 +18,11 @@
         --edge: #34515f;
         --edge-warm: #80796c;
         --gold: #b98624;
+        --tray: #f5f0e6;
+        --hud-cyan-top: #56c6e1;
+        --hud-cyan-bottom: #83d3e7;
+        --hud-rim: #1d5f86;
+        --badge-blue: #285a99;
     }
 
     body {
@@ -41,11 +46,12 @@
         background: #a89b81;
     }
 
-    /* Open water. Brighter under the board, deeper at the edges. */
+    /* The table. Near-flat: the HUD panels are what carry the contrast, and a
+       strong gradient here competes with them. */
     .water {
         background:
-            radial-gradient(ellipse 70% 70% at 50% 45%,
-                #0e8ad2 0%, var(--water) 45%, var(--water-deep) 100%);
+            radial-gradient(ellipse 80% 80% at 50% 42%,
+                #1780b8 0%, var(--water) 55%, var(--water-deep) 100%);
     }
 
     /* A sheet of card stock. */
@@ -125,5 +131,90 @@
     /* Text that has to stay readable over artwork. */
     .ink {
         text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
+    }
+
+    /* ---------------------------------------------------------- bottom HUD */
+
+    /* The card tray the hand sits in, and the small cream slabs beside it. */
+    .hud-tray {
+        background: var(--tray);
+        border: 2px solid #cdc4b2;
+        border-radius: 8px;
+        box-shadow:
+            0 -2px 8px rgb(0 0 0 / 0.22),
+            0 2px 4px rgb(0 0 0 / 0.18),
+            inset 0 1px 0 rgb(255 255 255 / 0.85);
+    }
+
+    /* A big square control: dark rim, pale bezel, glossy cyan face. The rim is
+       a ring rather than a border so the bezel keeps its full thickness. */
+    .hud-btn {
+        background: linear-gradient(
+            170deg,
+            #7fd6ec 0%,
+            var(--hud-cyan-top) 42%,
+            var(--hud-cyan-bottom) 100%
+        );
+        border: 4px solid #e8f7fd;
+        border-radius: 15px;
+        box-shadow:
+            0 0 0 3px var(--hud-rim),
+            0 5px 0 rgb(13 62 92 / 0.5),
+            0 7px 11px rgb(0 0 0 / 0.33),
+            inset 0 4px 8px rgb(255 255 255 / 0.5),
+            inset 0 -4px 7px rgb(4 60 88 / 0.16);
+        color: #0d3e5c;
+        transition:
+            transform 80ms ease,
+            filter 120ms ease,
+            box-shadow 80ms ease;
+    }
+    .hud-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        filter: brightness(1.07);
+    }
+    .hud-btn:active:not(:disabled) {
+        transform: translateY(2px);
+        box-shadow:
+            0 0 0 3px var(--hud-rim),
+            0 1px 0 rgb(13 62 92 / 0.5),
+            inset 0 4px 8px rgb(4 60 88 / 0.28);
+    }
+    /* Unaffordable keeps the button: only the icon goes quiet, so the player
+       can still see the action exists. */
+    .hud-btn:disabled {
+        cursor: not-allowed;
+    }
+    .hud-btn:disabled .hud-icon {
+        filter: grayscale(0.9) brightness(0.72);
+        opacity: 0.6;
+    }
+    /* Armed: this build is selected and the board is waiting for a spot. */
+    .hud-btn-armed {
+        background: linear-gradient(170deg, #8ef0a4 0%, #35cf5c 42%, #17a83f 100%);
+        border-color: #eafde9;
+        box-shadow:
+            0 0 0 3px #0f6b2c,
+            0 5px 0 rgb(8 74 30 / 0.5),
+            0 7px 11px rgb(0 0 0 / 0.33),
+            inset 0 4px 8px rgb(255 255 255 / 0.5);
+    }
+
+    /* The count in a button's top-right: attached to it, not floating off it. */
+    .hud-badge {
+        background: rgb(38 72 108 / 0.6);
+        border: 2px solid rgb(255 255 255 / 0.42);
+        border-radius: 8px;
+        color: #fff;
+        text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+    }
+
+    /* The count on a resource card: a little tab folded over the corner. */
+    .card-badge {
+        background: var(--badge-blue);
+        border: 2px solid #16365e;
+        border-radius: 5px;
+        color: #fff;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
     }
 }

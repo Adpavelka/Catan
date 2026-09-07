@@ -14,10 +14,6 @@ use leptos::*;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IconKind {
-    /// Cards in hand.
-    Resource,
-    Knight,
-    Road,
     Trophy,
     Robber,
     Warning,
@@ -38,38 +34,9 @@ pub fn Icon(
     // Every shape is stroke-only on the same grid, so one <svg> wrapper with
     // shared stroke attributes covers all of them.
     let body = match kind {
-        // layers
-        IconKind::Resource => view! {
-            <>
-                <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/>
-                <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>
-                <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>
-            </>
-        }.into_view(),
 
 
-        // swords
-        IconKind::Knight => view! {
-            <>
-                <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/>
-                <line x1="13" x2="19" y1="19" y2="13"/>
-                <line x1="16" x2="20" y1="16" y2="20"/>
-                <line x1="19" x2="21" y1="21" y2="19"/>
-                <polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5"/>
-                <line x1="5" x2="9" y1="14" y2="18"/>
-                <line x1="7" x2="4" y1="17" y2="20"/>
-                <line x1="3" x2="5" y1="19" y2="21"/>
-            </>
-        }.into_view(),
 
-        // route
-        IconKind::Road => view! {
-            <>
-                <circle cx="6" cy="19" r="3"/>
-                <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/>
-                <circle cx="18" cy="5" r="3"/>
-            </>
-        }.into_view(),
 
 
 
@@ -160,16 +127,40 @@ pub fn DieFace(
         _ => &[(5.0, 4.5), (11.0, 4.5), (5.0, 8.0), (11.0, 8.0), (5.0, 11.5), (11.0, 11.5)],
     };
 
+    // A unique id per die, so two on screen do not share one gradient.
+    let uid = format!("die{}", js_sys::Math::random().to_bits());
+    let body = format!("{uid}-body");
+    let pip = format!("{uid}-pip");
+
     view! {
         <svg
             class=format!("inline-block align-[-0.2em] shrink-0 {size} {class}")
             viewBox="0 0 16 16"
             aria-label=format!("die showing {value}")
         >
-            <rect x="1" y="1" width="14" height="14" rx="3"
-                  fill="#f8fafc" stroke="#0f172a" stroke-width="1"/>
+            <defs>
+                <linearGradient id=body.clone() x1="0" y1="0" x2="0.3" y2="1">
+                    <stop offset="0%" stop-color="#f2f6f7"/>
+                    <stop offset="55%" stop-color="#d9e1e3"/>
+                    <stop offset="100%" stop-color="#bcc7ca"/>
+                </linearGradient>
+                <radialGradient id=pip.clone() cx="0.35" cy="0.3" r="0.85">
+                    <stop offset="0%" stop-color="#5a646b"/>
+                    <stop offset="100%" stop-color="#20272c"/>
+                </radialGradient>
+            </defs>
+
+            <rect x="0.9" y="0.9" width="14.2" height="14.2" rx="2.4"
+                  fill=format!("url(#{body})") stroke="#1b2226" stroke-width="1.1"/>
+            // A highlight along the top edge: the die catches the light.
+            <rect x="2" y="2" width="12" height="11" rx="1.6"
+                  fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.5"/>
+
             {pips.iter()
-                .map(|(cx, cy)| view! { <circle cx=*cx cy=*cy r="1.4" fill="#0f172a"/> })
+                .map(|(cx, cy)| view! {
+                    <circle cx=*cx cy=*cy r="1.55"
+                            fill=format!("url(#{pip})") stroke="#141a1e" stroke-width="0.35"/>
+                })
                 .collect_view()}
         </svg>
     }
