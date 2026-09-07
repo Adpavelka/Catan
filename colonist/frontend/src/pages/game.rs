@@ -2,7 +2,7 @@ use leptos::*;
 use uuid::Uuid;
 use crate::components::board::{player_color_hex, Board};
 use crate::state::{BuildMode, GameState};
-use crate::components::icons::{Icon, IconKind};
+use crate::components::icons::{dev_card_art, resource_art, Art, Icon, IconKind};
 use shared::{ClientRequest, GamePhase, PlayerColour};
 
 #[component]
@@ -253,7 +253,10 @@ pub fn GamePage() -> impl IntoView {
                                 title="Open the trade panel"
                                 on:click=move |_| set_trade_open.update(|o| *o = !*o)
                             >
-                                "Trade"
+                                <span class="flex flex-col items-center gap-0.5">
+                                    <Art name="trading" class="w-6 h-6 object-contain" />
+                                    "Trade"
+                                </span>
                             </button>
 
                             <DevCardHand />
@@ -485,25 +488,25 @@ fn BuildBar() -> impl IntoView {
     view! {
         <div class="flex items-end gap-1.5 bg-slate-900/70 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/70 shadow-2xl">
             <BuildButton
-                label="Road" kind=IconKind::Road mode=Some(BuildMode::Road)
+                label="Road" art="build-road" mode=Some(BuildMode::Road)
                 cost=ROAD tint="hover:border-emerald-500 hover:text-emerald-300"
                 active_tint="border-emerald-500 text-emerald-300 bg-emerald-600/20"
                 enabled=Signal::derive(move || enabled(Some(BuildMode::Road), ROAD))
             />
             <BuildButton
-                label="Settlement" kind=IconKind::Settlement mode=Some(BuildMode::Settlement)
+                label="Settlement" art="build-settlement" mode=Some(BuildMode::Settlement)
                 cost=SETTLEMENT tint="hover:border-orange-500 hover:text-orange-300"
                 active_tint="border-orange-500 text-orange-300 bg-orange-600/20"
                 enabled=Signal::derive(move || enabled(Some(BuildMode::Settlement), SETTLEMENT))
             />
             <BuildButton
-                label="City" kind=IconKind::City mode=Some(BuildMode::City)
+                label="City" art="build-city" mode=Some(BuildMode::City)
                 cost=CITY tint="hover:border-purple-500 hover:text-purple-300"
                 active_tint="border-purple-500 text-purple-300 bg-purple-600/20"
                 enabled=Signal::derive(move || enabled(Some(BuildMode::City), CITY))
             />
             <BuildButton
-                label="Dev Card" kind=IconKind::DevCard mode=None
+                label="Dev Card" art="build-dev-card" mode=None
                 cost=DEV_CARD tint="hover:border-sky-500 hover:text-sky-300"
                 active_tint=""
                 enabled=Signal::derive(move || enabled(None, DEV_CARD))
@@ -517,7 +520,7 @@ fn BuildBar() -> impl IntoView {
 #[component]
 fn BuildButton(
     label: &'static str,
-    kind: IconKind,
+    art: &'static str,
     mode: Option<BuildMode>,
     cost: [u8; 5],
     tint: &'static str,
@@ -527,12 +530,13 @@ fn BuildButton(
     let state = use_context::<GameState>().expect("GameState missing");
     let armed = move || mode.is_some_and(|m| state.build_mode.get() == m);
 
+    // (label, artwork, how many)
     let parts: Vec<(&'static str, &'static str, u8)> = vec![
-        ("Brick", "bg-orange-400 border-orange-600", cost[0]),
-        ("Wood", "bg-emerald-500 border-emerald-700", cost[1]),
-        ("Sheep", "bg-lime-400 border-lime-600", cost[2]),
-        ("Wheat", "bg-amber-400 border-amber-600", cost[3]),
-        ("Ore", "bg-slate-400 border-slate-600", cost[4]),
+        ("Brick", "brick", cost[0]),
+        ("Wood", "wood", cost[1]),
+        ("Sheep", "sheep", cost[2]),
+        ("Wheat", "wheat", cost[3]),
+        ("Ore", "ore", cost[4]),
     ];
 
     view! {
@@ -551,7 +555,7 @@ fn BuildButton(
                     None => state.send(ClientRequest::BuyDevelopmentCard),
                 }
             >
-                <Icon kind=kind size="w-5 h-5" />
+                <Art name=art alt=label class="h-7 w-7 object-contain" />
                 <span class="text-[8px] font-bold uppercase tracking-wider leading-none">{label}</span>
             </button>
 
@@ -570,16 +574,11 @@ fn BuildButton(
                             .filter(|(_, _, n)| *n > 0)
                             .flat_map(|(name, colour, n)| {
                                 (0..n).map(move |_| view! {
-                                    <span
-                                        class=format!(
-                                            "flex items-end justify-center w-10 h-10 rounded-md border-b-4 shadow {colour}"
-                                        )
-                                        title=name
-                                    >
-                                        <span class="text-[7px] font-bold uppercase tracking-wide text-black/70 pb-0.5">
-                                            {name}
-                                        </span>
-                                    </span>
+                                    <Art
+                                        name=colour
+                                        alt=name
+                                        class="w-[30px] h-[42px] rounded-md object-cover shadow ring-1 ring-black/40"
+                                    />
                                 }).collect::<Vec<_>>()
                             })
                             .collect_view()}
@@ -693,14 +692,8 @@ impl Res {
             Res::Ore => "Ore",
         }
     }
-    fn tint(self) -> &'static str {
-        match self {
-            Res::Brick => "bg-orange-400 border-orange-600",
-            Res::Wood => "bg-emerald-500 border-emerald-700",
-            Res::Sheep => "bg-lime-400 border-lime-600",
-            Res::Wheat => "bg-amber-400 border-amber-600",
-            Res::Ore => "bg-slate-400 border-slate-600",
-        }
+    fn art(self) -> &'static str {
+        resource_art(self.shared())
     }
     fn shared(self) -> shared::ResourceType {
         match self {
@@ -739,8 +732,8 @@ fn TradeCard(
     view! {
         <button
             class=move || format!(
-                "relative flex items-end justify-center w-11 h-14 rounded-md border-b-4 shadow transition-all {} {}",
-                kind.tint(),
+                "relative flex items-end justify-center w-11 h-14 rounded-md overflow-hidden ring-1 ring-black/40 shadow transition-all {} {}",
+                "",
                 if enabled.get() { "hover:-translate-y-0.5" } else { "grayscale opacity-40 cursor-not-allowed" },
             )
             disabled=move || !enabled.get()
@@ -751,7 +744,8 @@ fn TradeCard(
                 on_remove.call(kind);
             }
         >
-            <span class="text-[7px] font-bold uppercase tracking-wide text-black/70 pb-1">
+            <Art name=kind.art() alt=kind.label() class="absolute inset-0 w-full h-full object-cover" />
+            <span class="relative z-10 w-full bg-black/70 text-center text-[7px] font-bold uppercase tracking-wide text-white">
                 {kind.label()}
             </span>
             <Show when=has_any>
@@ -818,10 +812,11 @@ fn TradeSide(
                 <div class="flex flex-wrap gap-0.5">
                     {move || Res::ALL.into_iter().flat_map(|k| {
                         (0..basket.get().get(k)).map(move |_| view! {
-                            <span
-                                class=format!("w-4 h-6 rounded-sm border-b-2 {}", k.tint())
-                                title=k.label()
-                            ></span>
+                            <Art
+                                name=k.art()
+                                alt=k.label()
+                                class="w-4 h-6 rounded-sm object-cover ring-1 ring-black/40"
+                            />
                         }).collect::<Vec<_>>()
                     }).collect_view()}
                 </div>
@@ -1007,13 +1002,22 @@ fn TradeBuilder() -> impl IntoView {
                                 clear();
                             }
                         >
-                            {move || if bank_deal().is_some() {
-                                "Trade with bank"
-                            } else if ready() {
-                                "Offer to players"
-                            } else {
-                                "Pick both sides"
-                            }}
+                            <span class="flex items-center justify-center gap-1.5">
+                                {move || if bank_deal().is_some() {
+                                    view! { <Art name="bank" class="w-4 h-4 object-contain" /> }.into_view()
+                                } else if ready() {
+                                    view! { <Art name="trading" class="w-4 h-4 object-contain" /> }.into_view()
+                                } else {
+                                    view! {}.into_view()
+                                }}
+                                {move || if bank_deal().is_some() {
+                                    "Trade with bank"
+                                } else if ready() {
+                                    "Offer to players"
+                                } else {
+                                    "Pick both sides"
+                                }}
+                            </span>
                         </button>
                     }
                 >
@@ -1083,13 +1087,6 @@ fn TradeBuilder() -> impl IntoView {
 fn DevCardHand() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let icon_for = |card: &shared::DevCardType| match card {
-        shared::DevCardType::Knight => IconKind::Knight,
-        shared::DevCardType::VictoryPoint => IconKind::Trophy,
-        shared::DevCardType::RoadBuilding => IconKind::Road,
-        shared::DevCardType::Monopoly => IconKind::Coins,
-        shared::DevCardType::YearOfPlenty => IconKind::Wheat,
-    };
     let short = |card: &shared::DevCardType| match card {
         shared::DevCardType::Knight => "Knight",
         shared::DevCardType::VictoryPoint => "Point",
@@ -1152,13 +1149,15 @@ fn DevCardHand() -> impl IntoView {
                         view! {
                             <button
                                 class=move || format!(
-                                    "flex flex-col items-center justify-center gap-0.5 w-12 h-12 rounded-lg border-b-4 transition-all {}",
+                                    "relative w-[38px] h-[53px] rounded-md overflow-hidden shadow-lg transition-all {}",
                                     if is_point {
-                                        "bg-amber-300 border-amber-500 text-amber-950 cursor-default"
+                                        "ring-2 ring-amber-400 cursor-default"
                                     } else if playable() {
-                                        "bg-violet-400 border-violet-600 text-violet-950 hover:-translate-y-1 cursor-pointer"
+                                        "ring-1 ring-violet-400 hover:-translate-y-1 cursor-pointer"
                                     } else {
-                                        "bg-slate-600 border-slate-700 text-slate-400 opacity-60 cursor-not-allowed"
+                                        // Cannot be played yet, so it reads as
+                                        // out of reach rather than merely dim.
+                                        "ring-1 ring-slate-700 grayscale opacity-55 cursor-not-allowed"
                                     }
                                 )
                                 title=why
@@ -1170,8 +1169,8 @@ fn DevCardHand() -> impl IntoView {
                                     });
                                 }
                             >
-                                <Icon kind=icon_for(&card) size="w-4 h-4" />
-                                <span class="text-[7px] font-bold uppercase tracking-wide leading-none">
+                                <Art name=dev_card_art(&card) alt=name class="w-full h-full object-cover" />
+                                <span class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[7px] font-bold uppercase tracking-wide text-white leading-tight">
                                     {name}
                                 </span>
                             </button>
@@ -1189,17 +1188,19 @@ fn DevCardHand() -> impl IntoView {
 fn ResourceHand() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let card = move |label: &'static str, tint: &'static str, count: u8| {
+    let card = move |label: &'static str, res: shared::ResourceType, count: u8| {
         view! {
             <div
                 class=format!(
-                    "flex flex-col items-center justify-center w-12 h-12 rounded-lg border-b-4 shadow-lg transition-transform hover:-translate-y-0.5 {tint} {}",
-                    if count == 0 { "opacity-40" } else { "" }
+                    "relative w-[38px] h-[53px] rounded-md overflow-hidden shadow-lg ring-1 ring-black/40 transition-transform hover:-translate-y-0.5 {}",
+                    if count == 0 { "grayscale opacity-40" } else { "" }
                 )
                 title=format!("{count} {label}")
             >
-                <span class="text-[9px] font-bold uppercase tracking-wider text-black/60">{label}</span>
-                <span class="text-lg font-black leading-none text-black/85 tabular-nums">{count}</span>
+                <Art name=resource_art(res) alt=label class="w-full h-full object-cover" />
+                <span class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[11px] font-black text-white tabular-nums leading-tight">
+                    {count}
+                </span>
             </div>
         }
     };
@@ -1209,14 +1210,14 @@ fn ResourceHand() -> impl IntoView {
             {move || {
                 let r = state.my_resources.get();
                 view! {
-                    {card("Brick", "bg-orange-400 border-orange-600", r.brick)}
-                    {card("Wood", "bg-emerald-500 border-emerald-700", r.lumber)}
-                    {card("Sheep", "bg-lime-400 border-lime-600", r.wool)}
-                    {card("Wheat", "bg-amber-400 border-amber-600", r.grain)}
-                    {card("Ore", "bg-slate-400 border-slate-600", r.ore)}
+                    {card("Brick", shared::ResourceType::Brick, r.brick)}
+                    {card("Wood", shared::ResourceType::Wood, r.lumber)}
+                    {card("Sheep", shared::ResourceType::Sheep, r.wool)}
+                    {card("Wheat", shared::ResourceType::Wheat, r.grain)}
+                    {card("Ore", shared::ResourceType::Ore, r.ore)}
                 }
             }}
-            <div class="ml-1 pl-3 border-l border-slate-700 flex flex-col items-center justify-center h-12">
+            <div class="ml-1 pl-3 border-l border-slate-700 flex flex-col items-center justify-center h-[53px]">
                 <span class="text-[9px] font-bold uppercase tracking-wider text-slate-500">"Total"</span>
                 <span class="text-lg font-black leading-none text-slate-200 tabular-nums">
                     {move || {
@@ -1344,17 +1345,17 @@ fn PlayerTagDynamic(
                     "resources"
                 </span>
                 <span class="flex items-center gap-1.5 whitespace-nowrap" title="Development cards in hand">
-                    <Icon kind=IconKind::DevCard />
+                    <Art name="stat-devcards" class="w-3 h-4 object-contain" />
                     <span class="text-slate-200 font-semibold">{move || dev_card_count.get()}</span>
                     "dev cards"
                 </span>
                 <span class="flex items-center gap-1.5 whitespace-nowrap" title="Knights played">
-                    <Icon kind=IconKind::Knight />
+                    <Art name="stat-knights" class="w-4 h-4 object-contain" />
                     <span class="text-slate-200 font-semibold">{move || knights_played.get()}</span>
                     "knights"
                 </span>
                 <span class="flex items-center gap-1.5 whitespace-nowrap" title="Longest road length">
-                    <Icon kind=IconKind::Road />
+                    <Art name="stat-road" class="w-4 h-4 object-contain" />
                     <span class="text-slate-200 font-semibold">{move || roads_count.get()}</span>
                     "road"
                 </span>

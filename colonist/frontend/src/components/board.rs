@@ -1,6 +1,6 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
-use crate::components::icons::DieFace;
+use crate::components::icons::{port_art, DieFace};
 use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PlayerColour, PortType, PortInfo};
 use uuid::Uuid;
 
@@ -13,6 +13,8 @@ fn axial_to_pixel(q: i32, r: i32, size: f32) -> (f32, f32) {
 
 // ===== Port rendering helpers (using shared::PortType from server) =====
 
+
+
 fn port_label(port_type: &PortType) -> &'static str {
     match port_type {
         PortType::ThreeToOne => "3:1",
@@ -20,44 +22,18 @@ fn port_label(port_type: &PortType) -> &'static str {
     }
 }
 
-fn port_resource_label(port_type: &PortType) -> Option<&'static str> {
-    match port_type {
-        PortType::ThreeToOne => None,
-        PortType::TwoToOne(res) => Some(match res {
-            ResourceType::Brick => "BRICK",
-            ResourceType::Wood => "WOOD",
-            ResourceType::Sheep => "SHEEP",
-            ResourceType::Wheat => "WHEAT",
-            ResourceType::Ore => "ORE",
-            ResourceType::Desert => "?",
-        }),
-    }
-}
-
+/// Ink for the ratio text under a harbour badge, matched to the resource so
+/// the label reads as part of the same marker.
 fn port_color(port_type: &PortType) -> &'static str {
     match port_type {
         PortType::ThreeToOne => "#ffffff",
         PortType::TwoToOne(res) => match res {
-            ResourceType::Brick => "#fb923c",   // orange-400
-            ResourceType::Wood => "#059669",    // emerald-600
-            ResourceType::Sheep => "#84cc16",   // lime-500
-            ResourceType::Wheat => "#eab308",   // yellow-500
-            ResourceType::Ore => "#64748b",     // slate-500
+            ResourceType::Brick => "#fb923c",
+            ResourceType::Wood => "#34d399",
+            ResourceType::Sheep => "#a3e635",
+            ResourceType::Wheat => "#fbbf24",
+            ResourceType::Ore => "#cbd5e1",
             ResourceType::Desert => "#ffffff",
-        },
-    }
-}
-
-fn port_bg_color(port_type: &PortType) -> &'static str {
-    match port_type {
-        PortType::ThreeToOne => "#1e293b", // slate-800
-        PortType::TwoToOne(res) => match res {
-            ResourceType::Brick => "#431407",   // orange-950
-            ResourceType::Wood => "#022c22",    // emerald-950
-            ResourceType::Sheep => "#1a2e05",   // lime-950
-            ResourceType::Wheat => "#422006",   // yellow-950
-            ResourceType::Ore => "#020617",     // slate-950
-            ResourceType::Desert => "#1e293b",
         },
     }
 }
@@ -513,9 +489,7 @@ pub fn Board() -> impl IntoView {
 
                                 // Get port display properties from server-sent port type
                                 let label = port_label(&port.port_type);
-                                let resource = port_resource_label(&port.port_type);
                                 let color = port_color(&port.port_type);
-                                let bg_color = port_bg_color(&port.port_type);
 
                                 view! {
                                     <g>
@@ -536,32 +510,25 @@ pub fn Board() -> impl IntoView {
                                         <circle cx=v2x cy=v2y r="3.5" fill=color opacity="0.9" />
 
                                         <g transform=format!("translate({}, {})", port_x, port_y)>
-                                            // A round buoy rather than a
-                                            // floating rectangle: it sits on
-                                            // the water without looking like a
-                                            // stray label.
-                                            <circle r="21" fill="#0b1b2b" opacity="0.55" />
-                                            <circle r="19" fill=bg_color stroke=color stroke-width="2.5" />
+                                            // The drawn harbour badge, with the
+                                            // ratio still spelled out under it:
+                                            // the picture says which resource,
+                                            // the text says the rate.
+                                            <circle r="24" fill="#0b1b2b" opacity="0.5" />
+                                            <image
+                                                href=format!("/assets/{}.svg", port_art(&port.port_type))
+                                                x="-22" y="-24" width="44" height="44"
+                                            />
                                             <text
-                                                y=if resource.is_some() { "-3" } else { "1" }
+                                                y="21"
                                                 text-anchor="middle"
                                                 dominant-baseline="central"
                                                 fill=color
-                                                class="text-[13px] font-black"
+                                                class="text-[12px] font-black"
+                                                style="paint-order: stroke; stroke: #0b1b2b; stroke-width: 3px;"
                                             >
                                                 {label}
                                             </text>
-                                            {resource.map(|res| view! {
-                                                <text
-                                                    y="9"
-                                                    text-anchor="middle"
-                                                    dominant-baseline="central"
-                                                    fill=color
-                                                    class="text-[7px] font-bold tracking-wider"
-                                                >
-                                                    {res}
-                                                </text>
-                                            })}
                                         </g>
                                     </g>
                                 }
@@ -582,14 +549,11 @@ pub fn Board() -> impl IntoView {
                                         r="20"
                                         class="fill-black/40 stroke-red-600 stroke-2"
                                     />
-                                    // Drawn, not lettered: an emoji here is a
-                                    // tofu box on any machine without an emoji
-                                    // font, and the robber has to be legible.
-                                    <g class="pointer-events-none" transform="translate(-9, -9) scale(1.125)">
-                                        <circle cx="8" cy="5" r="2.6" class="fill-red-500"/>
-                                        <path d="M2.6 14c0-3 2.4-5 5.4-5s5.4 2 5.4 5z" class="fill-red-500"/>
-                                        <path d="M4.2 5.6h7.6" stroke="#0b1120" stroke-width="1.6" stroke-linecap="round"/>
-                                    </g>
+                                    <image
+                                        href="/assets/robber.svg"
+                                        x="-19" y="-19" width="38" height="38"
+                                        class="pointer-events-none"
+                                    />
                                 </g>
                             }.into_view()
                         } else {

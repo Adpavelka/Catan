@@ -16,19 +16,13 @@ use leptos::*;
 pub enum IconKind {
     /// Cards in hand.
     Resource,
-    /// Development cards.
-    DevCard,
     Knight,
     Road,
-    Settlement,
-    City,
     Trophy,
     Robber,
     Warning,
     Refresh,
     Wheat,
-    /// Monopoly.
-    Coins,
 }
 
 #[component]
@@ -53,15 +47,6 @@ pub fn Icon(
             </>
         }.into_view(),
 
-        // scroll-text
-        IconKind::DevCard => view! {
-            <>
-                <path d="M15 12h-5"/>
-                <path d="M15 8h-5"/>
-                <path d="M19 17V5a2 2 0 0 0-2-2H4"/>
-                <path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>
-            </>
-        }.into_view(),
 
         // swords
         IconKind::Knight => view! {
@@ -86,23 +71,7 @@ pub fn Icon(
             </>
         }.into_view(),
 
-        // house
-        IconKind::Settlement => view! {
-            <>
-                <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>
-                <path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-            </>
-        }.into_view(),
 
-        // building-2
-        IconKind::City => view! {
-            <>
-                <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/>
-                <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/>
-                <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/>
-                <path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/>
-            </>
-        }.into_view(),
 
         // trophy
         IconKind::Trophy => view! {
@@ -144,15 +113,6 @@ pub fn Icon(
             </>
         }.into_view(),
 
-        // coins
-        IconKind::Coins => view! {
-            <>
-                <circle cx="8" cy="8" r="6"/>
-                <path d="M18.09 10.37A6 6 0 1 1 10.34 18"/>
-                <path d="M7 6h1v4"/>
-                <path d="m16.71 13.88.7.71-2.82 2.82"/>
-            </>
-        }.into_view(),
 
         // wheat
         IconKind::Wheat => view! {
@@ -212,5 +172,66 @@ pub fn DieFace(
                 .map(|(cx, cy)| view! { <circle cx=*cx cy=*cy r="1.4" fill="#0f172a"/> })
                 .collect_view()}
         </svg>
+    }
+}
+
+/// Artwork from `frontend/assets`, copied into the bundle by Trunk and served
+/// at `/assets/<name>`.
+///
+/// These are full-colour illustrations, so unlike `Icon` they cannot inherit
+/// `currentColor`. Where the UI needs a disabled look it applies a `grayscale`
+/// filter, which does work on an `<img>`.
+#[component]
+pub fn Art(
+    /// File name inside `assets`, without the extension.
+    name: &'static str,
+    #[prop(default = "")] class: &'static str,
+    #[prop(default = "")] alt: &'static str,
+) -> impl IntoView {
+    view! {
+        <img
+            src=format!("/assets/{name}.svg")
+            alt=alt
+            draggable="false"
+            class=format!("select-none pointer-events-none {class}")
+        />
+    }
+}
+
+/// The card face for a resource.
+pub fn resource_art(res: shared::ResourceType) -> &'static str {
+    match res {
+        shared::ResourceType::Brick => "brick",
+        shared::ResourceType::Wood => "wood",
+        shared::ResourceType::Sheep => "sheep",
+        shared::ResourceType::Wheat => "wheat",
+        shared::ResourceType::Ore => "ore",
+        shared::ResourceType::Desert => "brick",
+    }
+}
+
+/// The card face for a development card.
+pub fn dev_card_art(card: &shared::DevCardType) -> &'static str {
+    match card {
+        shared::DevCardType::Knight => "dev-knight",
+        shared::DevCardType::VictoryPoint => "dev-victory",
+        shared::DevCardType::RoadBuilding => "dev-road",
+        shared::DevCardType::Monopoly => "dev-monopoly",
+        shared::DevCardType::YearOfPlenty => "dev-plenty",
+    }
+}
+
+/// The harbour badge for a port.
+pub fn port_art(port: &shared::PortType) -> &'static str {
+    match port {
+        shared::PortType::ThreeToOne => "port-generic",
+        shared::PortType::TwoToOne(res) => match res {
+            shared::ResourceType::Brick => "port-brick",
+            shared::ResourceType::Wood => "port-wood",
+            shared::ResourceType::Sheep => "port-sheep",
+            shared::ResourceType::Wheat => "port-wheat",
+            shared::ResourceType::Ore => "port-ore",
+            shared::ResourceType::Desert => "port-generic",
+        },
     }
 }
