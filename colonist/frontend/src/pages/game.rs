@@ -4,6 +4,7 @@ use crate::components::board::Board;
 use crate::state::GameState;
 use crate::components::icons::{Icon, IconKind};
 use crate::components::bottom::BottomLayer;
+use crate::components::flight::ResourceFlight;
 use crate::components::sidebar::{ChatPanel, EventLog, PlayerPanels, ResourceBank};
 use crate::components::toolbar::LeftToolbar;
 use shared::{ClientRequest, GamePhase};
@@ -22,6 +23,10 @@ pub fn GamePage() -> impl IntoView {
 
     view! {
         <div class="h-screen flex flex-col overflow-hidden bg-slate-950 font-sans relative">
+            // Cards travelling from the tiles that produced them to the people
+            // who got them. Above everything, and never in the way.
+            <ResourceFlight />
+
             // Discard cards modal
             <Show when=move || state.must_discard_count.get().is_some()>
                 <DiscardCardsModal />

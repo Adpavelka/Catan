@@ -79,6 +79,12 @@ pub struct GameState {
     /// The last roll anybody made, never cleared. What the dice tray shows, so
     /// it keeps displaying the previous player's roll instead of blanking.
     pub table_last_roll: RwSignal<Option<(u8, u8)>>,
+    /// The total just rolled, and a counter that ticks on every roll.
+    ///
+    /// The counter is what the board and the resource animation watch: two
+    /// eights in a row are the same number but two different events, and a
+    /// signal that only carried the total would not fire for the second.
+    pub last_roll_event: RwSignal<Option<(u8, u64)>>,
     pub build_mode: RwSignal<BuildMode>,
     pub my_dev_cards: RwSignal<Vec<shared::DevCardType>>,
     /// Cards drawn this turn. They cannot be played until the next one, so
@@ -112,6 +118,14 @@ pub struct GameState {
     /// Players who have said they will take my offer, oldest bid first. I pick
     /// one of them to settle with; accepting alone moves nothing.
     pub my_trade_accepters: RwSignal<Vec<Uuid>>,
+    /// Players who have turned my offer down. Kept so the status panel can
+    /// show a red cross against them rather than just leaving them blank -
+    /// "said no" and "has not answered" are different things to wait on.
+    pub my_trade_decliners: RwSignal<Vec<Uuid>>,
+    /// The terms of my own outstanding offer, as (giving, asking, giving_any,
+    /// asking_any). The panel has to redraw the deal, and the offer is only
+    /// ever sent to me once.
+    pub my_offer_terms: RwSignal<Option<(Resources, Resources, u8, u8)>>,
     /// Offer ids I have accepted and am waiting on the proposer to settle.
     pub my_accepted_offers: RwSignal<Vec<u64>>,
     /// Counters I have outstanding, as (offer I answered, my counter's id).
@@ -182,6 +196,7 @@ impl GameState {
         let mut accepted = Vec::new();
         let mut mine = None;
         let mut my_accepters = Vec::new();
+        let mut my_terms = None;
         let mut my_counters = Vec::new();
 
         for snapshot in snapshots {
@@ -196,6 +211,14 @@ impl GameState {
                 } else {
                     mine = Some(snapshot.offer_id);
                     my_accepters = snapshot.accepted_by;
+                    // Restore the terms too, so a reconnect redraws the deal
+                    // rather than showing an offer with nothing in it.
+                    my_terms = Some((
+                        snapshot.offering,
+                        snapshot.requesting,
+                        snapshot.offering_any,
+                        snapshot.requesting_any,
+                    ));
                 }
                 continue;
             }
@@ -226,6 +249,10 @@ impl GameState {
         self.my_pending_trade.set(mine);
         self.my_trade_accepters.set(my_accepters);
         self.my_counter_offers.set(my_counters);
+        self.my_offer_terms.set(my_terms);
+        // The server sends who accepted, not who declined, so a reconnect
+        // starts the decline tally over rather than inventing one.
+        self.my_trade_decliners.set(Vec::new());
     }
 
     /// Drops any record of a counter once `offer_id` is gone, whether that id
@@ -338,6 +365,10 @@ impl GameState {
                     logging::log!("Player {} rolled: {} + {} = {}, discards_pending: {}", player_id, dice_1, dice_2, total, discards_pending);
                     self.last_dice_roll.set(Some((dice_1, dice_2)));
                     self.table_last_roll.set(Some((dice_1, dice_2)));
+                    self.last_roll_event.update(|e| {
+                        let seq = e.map_or(0, |(_, n)| n + 1);
+                        *e = Some((total, seq));
+                    });
 
                     // If I rolled a 7 and others need to discard, show waiting message
                     if total == 7 && Some(player_id) == self.player_id.get_untracked() && discards_pending > 0 {
@@ -388,7 +419,17 @@ impl GameState {
 
                     match structure_type {
                         shared::StructureType::Settlement => self.settlements.update(|s| s.push(building)),
-                        shared::StructureType::City => self.cities.update(|c| c.push(building)),
+                        // A city replaces the settlement that stood there. The
+                        // server holds one building per vertex and its syncs
+                        // say so, but this incremental path only ever added -
+                        // so the vertex kept a settlement that no longer
+                        // existed, and any client that resynced afterwards
+                        // disagreed with one that had not.
+                        shared::StructureType::City => {
+                            self.settlements
+                                .update(|s| s.retain(|b| (b.x, b.y) != (building.x, building.y)));
+                            self.cities.update(|c| c.push(building));
+                        }
                         shared::StructureType::Road => {
                             self.roads.update(|r| r.push(building));
                             // If it's me and I was using free roads, decrement the counter
@@ -740,6 +781,13 @@ impl GameState {
                     if Some(proposer_id) == my_id && counters.is_none() {
                         self.my_pending_trade.set(Some(offer_id));
                         self.my_trade_accepters.set(Vec::new());
+                        self.my_trade_decliners.set(Vec::new());
+                        self.my_offer_terms.set(Some((
+                            offering.clone(),
+                            requesting.clone(),
+                            offering_any,
+                            requesting_any,
+                        )));
                     }
 
                     // Countering replaces whatever I had said before, so drop
@@ -838,6 +886,8 @@ impl GameState {
                     if self.my_pending_trade.get_untracked() == Some(offer_id) {
                         self.my_pending_trade.set(None);
                         self.my_trade_accepters.set(Vec::new());
+                        self.my_trade_decliners.set(Vec::new());
+                        self.my_offer_terms.set(None);
                     }
 
                     // Show message
@@ -871,6 +921,8 @@ impl GameState {
                     if self.my_pending_trade.get_untracked() == Some(offer_id) {
                         self.my_pending_trade.set(None);
                         self.my_trade_accepters.set(Vec::new());
+                        self.my_trade_decliners.set(Vec::new());
+                        self.my_offer_terms.set(None);
                         self.messages.update(|m| m.push("Your trade offer closed.".to_string()));
                     }
                 }
@@ -882,6 +934,11 @@ impl GameState {
 
                     if Some(proposer_id) == my_id {
                         self.my_trade_accepters.update(|ids| ids.retain(|id| *id != decliner_id));
+                        self.my_trade_decliners.update(|ids| {
+                            if !ids.contains(&decliner_id) {
+                                ids.push(decliner_id);
+                            }
+                        });
                     }
 
                     // If I'm the one who declined, remove from my incoming trades
@@ -1028,6 +1085,9 @@ pub fn provide_game_state() {
         // Lobby state
         messages: create_rw_signal(Vec::new()),
         chat: create_rw_signal(Vec::new()),
+        last_roll_event: create_rw_signal(None),
+        my_trade_decliners: create_rw_signal(Vec::new()),
+        my_offer_terms: create_rw_signal(None),
         bank: create_rw_signal(shared::BankInfo::default()),
         is_in_game: create_rw_signal(false),
         lobby_games: create_rw_signal(Vec::new()),

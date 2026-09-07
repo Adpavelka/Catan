@@ -209,6 +209,87 @@
         text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
     }
 
+    /* Dice waiting to be thrown: a slow breath, so the eye is drawn to them
+       without anything jumping about. Stops the moment they are rolled. */
+    .dice-waiting {
+        animation: dice-breathe 1300ms ease-in-out infinite;
+    }
+    @keyframes dice-breathe {
+        0%,
+        100% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(1.09);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .dice-waiting {
+            animation: none;
+        }
+    }
+
+    /* ------------------------------------------------- roll feedback */
+
+    /* A tile that just paid out: one bright pulse, then it settles back to
+       the steady rim so you can still find it a moment later. */
+    /* `forwards` matters: without it the overlay snaps back to full strength
+       when the animation ends and leaves the tile washed out until the next
+       roll, instead of settling to the faint tint the last keyframe sets. */
+    .hex-flash {
+        animation: hex-flash 900ms ease-out 1 forwards;
+    }
+    @keyframes hex-flash {
+        0% {
+            opacity: 0.75;
+        }
+        100% {
+            opacity: 0.12;
+        }
+    }
+
+    /* A card travelling from the tile that produced it to the player who got
+       it. Position and travel come from custom properties set per card. */
+    .flyer {
+        position: fixed;
+        left: 0;
+        top: 0;
+        pointer-events: none;
+        z-index: 9000;
+        animation: flyer var(--dur, 850ms) cubic-bezier(0.4, 0.05, 0.35, 1)
+            var(--delay, 0ms) both;
+    }
+    @keyframes flyer {
+        0% {
+            transform: translate(var(--x0), var(--y0)) scale(0.35);
+            opacity: 0;
+        }
+        18% {
+            transform: translate(
+                    calc(var(--x0) + (var(--x1) - var(--x0)) * 0.18),
+                    calc(var(--y0) + (var(--y1) - var(--y0)) * 0.18 - 26px)
+                )
+                scale(1.05);
+            opacity: 1;
+        }
+        80% {
+            opacity: 1;
+        }
+        100% {
+            transform: translate(var(--x1), var(--y1)) scale(0.4);
+            opacity: 0;
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .flyer {
+            display: none;
+        }
+        .hex-flash {
+            animation: none;
+            opacity: 0.2;
+        }
+    }
+
     /* The count on a resource card: a little tab folded over the corner. */
     .card-badge {
         background: var(--badge-blue);

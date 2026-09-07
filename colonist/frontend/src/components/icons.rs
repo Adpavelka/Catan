@@ -150,16 +150,15 @@ pub fn DieFace(
                 </radialGradient>
             </defs>
 
-            <rect x="0.9" y="0.9" width="14.2" height="14.2" rx="2.4"
-                  fill=format!("url(#{body})") stroke="#1b2226" stroke-width="1.1"/>
+            <rect x="1.1" y="1.1" width="13.8" height="13.8" rx="2.6"
+                  fill=format!("url(#{body})") stroke="#8d9aa1" stroke-width="0.3"/>
             // A highlight along the top edge: the die catches the light.
-            <rect x="2" y="2" width="12" height="11" rx="1.6"
-                  fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.5"/>
+            <rect x="2.2" y="2.2" width="11.6" height="10.6" rx="1.8"
+                  fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.4"/>
 
             {pips.iter()
                 .map(|(cx, cy)| view! {
-                    <circle cx=*cx cy=*cy r="1.55"
-                            fill=format!("url(#{pip})") stroke="#141a1e" stroke-width="0.35"/>
+                    <circle cx=*cx cy=*cy r="1.5" fill=format!("url(#{pip})")/>
                 })
                 .collect_view()}
         </svg>

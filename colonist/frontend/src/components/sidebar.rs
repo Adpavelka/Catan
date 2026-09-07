@@ -238,6 +238,9 @@ fn PlayerPanel(player_id: Uuid) -> impl IntoView {
 
                 view! {
                     <div
+                        // The resource animation flies cards to this row, and
+                        // finds it by id rather than by position.
+                        data-player=player_id.to_string()
                         class=move || format!(
                             "panel px-2 py-1.5 shrink-0 relative {}",
                             if active { "ring-[3px] ring-[#ffb718]" } else { "" }

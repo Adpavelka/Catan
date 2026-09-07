@@ -313,6 +313,31 @@ pub fn Board() -> impl IntoView {
                 on:pointerleave=move |_| set_dragging.set(None)
             >
 
+                // One tint per player colour. The pieces are drawn from
+                // the same artwork as the buy buttons, so a filter is what
+                // makes a settlement *yours*: flood the shape with your
+                // colour, then multiply the artwork's own shading back over
+                // it so it keeps its modelling instead of going flat.
+                <defs>
+                    {shared::PlayerColour::ALL.map(|c| {
+                        let hex = c.hex();
+                        view! {
+                            <filter id=tint_id(hex) color-interpolation-filters="sRGB">
+                                <feFlood flood-color=hex result="flat" />
+                                <feComposite in="flat" in2="SourceAlpha" operator="in" result="solid" />
+                                <feColorMatrix in="SourceGraphic" type="saturate" values="0" result="grey" />
+                                <feComponentTransfer in="grey" result="soft">
+                                    <feFuncR type="linear" slope="0.42" intercept="0.58" />
+                                    <feFuncG type="linear" slope="0.42" intercept="0.58" />
+                                    <feFuncB type="linear" slope="0.42" intercept="0.58" />
+                                </feComponentTransfer>
+                                <feBlend in="soft" in2="solid" mode="multiply" result="shaded" />
+                                <feComposite in="shaded" in2="SourceAlpha" operator="in" />
+                            </filter>
+                        }
+                    }).to_vec()}
+                </defs>
+
                 // Center the board horizontally, move up vertically
                 // The board is drawn at a fixed hex size and then scaled as a
                 // whole, so the 30-hex extension board fits the same viewport
@@ -510,11 +535,14 @@ pub fn Board() -> impl IntoView {
                                             // The drawn harbour badge, with the
                                             // ratio still spelled out under it:
                                             // the picture says which resource,
-                                            // the text says the rate.
-                                            <circle r="24" fill="#0b1b2b" opacity="0.5" />
+                                            // the text says the rate. The
+                                            // artwork sits straight on the
+                                            // water - a disc behind it only
+                                            // boxed it in.
                                             <image
                                                 href=format!("/assets/{}.svg", port_art(&port.port_type))
-                                                x="-22" y="-24" width="44" height="44"
+                                                x="-24" y="-26" width="48" height="48"
+                                                style="filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.45));"
                                             />
                                             <text
                                                 y="21"
@@ -861,8 +889,7 @@ pub fn Board() -> impl IntoView {
 /// before you have rolled, they are also the roll button, and they tumble for
 /// a moment rather than snapping straight to the answer.
 ///
-/// They sit loose on the water rather than in a panel, and are set very
-/// slightly askew, because dice that have just been thrown do not line up.
+/// They sit loose on the water rather than in a panel.
 #[component]
 pub fn DiceTray() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
@@ -917,7 +944,7 @@ pub fn DiceTray() -> impl IntoView {
     view! {
         <button
             class=move || format!(
-                "flex items-start gap-3 rounded-2xl transition-transform {}",
+                "flex items-center gap-3 rounded-2xl transition-transform {}",
                 if can_roll() { "hover:scale-[1.04] cursor-pointer" } else { "cursor-default" }
             )
             disabled=move || !can_roll()
@@ -931,17 +958,21 @@ pub fn DiceTray() -> impl IntoView {
         >
             {move || {
                 let (a, b) = shown.get();
-                let shake = if tumbling.get() { "animate-bounce" } else { "" };
+                // Waiting to be thrown: a slow breath. Mid-throw: a tumble.
+                // Otherwise still, because they are just showing a result.
+                let motion = if tumbling.get() {
+                    "animate-bounce"
+                } else if can_roll() {
+                    "dice-waiting"
+                } else {
+                    ""
+                };
                 view! {
-                    // A degree or two apart, so they read as thrown rather
-                    // than placed.
-                    <div class=format!("drop-shadow-[0_4px_6px_rgba(0,0,0,0.4)] {shake}")
-                         style="transform: rotate(-4deg)">
-                        <DieFace value=a size="w-[120px] h-[120px]" />
+                    <div class=format!("drop-shadow-[0_3px_5px_rgba(0,0,0,0.3)] {motion}")>
+                        <DieFace value=a size="w-[136px] h-[136px]" />
                     </div>
-                    <div class=format!("drop-shadow-[0_4px_6px_rgba(0,0,0,0.4)] mt-2 {shake}")
-                         style="transform: rotate(5deg)">
-                        <DieFace value=b size="w-[120px] h-[120px]" />
+                    <div class=format!("drop-shadow-[0_3px_5px_rgba(0,0,0,0.3)] {motion}")>
+                        <DieFace value=b size="w-[136px] h-[136px]" />
                     </div>
                 }
             }}
@@ -960,6 +991,7 @@ pub fn DiceTray() -> impl IntoView {
 
 #[component]
 fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
     let points = "0,-50 43,-25 43,25 0,50 -43,25 -43,-25";
     let color = resource_color(&hex.resource);
     let label = resource_label(&hex.resource);
@@ -969,9 +1001,36 @@ fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
     let pips = if hex.number == 0 { 0 } else { 6u8.saturating_sub((7i8 - hex.number as i8).unsigned_abs()) };
     let hot = hex.number == 6 || hex.number == 8;
 
+    // Did the table just roll this tile's number? At a real table you look at
+    // the dice and then scan the board; this does the scanning for you.
+    let (q, r) = (hex.q, hex.r);
+    let struck = move || {
+        state.last_roll_event.get().is_some_and(|(total, _)| total == hex.number)
+    };
+    // The robber stops a tile producing, so a tile under it does not light up.
+    let blocked = move || state.robber_pos.get() == Some((q, r));
+    let producing = move || struck() && !blocked();
+
     view! {
-        <g transform=format!("translate({}, {})", x, y) class="group">
+        <g
+            transform=format!("translate({}, {})", x, y)
+            class="group"
+            data-hex=format!("{q},{r}")
+        >
             <polygon points=points class=format!("{} stroke-black/30 [stroke-width:2]", color) />
+
+            // The flash: a bright rim that fades, plus a steady glow while the
+            // roll stands, so a tile that paid out stays findable afterwards.
+            <Show when=producing>
+                <g class="pointer-events-none">
+                    <polygon points=points class="fill-white/25 hex-flash" />
+                    <polygon
+                        points=points fill="none"
+                        stroke="#ffe066" stroke-width="5" stroke-linejoin="round"
+                        style="filter: drop-shadow(0 0 6px #ffd21e);"
+                    />
+                </g>
+            </Show>
             // A little inner shading so the tiles read as solid, not flat.
             <polygon points=points class="fill-none stroke-white/10" stroke-width="1"
                      transform="scale(0.93)" />
@@ -991,7 +1050,12 @@ fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
             <Show when=move || hex.number != 0 && hex.number != 7>
                 <g transform="translate(0, 8)" class="pointer-events-none">
                     <circle r="21" class="fill-black/25" cy="2" />
-                    <circle r="20" fill="#f4ecd8" stroke="#0f172a" stroke-opacity="0.35" stroke-width="1.5" />
+                    <circle
+                        r="20" fill="#f4ecd8"
+                        stroke=move || if producing() { "#e8a300" } else { "#0f172a" }
+                        stroke-opacity=move || if producing() { "1" } else { "0.35" }
+                        stroke-width=move || if producing() { "3" } else { "1.5" }
+                    />
                     <text
                         y="-1"
                         text-anchor="middle"
@@ -1020,67 +1084,50 @@ fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
     }
 }
 
+/// A CSS-safe id for a colour's tint filter.
+fn tint_id(hex: &str) -> String {
+    format!("tint{}", hex.trim_start_matches('#'))
+}
+
+/// The artwork for a piece, tinted to its owner. Shared by the settlement and
+/// the city so they cannot drift apart.
 #[component]
-fn Settlement(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
+fn Piece(
+    x: f32,
+    y: f32,
+    player_id: Uuid,
+    art: &'static str,
+    size: f32,
+    alt: &'static str,
+) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
-    let color = player_color(player_id, &state);
+    let colour = player_color(player_id, &state);
+    let half = size / 2.0;
 
     view! {
         <g transform=format!("translate({}, {})", x, y)>
-            // House shape (scaled up for better visibility)
-            <polygon
-                points="0,-12 9,0 9,12 -9,12 -9,0"
-                fill=color
-                class="stroke-black stroke-2"
-            />
+            // One chain, not a `filter` attribute plus a CSS `filter`: the
+            // CSS property wins outright and would drop the tint.
+            <image
+                href=format!("/assets/{art}.svg")
+                x=-half y=-half width=size height=size
+                style=format!(
+                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));",
+                    tint_id(colour)
+                )
+            >
+                <title>{alt}</title>
+            </image>
         </g>
     }
+}
+
+#[component]
+fn Settlement(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
+    view! { <Piece x=x y=y player_id=player_id art="build-settlement" size=32.0 alt="Settlement" /> }
 }
 
 #[component]
 fn City(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-    let color = player_color(player_id, &state);
-
-    view! {
-        <g transform=format!("translate({}, {})", x, y)>
-            // Larger building with tower (scaled up for better visibility)
-            <rect
-                x="-12"
-                y="-6"
-                width="24"
-                height="18"
-                fill=color
-                class="stroke-black stroke-2"
-            />
-            <rect
-                x="-4"
-                y="-18"
-                width="8"
-                height="12"
-                fill=color
-                class="stroke-black stroke-2"
-            />
-        </g>
-    }
-}
-
-#[component]
-fn Road(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-    let color = player_color(player_id, &state);
-
-    view! {
-        <g transform=format!("translate({}, {})", x, y)>
-            <line
-                x1="-15"
-                y1="0"
-                x2="15"
-                y2="0"
-                stroke=color
-                stroke-width="4"
-                stroke-linecap="round"
-            />
-        </g>
-    }
+    view! { <Piece x=x y=y player_id=player_id art="build-city" size=40.0 alt="City" /> }
 }

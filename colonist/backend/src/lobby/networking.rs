@@ -56,7 +56,7 @@ impl Lobby
 
     pub fn broadcast_lobby_status(&self) {
         info!("Broadcasting lobby status to all players");
-        let games_data: Vec<shared::LobbyGameInfo> = self.games.iter()
+        let mut games_data: Vec<shared::LobbyGameInfo> = self.games.iter()
             .map(|(gid, game)| shared::LobbyGameInfo {
                 game_id: gid.clone(),
                 players: game.turn_manager.players.len(),
@@ -65,6 +65,13 @@ impl Lobby
                 victory_points_to_win: game.rules().victory_points_to_win,
             })
             .collect();
+
+        // `games` is a HashMap, so its iteration order changes whenever a game
+        // is created or evicted. Sending it unsorted makes the lobby list jump
+        // around under the cursor, and somebody aiming at their friend's game
+        // clicks JOIN on whatever slid into that row instead. Sorting by id
+        // gives every client the same stable list.
+        games_data.sort_by(|a, b| a.game_id.cmp(&b.game_id));
 
         let lobby_update = shared::ServerMessage::LobbyUpdate { games: games_data };
         for pid in self.sessions.keys() {

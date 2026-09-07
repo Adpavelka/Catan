@@ -245,6 +245,14 @@ pub fn BottomLayer() -> impl IntoView {
                 <div class="pointer-events-auto"><TurnRow /></div>
             </div>
 
+            // Offers waiting on you. Never behind the trade button: an offer
+            // you have to go looking for is an offer you miss, and it expires
+            // whether or not you opened the panel.
+            <OfferDock />
+
+            // And the other direction: how your own offer is being answered.
+            <crate::components::offer_status::OfferStatus />
+
             // The trade table, over the tray, because that is where the cards
             // you would put up already are.
             <Show when=move || draft.open.get()>
@@ -261,9 +269,11 @@ pub fn BottomLayer() -> impl IntoView {
 
 // ----------------------------------------------------------------- the tray
 
-/// The player's own cards, in a wide tray along the bottom-left. Duplicates
-/// stack so a fat hand looks like a fat hand, and the tray stays wide and
-/// mostly empty because a hand grows into it.
+/// The player's own cards, in a wide tray along the bottom-left.
+///
+/// Every card is drawn: three sheep are three sheep side by side, not one
+/// sheep with a "3" on it. Counting cards is how you read a hand at a table,
+/// and the tray is wide enough to let you.
 #[component]
 fn HandTray() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
@@ -294,53 +304,41 @@ fn HandTray() -> impl IntoView {
         >
             {Res::ALL.map(|k| {
                 let held = move || k.in_hand(&state.my_resources.get());
-                let show = move || held() > 0;
-                // Duplicates fan out to the right; past four the stack stops
-                // growing and the badge carries the rest.
-                let fan = move || held().min(4) as i32;
-                let width = move || 63 + 12 * (fan() - 1).max(0);
+                // A card is dim once it is already up for trade. Which copy
+                // dims does not matter, so the committed ones are taken off
+                // the right-hand end of the run.
+                let committed = move || draft.offer.get().get(k);
 
                 view! {
-                    <Show when=show>
-                        <button
-                            class="relative shrink-0 game-card-pick self-center"
-                            style=move || format!("width: {}px; height: 88px;", width())
-                            title=move || format!("{} {} - click to put one up for trade", held(), k.label())
-                            on:click=move |_| {
-                                if spare(k) > 0 {
-                                    draft.open.set(true);
-                                    draft.offer.update(|b| b.set(k, b.get(k) + 1));
-                                }
-                            }
-                            on:contextmenu=move |ev| {
-                                ev.prevent_default();
-                                draft.offer.update(|b| b.set(k, b.get(k).saturating_sub(1)));
-                            }
-                        >
-                            {move || (0..fan()).map(|i| view! {
-                                <div
-                                    class="absolute top-0"
-                                    style=format!("left: {}px; z-index: {}", i * 12, i)
+                    // A hair of space inside a kind, more between kinds, so a
+                    // hand reads as runs of like cards without a divider.
+                    <div class="flex items-center gap-[3px] shrink-0 self-center">
+                        {move || (0..held()).map(|i| {
+                            let is_up = i >= held().saturating_sub(committed());
+                            view! {
+                                <button
+                                    class="shrink-0 game-card-pick"
+                                    title=move || if is_up {
+                                        format!("{} - up for trade, right-click to take it back", k.label())
+                                    } else {
+                                        format!("{} - click to put it up for trade", k.label())
+                                    }
+                                    on:click=move |_| {
+                                        if spare(k) > 0 {
+                                            draft.open.set(true);
+                                            draft.offer.update(|b| b.set(k, b.get(k) + 1));
+                                        }
+                                    }
+                                    on:contextmenu=move |ev| {
+                                        ev.prevent_default();
+                                        draft.offer.update(|b| b.set(k, b.get(k).saturating_sub(1)));
+                                    }
                                 >
-                                    <CardFace
-                                        art=k.art()
-                                        alt=k.label()
-                                        dimmed=Signal::derive(move || spare(k) == 0)
-                                    />
-                                </div>
-                            }).collect_view()}
-
-                            // One badge for the whole stack, on the last card.
-                            <span
-                                class="card-badge absolute -top-1 z-20 min-w-[23px] h-[26px] px-1
-                                       text-[17px] font-black leading-none
-                                       flex items-center justify-center tabular-nums"
-                                style=move || format!("left: {}px", width() - 22)
-                            >
-                                {held}
-                            </span>
-                        </button>
-                    </Show>
+                                    <CardFace art=k.art() alt=k.label() dimmed=is_up />
+                                </button>
+                            }
+                        }).collect_view()}
+                    </div>
                 }
             }).to_vec()}
 
@@ -450,10 +448,7 @@ fn TurnRow() -> impl IntoView {
                                border-[3px] border-white shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
                         style=move || format!("background-color: {}", colour())
                     >
-                        <svg class="w-7 h-7" viewBox="0 0 24 24" fill="#fff">
-                            <circle cx="12" cy="8" r="4"/>
-                            <path d="M4 21a8 8 0 0 1 16 0z"/>
-                        </svg>
+                        <Art name="trade-offerer" alt="" class="w-8 h-8 object-contain" />
                     </div>
 
                     <span class="flex-1 min-w-0 text-center text-[25px] leading-none text-[#333029] truncate">
@@ -533,8 +528,10 @@ fn ActionBar() -> impl IntoView {
     view! {
         <div class="shrink-0 flex items-end gap-[12px] pr-3">
             <HudButton
-                label="Trade"
-                enabled=Signal::derive(can_trade)
+                label="Trade with the table or the bank"
+                // Answering an offer is not a turn action, so this stays live
+                // even when it is somebody else's turn.
+                enabled=Signal::derive(move || can_trade() || !state.incoming_trades.get().is_empty())
                 armed=Signal::derive(move || draft.open.get())
                 on_click=Callback::new(move |_| draft.open.update(|o| *o = !*o))
             >
@@ -545,6 +542,7 @@ fn ActionBar() -> impl IntoView {
                 label="Buy a development card"
                 enabled=Signal::derive(can_buy_dev)
                 badge=Signal::derive(move || state.bank.get().dev_cards.to_string())
+                cost=DEV_CARD
                 on_click=Callback::new(move |_| state.send(ClientRequest::BuyDevelopmentCard))
             >
                 <Art name="build-dev-card" alt="Development card"
@@ -556,11 +554,12 @@ fn ActionBar() -> impl IntoView {
                 enabled=Signal::derive(move || can_build(BuildMode::Road, ROAD, roads_left()))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::Road)
                 badge=Signal::derive(move || roads_left().to_string())
+                cost=ROAD
                 on_click=Callback::new(move |_| state.build_mode.update(|c| {
                     *c = if *c == BuildMode::Road { BuildMode::None } else { BuildMode::Road }
                 }))
             >
-                <Art name="build-road" alt="Road" class="hud-icon w-[26px] h-[60px] object-contain" />
+                <PieceIcon art="build-road" alt="Road" class="w-[26px] h-[60px]" />
             </HudButton>
 
             <HudButton
@@ -568,12 +567,12 @@ fn ActionBar() -> impl IntoView {
                 enabled=Signal::derive(move || can_build(BuildMode::Settlement, SETTLEMENT, settlements_left()))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::Settlement)
                 badge=Signal::derive(move || settlements_left().to_string())
+                cost=SETTLEMENT
                 on_click=Callback::new(move |_| state.build_mode.update(|c| {
                     *c = if *c == BuildMode::Settlement { BuildMode::None } else { BuildMode::Settlement }
                 }))
             >
-                <Art name="build-settlement" alt="Settlement"
-                     class="hud-icon w-[55px] h-[55px] object-contain" />
+                <PieceIcon art="build-settlement" alt="Settlement" class="w-[55px] h-[55px]" />
             </HudButton>
 
             <HudButton
@@ -581,11 +580,12 @@ fn ActionBar() -> impl IntoView {
                 enabled=Signal::derive(move || can_build(BuildMode::City, CITY, cities_left()))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::City)
                 badge=Signal::derive(move || cities_left().to_string())
+                cost=CITY
                 on_click=Callback::new(move |_| state.build_mode.update(|c| {
                     *c = if *c == BuildMode::City { BuildMode::None } else { BuildMode::City }
                 }))
             >
-                <Art name="build-city" alt="City" class="hud-icon w-[60px] h-[55px] object-contain" />
+                <PieceIcon art="build-city" alt="City" class="w-[60px] h-[55px]" />
             </HudButton>
 
             <HudButton
@@ -604,6 +604,47 @@ fn ActionBar() -> impl IntoView {
     }
 }
 
+/// A build piece's artwork in a player's colour.
+///
+/// The assets are flat silhouettes, so a CSS mask is the honest way to colour
+/// them: the shape comes from the file and the colour from the player. An
+/// `<img>` cannot inherit `currentColor`, and a hue rotation would give a
+/// different answer for every source colour.
+#[component]
+fn PieceIcon(
+    art: &'static str,
+    alt: &'static str,
+    /// Tailwind sizing for the box the piece is drawn in.
+    class: &'static str,
+) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let colour = move || {
+        state
+            .players
+            .get()
+            .iter()
+            .find(|p| Some(p.player_id) == state.player_id.get())
+            .map(|p| p.colour.hex())
+            .unwrap_or("#3f4a55")
+    };
+
+    view! {
+        <span
+            class=format!("hud-icon block {class}")
+            role="img"
+            aria-label=alt
+            style=move || format!(
+                "background-color: {c}; \
+                 -webkit-mask: url(/assets/{art}.svg) center / contain no-repeat; \
+                 mask: url(/assets/{art}.svg) center / contain no-repeat; \
+                 filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.35));",
+                c = colour(),
+            )
+        ></span>
+    }
+}
+
 /// One control on the bar. Icon only, with the count in the corner when there
 /// is one - text inside a button this size fights the icon for attention.
 #[component]
@@ -617,13 +658,16 @@ fn HudButton(
     /// contents are, and this one holds a `String`.
     #[prop(optional)]
     badge: Option<Signal<String>>,
+    /// What it costs, as (wood, brick, sheep, wheat, ore). Shown on hover.
+    #[prop(optional)]
+    cost: Option<[u8; 5]>,
     on_click: Callback<()>,
     children: Children,
 ) -> impl IntoView {
     view! {
         <button
             class=move || format!(
-                "hud-btn relative w-[112px] h-[112px] flex items-center justify-center {}",
+                "hud-btn group relative w-[112px] h-[112px] flex items-center justify-center {}",
                 if armed.get() { "hud-btn-armed" } else { "" }
             )
             title=label
@@ -642,269 +686,562 @@ fn HudButton(
                     {move || b.get()}
                 </span>
             })}
+
+            {cost.map(|c| view! { <CostHint label=label cost=c /> })}
         </button>
+    }
+}
+
+/// The price of a control, shown above it on hover.
+///
+/// One card per unit: two wheat is two wheat cards side by side, not a wheat
+/// card with a two on it. You read a price the way you would count it out of
+/// your hand, and the cards are big enough to tell apart at a glance.
+#[component]
+fn CostHint(label: &'static str, cost: [u8; 5]) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    // Each card carries which copy of its kind it is, so "two wheat" can grey
+    // only the second one when you hold exactly one.
+    let cards: Vec<(Res, u8)> = Res::ALL
+        .into_iter()
+        .zip(cost)
+        .flat_map(|(k, n)| (0..n).map(move |i| (k, i)))
+        .collect();
+
+    view! {
+        <div
+            class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2.5 z-50
+                   hud-tray px-2.5 py-2 flex flex-col items-center gap-1.5
+                   opacity-0 invisible translate-y-1
+                   group-hover:opacity-100 group-hover:visible group-hover:translate-y-0
+                   transition-all duration-100"
+        >
+            <span class="text-[10px] font-black uppercase tracking-[0.14em] text-[#7a7263] whitespace-nowrap">
+                {label}
+            </span>
+            <div class="flex items-end gap-1">
+                {cards.into_iter().map(|(k, nth)| {
+                    // A card you cannot cover is greyed, so the hint says not
+                    // just what it costs but what you are still missing.
+                    let short = move || k.in_hand(&state.my_resources.get()) <= nth;
+                    view! {
+                        <CardFace
+                            art=k.art()
+                            alt=k.label()
+                            size="w-[42px] h-[58px]"
+                            dimmed=Signal::derive(short)
+                        />
+                    }
+                }).collect_view()}
+            </div>
+        </div>
+    }
+}
+
+// -------------------------------------------------------------- offer dock
+
+/// Offers other people have put to you, stacked above the controls.
+///
+/// This sits outside the trade panel on purpose. An offer arrives whether or
+/// not you have the panel open, it expires on a clock you did not start, and
+/// it is answered with two buttons - so it belongs on screen, not behind one.
+#[component]
+fn OfferDock() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+    let any = move || !state.incoming_trades.get().is_empty();
+
+    view! {
+        <Show when=any>
+            <div
+                class="absolute z-40 flex flex-col gap-2 items-stretch"
+                style="right: 12px; bottom: 250px; width: 320px;"
+            >
+                <div class="hud-tray px-3 py-2">
+                    <div class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263] mb-1.5">
+                        {move || {
+                            let n = state.incoming_trades.get().len();
+                            if n == 1 { "An offer for you".to_string() } else { format!("{n} offers for you") }
+                        }}
+                    </div>
+                    <crate::pages::game::IncomingTrades />
+                </div>
+            </div>
+        </Show>
     }
 }
 
 // ------------------------------------------------------------- trade panel
 
-/// The trade table. Opens over the tray: pick what you want along the top,
-/// click cards in your hand to put them up, then send it.
+/// The trade window.
+///
+/// Four parts: the palette of resource types across the top, two directional
+/// drop zones in the middle, your own cards along the bottom, and the three
+/// big controls down the right. Cards move between the zones by clicking -
+/// the palette fills the "they give" side, your hand fills the "you give"
+/// side - and the arrows, not words, say which way each row flows.
 #[component]
 fn TradePanel() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
     let draft = use_context::<TradeDraft>().expect("TradeDraft missing");
 
-    let waiting = move || state.my_pending_trade.get();
-    let accepters = move || state.my_trade_accepters.get();
-    let has_accepters = move || !accepters().is_empty();
-
-    // A trade is ready when both sides have something, and a wildcard cannot
-    // stand on both sides at once - that is an offer with nothing named.
-    let trade_ready = move || {
-        let r = draft.receive.get().total() + draft.receive_any.get();
-        let o = draft.offer.get().total() + draft.offer_any.get();
-        r > 0 && o > 0 && !(draft.receive_any.get() > 0 && draft.offer_any.get() > 0)
+    // ---- the bank deal: n of one kind for one of another, at your best rate.
+    let bank_give = move || -> Option<Res> {
+        let give = draft.offer.get();
+        let kinds: Vec<Res> = Res::ALL.into_iter().filter(|k| give.get(*k) > 0).collect();
+        (kinds.len() == 1).then(|| kinds[0])
     };
-    let can_send =
-        move || trade_ready() && state.can_build_now() && state.my_pending_trade.get().is_none();
-    let can_clear = move || !draft.is_empty() || state.my_pending_trade.get().is_some();
-
-    // A bank trade is the special case of n of one kind for one of another.
+    let bank_want = move || -> Option<Res> {
+        let want = draft.receive.get();
+        (want.total() == 1)
+            .then(|| Res::ALL.into_iter().find(|k| want.get(*k) == 1))
+            .flatten()
+    };
     let bank_deal = move || -> Option<(Res, Res)> {
         if draft.receive_any.get() > 0 || draft.offer_any.get() > 0 {
             return None;
         }
-        let (give, want) = (draft.offer.get(), draft.receive.get());
-        if want.total() != 1 {
-            return None;
-        }
-        let taken = Res::ALL.into_iter().find(|k| want.get(*k) == 1)?;
-        let given: Vec<Res> = Res::ALL.into_iter().filter(|k| give.get(*k) > 0).collect();
-        if given.len() != 1 {
-            return None;
-        }
-        let only = given[0];
-        let ratio = state.get_best_ratio(only.shared());
-        (give.get(only) == ratio && only != taken).then_some((only, taken))
+        let (g, w) = (bank_give()?, bank_want()?);
+        let rate = state.get_best_ratio(g.shared());
+        (draft.offer.get().get(g) == rate && g != w).then_some((g, w))
     };
 
-    let send = move |_| {
+    // ---- the table deal: both sides hold something, and a wildcard cannot
+    // stand on both at once - that is an offer with nothing named at all.
+    let table_ready = move || {
+        let r = draft.receive.get().total() + draft.receive_any.get();
+        let o = draft.offer.get().total() + draft.offer_any.get();
+        r > 0 && o > 0 && !(draft.receive_any.get() > 0 && draft.offer_any.get() > 0)
+    };
+
+    let on_turn = move || state.can_build_now();
+    let can_bank = move || on_turn() && bank_deal().is_some();
+    let can_offer =
+        move || on_turn() && table_ready() && state.my_pending_trade.get().is_none();
+
+    // Why a control is dark, in words. A greyed button that will not say what
+    // is wrong is the most annoying thing in an interface.
+    let hint = move || -> Option<String> {
+        if !on_turn() {
+            return Some("You can only trade on your own turn, after rolling.".into());
+        }
+        if draft.is_empty() {
+            return Some("Click a card above to ask for it, or one of yours below to offer it.".into());
+        }
+        if let Some(g) = bank_give() {
+            let rate = state.get_best_ratio(g.shared());
+            let up = draft.offer.get().get(g);
+            if up != rate && bank_want().is_some() && !table_ready() {
+                return Some(format!(
+                    "The bank wants {rate} {} for one card - you have put up {up}.",
+                    g.label().to_lowercase()
+                ));
+            }
+        }
+        if state.my_pending_trade.get().is_some() {
+            return Some("You already have an offer on the table.".into());
+        }
+        if !table_ready() {
+            return Some("Put something on both sides of the deal.".into());
+        }
+        None
+    };
+
+    let send_to_bank = move |_| {
         if let Some((g, w)) = bank_deal() {
             state.send(ClientRequest::BankTrade { give: g.shared(), receive: w.shared() });
-        } else {
-            state.send(ClientRequest::TradeOffer {
-                target_player_id: None,
-                offer: draft.offer.get_untracked().to_shared(),
-                request: draft.receive.get_untracked().to_shared(),
-                offer_any: draft.offer_any.get_untracked(),
-                request_any: draft.receive_any.get_untracked(),
-            });
+            draft.clear();
         }
+    };
+
+    let send_to_table = move |_| {
+        state.send(ClientRequest::TradeOffer {
+            target_player_id: None,
+            offer: draft.offer.get_untracked().to_shared(),
+            request: draft.receive.get_untracked().to_shared(),
+            offer_any: draft.offer_any.get_untracked(),
+            request_any: draft.receive_any.get_untracked(),
+        });
         draft.clear();
     };
 
-    let clear = move |_| {
-        if let Some(offer_id) = state.my_pending_trade.get_untracked() {
-            state.send(ClientRequest::CancelTrade { offer_id });
-        }
+    let close = move |_| {
         draft.clear();
+        draft.open.set(false);
     };
 
     view! {
-        <div class="absolute left-0 bottom-[129px] z-30 hud-tray p-3.5 flex flex-col gap-3"
-             style="width: 800px; max-width: 60vw;">
+        <div
+            class="absolute left-0 bottom-[129px] z-30 flex items-stretch gap-2.5"
+            style="width: 1075px; max-width: 78vw;"
+        >
+            // ---- the window itself
+            <div class="flex-1 min-w-0 flex flex-col gap-2.5">
 
-            <div class="flex items-center justify-between">
-                <span class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263]">
-                    "Ask for"
-                </span>
-                <button
-                    class="w-7 h-7 rounded-md text-[#7a7263] hover:bg-black/10 text-lg leading-none"
-                    title="Close the trade table"
-                    on:click=move |_| draft.open.set(false)
-                >"\u{00d7}"</button>
-            </div>
+                // TOP: the palette. Every resource type, plus the unnamed
+                // card. Clicking one asks for it.
+                <div class="hud-tray flex items-center gap-2.5 px-3" style="height: 104px;">
+                    {Res::ALL.map(|k| {
+                        let picked = move || draft.receive.get().get(k);
+                        view! {
+                            <button
+                                class="game-card-pick shrink-0"
+                                title=move || format!("Ask for {}", k.label().to_lowercase())
+                                on:click=move |_| draft.receive.update(|b| b.set(k, b.get(k).saturating_add(1)))
+                                on:contextmenu=move |ev| {
+                                    ev.prevent_default();
+                                    draft.receive.update(|b| b.set(k, b.get(k).saturating_sub(1)));
+                                }
+                            >
+                                <CardFace
+                                    art=k.art()
+                                    alt=k.label()
+                                    size="w-[58px] h-[80px]"
+                                    count=Signal::derive(picked)
+                                    selected=Signal::derive(move || picked() > 0)
+                                />
+                            </button>
+                        }
+                    }).to_vec()}
 
-            // What you want. Click to add one, right-click to take one back.
-            <div class="flex items-center gap-3">
-                {Res::ALL.map(|k| {
-                    let picked = move || draft.receive.get().get(k);
-                    view! {
-                        <button
-                            class="game-card-pick"
-                            on:click=move |_| draft.receive.update(|b| b.set(k, b.get(k).saturating_add(1)))
-                            on:contextmenu=move |ev| {
-                                ev.prevent_default();
-                                draft.receive.update(|b| b.set(k, b.get(k).saturating_sub(1)));
-                            }
-                        >
-                            <CardFace
-                                art=k.art()
-                                alt=k.label()
-                                size="w-[56px] h-[78px]"
-                                count=Signal::derive(picked)
-                                selected=Signal::derive(move || picked() > 0)
-                            />
-                        </button>
-                    }
-                }).to_vec()}
-
-                // A card you have not named, for them to fill in by countering.
-                <button
-                    class="game-card-pick"
-                    on:click=move |_| draft.receive_any.update(|n| *n = n.saturating_add(1))
-                    on:contextmenu=move |ev| {
-                        ev.prevent_default();
-                        draft.receive_any.update(|n| *n = n.saturating_sub(1));
-                    }
-                >
-                    <MysteryCard
-                        size="w-[56px] h-[78px]"
-                        count=Signal::derive(move || draft.receive_any.get())
-                    />
-                </button>
-
-                <span class="ml-auto text-[12px] italic text-[#8a8071] max-w-[240px] text-right">
-                    "Click cards in your hand below to put them up."
-                </span>
-            </div>
-
-            <div class="h-px bg-[#ddd2ba]"></div>
-
-            // The deal as it stands.
-            <Show
-                when=has_accepters
-                fallback=move || view! {
-                    <>
-                        <TradeRow
-                            direction=Direction::Receive
-                            basket=Signal::derive(move || draft.receive.get())
-                            wild=Signal::derive(move || draft.receive_any.get())
+                    <button
+                        class="game-card-pick shrink-0"
+                        title="Any card - they choose which"
+                        on:click=move |_| draft.receive_any.update(|n| *n = n.saturating_add(1))
+                        on:contextmenu=move |ev| {
+                            ev.prevent_default();
+                            draft.receive_any.update(|n| *n = n.saturating_sub(1));
+                        }
+                    >
+                        <MysteryCard
+                            size="w-[58px] h-[80px]"
+                            count=Signal::derive(move || draft.receive_any.get())
                         />
-                        <TradeRow
-                            direction=Direction::Offer
-                            basket=Signal::derive(move || draft.offer.get())
-                            wild=Signal::derive(move || draft.offer_any.get())
-                        />
-                    </>
-                }
-            >
-                <div class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263]">
-                    "Pick who to trade with"
+                    </button>
+
+                    // The bank sits at the far end of the palette, apart from
+                    // the cards: it is who you might deal with, not a thing to
+                    // put on the table. It shows your rate for what you have
+                    // put up.
+                    <div class="ml-auto flex items-center gap-2 pr-1" title="The bank">
+                        <Show when=move || bank_give().is_some()>
+                            <span class="text-[15px] font-black text-[#5c5445] tabular-nums">
+                                {move || bank_give()
+                                    .map(|g| format!("{}:1", state.get_best_ratio(g.shared())))
+                                    .unwrap_or_default()}
+                            </span>
+                        </Show>
+                        <Art name="bank" alt="Bank" class="w-12 h-12 object-contain" />
+                    </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                    <For
-                        each=accepters
-                        key=|id| *id
-                        children=move |accepter_id| {
-                            let name = state.player_name(accepter_id);
+
+                // MIDDLE: the two directions. Deliberately roomy - the cards
+                // on the table are the point, and the empty half of each row
+                // is where they land.
+                <div class="hud-tray px-3 py-2.5 flex flex-col justify-center gap-1" style="height: 200px;">
+                    <DropZone
+                        direction=Direction::Receive
+                        basket=Signal::derive(move || draft.receive.get())
+                        wild=Signal::derive(move || draft.receive_any.get())
+                        on_take_back=Callback::new(move |k: Res| {
+                            draft.receive.update(|b| b.set(k, b.get(k).saturating_sub(1)))
+                        })
+                        on_take_back_wild=Callback::new(move |_| {
+                            draft.receive_any.update(|n| *n = n.saturating_sub(1))
+                        })
+                    />
+                    <DropZone
+                        direction=Direction::Offer
+                        basket=Signal::derive(move || draft.offer.get())
+                        wild=Signal::derive(move || draft.offer_any.get())
+                        on_take_back=Callback::new(move |k: Res| {
+                            draft.offer.update(|b| b.set(k, b.get(k).saturating_sub(1)))
+                        })
+                        on_take_back_wild=Callback::new(move |_| {
+                            draft.offer_any.update(|n| *n = n.saturating_sub(1))
+                        })
+                    />
+                </div>
+
+                // BOTTOM: your own cards, as stacks. Clicking one puts it up.
+                <div class="hud-tray flex items-center gap-3 px-3" style="height: 104px;">
+                    <OfferableHand />
+
+                    <Show when=move || hint().is_some()>
+                        <span class="ml-auto pr-1 text-[12px] text-[#8a5a00] max-w-[300px] text-right leading-snug">
+                            {move || hint().unwrap_or_default()}
+                        </span>
+                    </Show>
+                </div>
+            </div>
+
+            // ---- RIGHT: bank it, offer it, or drop it.
+            <div class="shrink-0 flex flex-col gap-2.5">
+                <TradeActionButton
+                    label="Trade with the bank"
+                    enabled=Signal::derive(can_bank)
+                    on_click=Callback::new(send_to_bank)
+                    tick=true
+                >
+                    <Art name="bank" alt="Bank" class="hud-icon w-[56px] h-[56px] object-contain" />
+                </TradeActionButton>
+
+                <TradeActionButton
+                    label="Offer this to the table"
+                    enabled=Signal::derive(can_offer)
+                    on_click=Callback::new(send_to_table)
+                    tick=true
+                >
+                    <GroupMark class="hud-icon w-[58px] h-[58px]" />
+                </TradeActionButton>
+
+                <TradeActionButton
+                    label="Close and clear the trade"
+                    enabled=Signal::derive(|| true)
+                    on_click=Callback::new(close)
+                    tick=false
+                >
+                    <svg class="hud-icon w-[62px] h-[62px]" viewBox="0 0 24 24" fill="none"
+                         stroke="#0d3e5c" stroke-width="4" stroke-linecap="round">
+                        <path d="M5 5 19 19"/><path d="M19 5 5 19"/>
+                    </svg>
+                </TradeActionButton>
+            </div>
+        </div>
+    }
+}
+
+/// Everyone else at the table, as one mark. White artwork, so it reads on
+/// both the cream panel and the cyan button.
+#[component]
+fn GroupMark(#[prop(default = "w-6 h-6")] class: &'static str) -> impl IntoView {
+    view! {
+        <Art
+            name="trade-sender"
+            alt="Everyone else at the table"
+            class=Box::leak(format!("object-contain {class}").into_boxed_str())
+        />
+    }
+}
+
+/// A single player, in their own colour: the artwork on a coloured disc.
+#[component]
+fn SelfMark(#[prop(default = 46)] size: u32) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+    let colour = move || {
+        state
+            .players
+            .get()
+            .iter()
+            .find(|p| Some(p.player_id) == state.player_id.get())
+            .map(|p| p.colour.hex())
+            .unwrap_or("#94a3b8")
+    };
+
+    view! {
+        <span
+            class="rounded-full shrink-0 flex items-center justify-center border-[3px] border-white
+                   shadow-[0_0_0_2px_rgba(13,62,92,0.7)]"
+            style=move || format!("width: {size}px; height: {size}px; background-color: {}", colour())
+            title="You"
+        >
+            <Art
+                name="trade-offerer"
+                alt="You"
+                class=Box::leak(
+                    format!("object-contain w-[{}px] h-[{}px]", size * 7 / 10, size * 7 / 10)
+                        .into_boxed_str(),
+                )
+            />
+        </span>
+    }
+}
+
+/// One of the three controls down the right of the trade window.
+#[component]
+fn TradeActionButton(
+    label: &'static str,
+    enabled: Signal<bool>,
+    on_click: Callback<()>,
+    /// Whether this control settles the deal. Settling controls carry a small
+    /// tick in the corner so the destructive one is never mistaken for them.
+    tick: bool,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <button
+            class="hud-btn relative w-[112px] h-[110px] flex items-center justify-center"
+            title=label
+            aria-label=label
+            disabled=move || !enabled.get()
+            on:click=move |_| on_click.call(())
+        >
+            {children()}
+
+            {tick.then(|| view! {
+                <span class="hud-badge absolute top-1 right-1 w-[28px] h-[27px]
+                             flex items-center justify-center">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="#fff"
+                         stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 12.5 9.5 18 20 6"/>
+                    </svg>
+                </span>
+            })}
+        </button>
+    }
+}
+
+/// Your own cards inside the trade window. One card per card - a stack reads
+/// as a single thick card, and you cannot count what you cannot see.
+#[component]
+fn OfferableHand() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+    let draft = use_context::<TradeDraft>().expect("TradeDraft missing");
+
+    let spare = move |k: Res| {
+        k.in_hand(&state.my_resources.get())
+            .saturating_sub(draft.offer.get().get(k))
+    };
+    let empty = move || state.my_resources.get() == shared::Resources::default();
+
+    view! {
+        <div class="flex items-center gap-2.5 overflow-x-auto custom-scrollbar min-w-0">
+            {Res::ALL.map(|k| {
+                let held = move || k.in_hand(&state.my_resources.get());
+                let committed = move || draft.offer.get().get(k);
+
+                view! {
+                    <div class="flex items-center gap-[3px] shrink-0">
+                        {move || (0..held()).map(|i| {
+                            let is_up = i >= held().saturating_sub(committed());
                             view! {
                                 <button
-                                    class="game-btn game-btn-green px-4 py-2 text-[13px] font-black"
+                                    class="game-card-pick shrink-0"
+                                    title=move || if is_up {
+                                        format!("{} - up for trade, click again to take it back", k.label())
+                                    } else {
+                                        format!("{} - click to put it up", k.label())
+                                    }
                                     on:click=move |_| {
-                                        if let Some(offer_id) = waiting() {
-                                            state.send(ClientRequest::ConfirmTrade {
-                                                offer_id,
-                                                partner_id: accepter_id,
-                                            });
+                                        if is_up {
+                                            draft.offer.update(|b| b.set(k, b.get(k).saturating_sub(1)));
+                                        } else if spare(k) > 0 {
+                                            draft.offer.update(|b| b.set(k, b.get(k) + 1));
                                         }
                                     }
                                 >
-                                    {name}
+                                    <CardFace
+                                        art=k.art()
+                                        alt=k.label()
+                                        size="w-[54px] h-[76px]"
+                                        dimmed=is_up
+                                    />
                                 </button>
                             }
-                        }
-                    />
-                </div>
+                        }).collect_view()}
+                    </div>
+                }
+            }).to_vec()}
+
+            // The unnamed card you are willing to hand over, for them to pick.
+            <button
+                class="game-card-pick shrink-0"
+                title="Offer a card of their choosing"
+                on:click=move |_| draft.offer_any.update(|n| *n = n.saturating_add(1))
+                on:contextmenu=move |ev| {
+                    ev.prevent_default();
+                    draft.offer_any.update(|n| *n = n.saturating_sub(1));
+                }
+            >
+                <MysteryCard
+                    size="w-[54px] h-[76px]"
+                    alt="Offer a card of their choosing"
+                    count=Signal::derive(move || draft.offer_any.get())
+                />
+            </button>
+
+            <Show when=empty>
+                <span class="text-[13px] italic text-[#a89e8b]">"You have no cards to offer."</span>
             </Show>
-
-            <Show when=move || waiting().is_some() && !has_accepters()>
-                <div class="text-[12px] italic text-[#8a8071] text-center">
-                    "Offer sent. Waiting for an answer..."
-                </div>
-            </Show>
-
-            <div class="flex items-center gap-2">
-                <button
-                    class="game-btn game-btn-green flex-1 h-11 text-[14px] font-black uppercase tracking-wider"
-                    disabled=move || !can_send()
-                    title="Send this offer to the table"
-                    on:click=send
-                >
-                    "Offer"
-                </button>
-                <button
-                    class="game-btn game-btn-red px-5 h-11 text-[14px] font-black uppercase tracking-wider"
-                    disabled=move || !can_clear()
-                    title="Take everything back off the table"
-                    on:click=clear
-                >
-                    "Clear"
-                </button>
-            </div>
-
-            <crate::pages::game::IncomingTrades />
         </div>
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Direction {
+    /// Cards coming to you from everyone else.
     Receive,
+    /// Cards going from you to them.
     Offer,
 }
 
-/// One side of the deal: an arrow saying which way the cards move, then the
-/// cards themselves.
+/// One side of the deal: who it concerns, which way it flows, and the cards
+/// on it.
+///
+/// The arrow is the sentence, not decoration - green down for what comes to
+/// you, red up for what leaves you - so the row needs no verb. The right-hand
+/// two thirds stay empty until cards land there, which is what makes it read
+/// as somewhere to put things.
 #[component]
-fn TradeRow(direction: Direction, basket: Signal<Basket>, wild: Signal<u8>) -> impl IntoView {
+fn DropZone(
+    direction: Direction,
+    basket: Signal<Basket>,
+    wild: Signal<u8>,
+    on_take_back: Callback<Res>,
+    on_take_back_wild: Callback<()>,
+) -> impl IntoView {
     let incoming = direction == Direction::Receive;
-    let label = if incoming { "Receive" } else { "Give" };
-    let colour = if incoming { "#16c33a" } else { "#ef3030" };
     let empty = move || basket.get().total() == 0 && wild.get() == 0;
 
     view! {
-        <div class="flex items-center gap-3 min-h-[62px]">
-            // The arrow carries the meaning; the word only confirms it.
-            <div class="flex flex-col items-center w-14 shrink-0">
-                <svg class="w-9 h-9" viewBox="0 0 24 24" fill="none"
-                     stroke=colour stroke-width="3.5"
-                     stroke-linecap="round" stroke-linejoin="round">
-                    {if incoming {
-                        view! { <><path d="M12 4v15"/><path d="m5 13 7 7 7-7"/></> }
-                    } else {
-                        view! { <><path d="M12 20V5"/><path d="m5 12 7-7 7 7"/></> }
-                    }}
-                </svg>
-                <span
-                    class="text-[9px] font-black uppercase tracking-wider"
-                    style=format!("color: {colour}")
+        <div class="flex items-center gap-3 h-[88px]">
+            // Who this side is about.
+            <div class="w-[52px] shrink-0 flex items-center justify-center">
+                <Show
+                    when=move || incoming
+                    fallback=move || view! { <SelfMark size=46 /> }
                 >
-                    {label}
-                </span>
+                    <GroupMark class="w-[46px] h-[46px]" />
+                </Show>
             </div>
 
-            <Show
-                when=move || !empty()
-                fallback=move || view! {
-                    <span class="text-[13px] italic text-[#a89e8b]">
-                        {if incoming { "nothing asked for yet" } else { "nothing offered yet" }}
-                    </span>
-                }
-            >
-                <div class="flex items-center gap-2 flex-wrap">
-                    {move || basket.get().spread().into_iter().enumerate().map(|(i, k)| view! {
-                        <div style=format!("margin-left: {}px", if i == 0 { 0 } else { -18 })>
-                            <CardFace art=k.art() alt=k.label() size="w-[44px] h-[58px]" />
-                        </div>
+            // Which way the cards move.
+            <div class="w-[38px] shrink-0 flex justify-center">
+                <svg class="w-[34px] h-[40px]" viewBox="0 0 24 28"
+                     fill=if incoming { "#16c33a" } else { "#ef3030" }
+                     stroke="#0d3e5c" stroke-width="1.8" stroke-linejoin="round">
+                    {if incoming {
+                        view! { <path d="M9 1h6v14h6l-9 12-9-12h6z"/> }
+                    } else {
+                        view! { <path d="M9 27h6V13h6L12 1 3 13h6z"/> }
+                    }}
+                </svg>
+            </div>
+
+            // Where the cards land. Empty until something is put here.
+            <div class="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                <Show when=move || !empty()>
+                    {move || basket.get().spread().into_iter().map(|k| view! {
+                        <button
+                            class="game-card-pick"
+                            title=move || format!("{} - click to take it back", k.label())
+                            on:click=move |_| on_take_back.call(k)
+                        >
+                            <CardFace art=k.art() alt=k.label() size="w-[52px] h-[72px]" />
+                        </button>
                     }).collect_view()}
 
                     {move || (0..wild.get()).map(|_| view! {
-                        <MysteryCard size="w-[44px] h-[58px]" />
+                        <button
+                            class="game-card-pick"
+                            title="Any card - click to take it back"
+                            on:click=move |_| on_take_back_wild.call(())
+                        >
+                            <MysteryCard size="w-[52px] h-[72px]" />
+                        </button>
                     }).collect_view()}
-                </div>
-            </Show>
+                </Show>
+            </div>
         </div>
     }
 }

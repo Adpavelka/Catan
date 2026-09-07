@@ -13,5 +13,6 @@ serde_json = "1.0"
 gloo-net = { version = "0.5", features = ["websocket"] }
 futures = "0.3.31"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Storage", "Window"] }
+# DomRect is what the resource animation measures hexes and player rows with.
+web-sys = { version = "0.3", features = ["DomRect", "Element", "Storage", "Window"] }
 uuid = { version = "1.19.0", features = ["v4"] }

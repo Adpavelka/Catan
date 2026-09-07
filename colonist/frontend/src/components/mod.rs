@@ -1,6 +1,8 @@
 pub(crate) mod bottom;
 pub(crate) mod board;
+pub(crate) mod flight;
 pub(crate) mod log;
 pub(crate) mod icons;
+pub(crate) mod offer_status;
 pub(crate) mod sidebar;
 pub(crate) mod toolbar;
