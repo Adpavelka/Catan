@@ -117,6 +117,7 @@ impl Lobby
             your_resources,
             your_dev_cards,
             pending_trades: game.trade_snapshots_for(pid),
+            bank: game.turn_manager.bank.to_info(),
         };
 
         self.send_server_msg(pid, sync_msg);

@@ -1,3 +1,5 @@
 pub(crate) mod board;
 pub(crate) mod log;
 pub(crate) mod icons;
+pub(crate) mod sidebar;
+pub(crate) mod toolbar;

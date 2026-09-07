@@ -259,6 +259,10 @@ impl Lobby {
         if resource_update_needed {
             self.broadcast_resource_updates(gid);
             self.broadcast_players_update(gid);
+
+            if let Some(bank) = self.games.get(gid).map(|g| g.turn_manager.bank.to_info()) {
+                self.broadcast_to_game(gid, ServerMessage::BankUpdate { bank });
+            }
         }
     }
 

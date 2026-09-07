@@ -30,10 +30,24 @@ pub struct PendingTradeOffer {
     pub counters: Option<u64>,
 }
 
+/// One line of player chat.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatLine {
+    pub player_id: Uuid,
+    pub text: String,
+    /// Monotonic, so two identical messages still key apart in a `For`.
+    pub seq: u64,
+}
+
 #[derive(Clone, Debug, Copy)]
 pub struct GameState {
     // Lobby state
     pub messages: RwSignal<Vec<String>>,
+    /// Player talk, kept apart from the event log: one is a transcript of the
+    /// game, the other is people talking, and mixing them buries both.
+    pub chat: RwSignal<Vec<ChatLine>>,
+    /// What the bank has left.
+    pub bank: RwSignal<shared::BankInfo>,
     pub is_in_game: RwSignal<bool>,
     pub lobby_games: RwSignal<Vec<LobbyGameInfo>>,
     /// The name this player last typed, remembered between sessions.
@@ -437,14 +451,18 @@ impl GameState {
                 }
                 ServerMessage::ChatMessage { player_id, text } => {
                     logging::log!("Chat from player {}: {}", player_id, text);
-
-                    let player_name = self.players.get_untracked()
-                        .iter()
-                        .find(|p| p.player_id == player_id)
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| format!("Player {}", player_id));
-
-                    self.messages.update(|m| m.push(format!("{}: {}", player_name, text)));
+                    self.chat.update(|lines| {
+                        let seq = lines.last().map_or(0, |l: &ChatLine| l.seq + 1);
+                        lines.push(ChatLine { player_id, text, seq });
+                        // A transcript nobody scrolls back through is just a
+                        // memory leak; keep the recent history only.
+                        if lines.len() > 200 {
+                            lines.remove(0);
+                        }
+                    });
+                }
+                ServerMessage::BankUpdate { bank } => {
+                    self.bank.set(bank);
                 }
                 ServerMessage::DevCardBought { player_id } => {
                     logging::log!("Player {} bought a dev card", player_id);
@@ -887,6 +905,7 @@ impl GameState {
                     your_resources,
                     your_dev_cards,
                     pending_trades,
+                    bank,
                 } => {
                     logging::log!("Full state sync received for player {}", player_id);
                     self.player_id.set(Some(player_id));
@@ -909,6 +928,7 @@ impl GameState {
                     if last_dice_roll.is_some() {
                         self.table_last_roll.set(last_dice_roll);
                     }
+                    self.bank.set(bank);
                     self.restore_trades(player_id, pending_trades);
                     // We cannot tell from a sync which cards were drawn this
                     // turn, so treat them all as fresh: refusing a legal play
@@ -1007,6 +1027,8 @@ pub fn provide_game_state() {
     let state = GameState {
         // Lobby state
         messages: create_rw_signal(Vec::new()),
+        chat: create_rw_signal(Vec::new()),
+        bank: create_rw_signal(shared::BankInfo::default()),
         is_in_game: create_rw_signal(false),
         lobby_games: create_rw_signal(Vec::new()),
         my_name: create_rw_signal(saved_name),

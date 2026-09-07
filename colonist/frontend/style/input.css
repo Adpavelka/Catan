@@ -2,12 +2,128 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The look is a printed board game, not a dashboard: cream card stock on
+   water, thick outlines, and controls that sit proud of the surface. Depth
+   comes from a dark outer edge, a light inner edge and a short shadow -
+   never from a big soft blur, which reads as modern web chrome. */
+
+@layer base {
+    :root {
+        --water: #0877ba;
+        --water-deep: #05679f;
+        --cyan: #24bde5;
+        --cream: #f3e9d6;
+        --cream-light: #faf4e8;
+        --cream-dim: #e9ddc8;
+        --edge: #34515f;
+        --edge-warm: #80796c;
+        --gold: #b98624;
+    }
+
+    body {
+        font-family: "Nunito", "Trebuchet MS", "Arial Rounded MT Bold",
+            ui-rounded, system-ui, sans-serif;
+    }
+}
+
 @layer components {
     .custom-scrollbar::-webkit-scrollbar {
-        width: 6px;
+        width: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
     }
     .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: #475569;
+        background: #c3b79f;
         border-radius: 10px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #a89b81;
+    }
+
+    /* Open water. Brighter under the board, deeper at the edges. */
+    .water {
+        background:
+            radial-gradient(ellipse 70% 70% at 50% 45%,
+                #0e8ad2 0%, var(--water) 45%, var(--water-deep) 100%);
+    }
+
+    /* A sheet of card stock. */
+    .panel {
+        background: linear-gradient(180deg, var(--cream-light) 0%, var(--cream) 100%);
+        border: 2px solid var(--edge-warm);
+        border-radius: 8px;
+        box-shadow: 0 3px 6px rgb(0 0 0 / 0.28), inset 0 1px 0 rgb(255 255 255 / 0.7);
+    }
+
+    .panel-tight {
+        border-radius: 6px;
+    }
+
+    /* A control you press. Cyan, bevelled, and it moves when you press it. */
+    .game-btn {
+        background: linear-gradient(180deg, #5fd8f5 0%, var(--cyan) 55%, #12a3c9 100%);
+        border: 3px solid #0d6e8c;
+        border-radius: 12px;
+        box-shadow:
+            inset 0 2px 0 rgb(255 255 255 / 0.85),
+            inset 0 -3px 0 rgb(0 0 0 / 0.18),
+            0 3px 5px rgb(0 0 0 / 0.32);
+        color: #06384a;
+        transition: transform 80ms ease, filter 120ms ease;
+    }
+    .game-btn:hover:not(:disabled) {
+        filter: brightness(1.08);
+    }
+    .game-btn:active:not(:disabled) {
+        transform: translateY(2px);
+        box-shadow:
+            inset 0 2px 4px rgb(0 0 0 / 0.3),
+            0 1px 2px rgb(0 0 0 / 0.3);
+    }
+    /* Disabled keeps its footprint: the row must not reflow. */
+    .game-btn:disabled {
+        filter: saturate(0.25) brightness(0.85);
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .game-btn-red {
+        background: linear-gradient(180deg, #ff8a7a 0%, #f04444 55%, #c92a2a 100%);
+        border-color: #8f1f1f;
+        color: #3d0808;
+    }
+    .game-btn-green {
+        background: linear-gradient(180deg, #6ee88a 0%, #13b83d 55%, #0b8a2c 100%);
+        border-color: #0a6621;
+        color: #042b0e;
+    }
+    .game-btn-cream {
+        background: linear-gradient(180deg, var(--cream-light) 0%, var(--cream-dim) 100%);
+        border-color: var(--edge-warm);
+        color: #3d3627;
+    }
+
+    /* A physical card: thick dark edge, highlight along the top. */
+    .game-card {
+        border: 2px solid #2b2418;
+        border-radius: 6px;
+        box-shadow:
+            0 2px 4px rgb(0 0 0 / 0.35),
+            inset 0 1px 0 rgb(255 255 255 / 0.35);
+        transition: transform 90ms ease, box-shadow 90ms ease;
+    }
+    .game-card-pick:hover:not(:disabled) {
+        transform: translateY(-4px);
+        box-shadow: 0 6px 10px rgb(0 0 0 / 0.4);
+    }
+    .game-card-off {
+        filter: grayscale(1);
+        opacity: 0.45;
+    }
+
+    /* Text that has to stay readable over artwork. */
+    .ink {
+        text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
     }
 }

@@ -3,6 +3,14 @@ use uuid::Uuid;
 
 fn default_player_count() -> usize { 4 }
 
+/// What is left in the bank. Public: everyone at a real table can see how
+/// tall the resource piles are and how thick the development deck is.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct BankInfo {
+    pub resources: Resources,
+    pub dev_cards: usize,
+}
+
 /// An open trade offer as it looks to one player, for restoring the trade
 /// panel after a reconnect. Carries only what that player is entitled to see:
 /// acceptances are public, but who declined is not.
@@ -254,6 +262,10 @@ pub enum ServerMessage {
     PlayersUpdate {
         players: Vec<PlayerInfo>,
     },
+    /// What the bank has left, sent whenever resources move.
+    BankUpdate {
+        bank: BankInfo,
+    },
     LobbyUpdate {
         games: Vec<LobbyGameInfo>,
     },
@@ -430,6 +442,8 @@ pub enum ServerMessage {
         /// invisible until it expires.
         #[serde(default)]
         pending_trades: Vec<TradeSnapshot>,
+        #[serde(default)]
+        bank: BankInfo,
     },
     PlayerWon { player_id: Uuid, secret_victory_points: u8 },
     PlayerSecretVictoryPointsUpdated{secret_victory_points: i32},

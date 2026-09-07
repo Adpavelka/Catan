@@ -3,14 +3,14 @@ use uuid::Uuid;
 use crate::components::board::{player_color_hex, Board};
 use crate::state::{BuildMode, GameState};
 use crate::components::icons::{dev_card_art, resource_art, Art, Icon, IconKind};
+use crate::components::sidebar::{ChatPanel, EventLog, PlayerPanels, ResourceBank};
+use crate::components::toolbar::LeftToolbar;
 use shared::{ClientRequest, GamePhase, PlayerColour};
 
 #[component]
 pub fn GamePage() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let (log_open, set_log_open) = create_signal(true);
-    let (trade_open, set_trade_open) = create_signal(false);
 
     // Check if any modal is open - if so, disable pointer events on main UI
     let is_modal_open = move || {
@@ -43,275 +43,40 @@ pub fn GamePage() -> impl IntoView {
 
             // Main game UI - disable pointer events when modal is open
             <div class=move || if is_modal_open() { "flex-1 flex flex-col min-h-0 pointer-events-none" } else { "flex-1 flex flex-col min-h-0 pointer-events-auto" }>
-            <header class="flex justify-between items-center bg-slate-900/50 border-b border-slate-800 p-4 backdrop-blur-md z-10">
-                <div class="flex items-center gap-6">
-                    <div>
-                        <h1 class="text-2xl font-black italic text-orange-600 tracking-tighter leading-none">"COLONIST"</h1>
-                        <span class="text-[9px] text-slate-500 font-mono tracking-widest uppercase">"Live Session"</span>
-                    </div>
+            <div class="flex-1 flex min-h-0 water">
+                <LeftToolbar />
 
-                </div>
-                <div class="flex items-center gap-4">
-                    // Offered while the table is short of a full house, so a
-                    // game of three does not wait forever for a fourth.
-                    <Show when=move || {
-                        state.game_phase.get() == GamePhase::WaitingForPlayers
-                            && state.players.get().len() >= 3
-                    }>
-                        <button
-                            class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold transition-all shadow-lg active:scale-95 text-xs"
-                            on:click=move |_| {
-                                if let Some(game_id) = state.game_id.get() {
-                                    state.send(ClientRequest::StartGame { game_id });
-                                }
-                            }
-                        >
-                            "START NOW"
-                        </button>
-                    </Show>
+                // ---- centre: the board, with everything you act on around it
+                <div class="flex-1 flex flex-col min-h-0 min-w-0 relative p-2 gap-2">
+                    <TurnBar />
 
-                    // `pointer-events-auto` because a modal switches the rest
-                    // of the UI off, and a player who owes a discard must
-                    // still be able to walk away.
-                    <button
-                    class="pointer-events-auto bg-red-900/40 hover:bg-red-700 text-red-200 px-4 py-2 rounded-lg font-bold transition-all border border-red-800/50 active:scale-95 text-xs"
-                    on:click=move |_| {
-                        if let Some(game_id) = state.game_id.get() {
-                            state.send(ClientRequest::LeaveGame { game_id });
-                            //let _ = window().location().set_href("/");
-                        }
-                    }
-                        >
-                    "LEAVE GAME"
-                    </button>
-                    // Debug button - always visible, disabled when not applicable
-
-                    <button
-                        class="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-lg font-bold transition-all shadow-lg active:scale-95 text-sm"
-                        on:click=move |_| state.send(ClientRequest::EndTurn)
-                    >
-                        {move || if state.is_my_special_build() { "DONE BUILDING" } else { "END TURN" }}
-                    </button>
-                </div>
-            </header>
-
-            <div class="flex-1 flex overflow-hidden min-h-0">
-                <aside  class="w-72 bg-slate-900/30 border-r border-slate-800
-                                flex flex-col flex-shrink-0 overflow-hidden">
-                    <div class="p-4 flex-1 overflow-y-auto min-h-0 custom-scrollbar space-y-6 pb-10">
-                        <div>
-                            <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] mb-3">"Players"</h3>
-                            <div class="space-y-2">
-                                <For
-                                    each=move || state.players.get()
-                                    key=|player| player.player_id
-                                    children=move |player| {
-                                        let is_me = Some(player.player_id) == state.player_id.get();
-                                        let player_clone = player.clone();
-                                        let is_active = move || player_clone.player_id == state.current_turn_player.get();
-
-                                        let score_signal = create_read_slice(
-                                        state.players,
-                                        move |players| {
-                                            players.iter()
-                                                .find(|p| p.player_id == player.player_id)
-                                                .map(|p| (p.victory_points as i32, state.secret_victory_points.get() ))
-                                                .unwrap_or((0, 0))
-                                        }
-                                        );
-
-                                        let player_id = player.player_id;
-                                        let resource_count = create_read_slice(
-                                            state.players,
-                                            move |players| {
-                                                players.iter()
-                                                    .find(|p| p.player_id == player_id)
-                                                    .map(|p| p.resource_count as i32)
-                                                    .unwrap_or(0)
-                                            }
-                                        );
-
-                                        let dev_card_count = create_read_slice(
-                                            state.players,
-                                            move |players| {
-                                                players.iter()
-                                                    .find(|p| p.player_id == player_id)
-                                                    .map(|p| p.dev_card_count as i32)
-                                                    .unwrap_or(0)
-                                            }
-                                        );
-
-                                        let knights_played = create_read_slice(
-                                            state.players,
-                                            move |players| {
-                                                players.iter()
-                                                    .find(|p| p.player_id == player_id)
-                                                    .map(|p| p.knights_played as i32)
-                                                    .unwrap_or(0)
-                                            }
-                                        );
-
-                                        let roads_count = create_read_slice(
-                                            state.players,
-                                            move |players| {
-                                                players.iter()
-                                                    .find(|p| p.player_id == player_id)
-                                                    .map(|p| p.roads_count as i32)
-                                                    .unwrap_or(0)
-                                            }
-                                        );
-
-                                        let has_longest_road = create_read_slice(
-                                            state.players,
-                                            move |players| {
-                                                players.iter()
-                                                    .find(|p| p.player_id == player_id)
-                                                    .map(|p| p.has_longest_road)
-                                                    .unwrap_or(false)
-                                            }
-                                        );
-
-                                        let has_largest_army = create_read_slice(
-                                            state.players,
-                                            move |players| {
-                                                players.iter()
-                                                    .find(|p| p.player_id == player_id)
-                                                    .map(|p| p.has_largest_army)
-                                                    .unwrap_or(false)
-                                            }
-                                        );
-
-                                        let display_name = if is_me {
-                                            format!("{} (You)", player.name)
-                                        } else {
-                                            player.name.clone()
-                                        };
-
-                                        view! {
-                                            <PlayerTagDynamic
-                                                name=display_name
-                                                score=score_signal
-                                                is_active=is_active
-                                                colour=player.colour
-                                                is_me=player.player_id == state.player_id.get().unwrap_or(Uuid::nil())
-                                                resource_count=resource_count
-                                                dev_card_count=dev_card_count
-                                                knights_played=knights_played
-                                                roads_count=roads_count
-                                                has_longest_road=has_longest_road
-                                                has_largest_army=has_largest_army
-                                            />
-                                        }
-                                    }
-                                />
-                            </div>
-                        </div>
-
-                        // Development cards used to be listed here; they are
-                        // part of your hand under the board now, beside your
-                        // resources.
-                    </div>
-
-                </aside>
-
-                // The board column fills the space rather than floating in
-                // it: no scrolling, no dead band above and below.
-                <div class="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden p-3 gap-2">
-                    <TurnTimer />
-                    <div
-                        class="flex-1 min-h-0 min-w-0 rounded-2xl overflow-hidden ring-1 ring-sky-800/40 shadow-[inset_0_2px_24px_rgba(0,0,0,0.55)]"
-                        style="background: radial-gradient(ellipse 72% 78% at 50% 45%, #1d5b86 0%, #134366 55%, #0a2136 100%);"
-                    >
+                    <div class="flex-1 min-h-0 min-w-0 relative">
                         <Board />
                     </div>
-                    // What you can build on the left, what you hold on the
-                    // right, both under the board where your eyes already are
-                    // when you are deciding what to do.
+
+                    // The lower deck: what you can buy, your hand, the dice.
                     <div class="shrink-0 flex items-end justify-between gap-3">
-                        <BuildBar />
-                        <div class="relative flex items-end gap-2">
-                            // The trade drawer opens upward from here, so the
-                            // offer you are building sits directly above the
-                            // hand you are building it from.
-                            <div class="absolute bottom-full right-0 mb-2 w-[340px] z-30">
-                                <Show when=move || trade_open.get()>
-                                    <div class="rounded-xl border border-slate-700 bg-slate-900/95 backdrop-blur-md shadow-2xl animate-in slide-in-from-bottom-2 duration-150">
-                                        <TradePanel on_close=Callback::new(move |_| set_trade_open.set(false)) />
-                                    </div>
-                                </Show>
-                            </div>
+                        <div class="flex flex-col gap-2">
+                            <BuildBar />
+                            <TradeDock />
+                        </div>
 
-                            <button
-                                class=move || format!(
-                                    "h-12 px-3 rounded-xl border-2 text-[10px] font-bold uppercase tracking-wider transition-all {}",
-                                    if trade_open.get() {
-                                        "bg-emerald-600 border-emerald-400 text-white"
-                                    } else {
-                                        "bg-slate-900/70 border-slate-700 text-slate-300 hover:border-slate-500"
-                                    }
-                                )
-                                title="Open the trade panel"
-                                on:click=move |_| set_trade_open.update(|o| *o = !*o)
-                            >
-                                <span class="flex flex-col items-center gap-0.5">
-                                    <Art name="trading" class="w-6 h-6 object-contain" />
-                                    "Trade"
-                                </span>
-                            </button>
-
+                        <div class="flex items-end gap-2">
                             <DevCardHand />
                             <ResourceHand />
                         </div>
                     </div>
                 </div>
 
-                // The log is worth having but not worth a permanent fifth of
-                // the screen, so it collapses to a spine and hands the width
-                // back to the board.
-                <aside class=move || format!(
-                    "bg-slate-900/30 border-l border-slate-800 flex flex-col overflow-hidden shrink-0 transition-[width] duration-200 {}",
-                    if log_open.get() { "w-64" } else { "w-10" }
-                )>
-                    <div class="flex items-center justify-between gap-2 p-2 border-b border-slate-800 shrink-0">
-                        <Show when=move || log_open.get()>
-                            <h3 class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.2em] pl-2 truncate">"Event Log"</h3>
-                        </Show>
-                        <button
-                            class="w-6 h-6 shrink-0 rounded text-slate-500 hover:text-white hover:bg-slate-800 font-bold text-xs transition-colors"
-                            title=move || if log_open.get() { "Hide the event log" } else { "Show the event log" }
-                            on:click=move |_| set_log_open.update(|o| *o = !*o)
-                        >
-                            {move || if log_open.get() { "›" } else { "‹" }}
-                        </button>
-                    </div>
-
-                    <Show
-                        when=move || log_open.get()
-                        fallback=move || view! {
-                            // Collapsed: a vertical label, so the strip still
-                            // says what it is.
-                            <div class="flex-1 flex items-start justify-center pt-3">
-                                <span class="text-[9px] uppercase tracking-[0.3em] text-slate-600 font-bold [writing-mode:vertical-rl]">
-                                    "Event Log"
-                                </span>
-                            </div>
-                        }
-                    >
-                        <div class="flex-1 overflow-y-auto p-3 space-y-1.5 custom-scrollbar min-h-0">
-                            <For
-                                each=move || state.messages.get().into_iter().rev()
-                                key=|msg| msg.clone()
-                                children=move |msg| view! {
-                                    <div class="text-[11px] font-mono text-slate-400 border-l-2 border-slate-700 pl-2 py-1 bg-slate-800/20">
-                                        {msg}
-                                    </div>
-                                }
-                            />
-                            <Show when=move || state.messages.get().is_empty()>
-                                <div class="text-xs text-slate-600 italic">"Waiting for actions..."</div>
-                            </Show>
-                        </div>
-                    </Show>
+                // ---- right: the dashboard
+                <aside
+                    class="shrink-0 flex flex-col gap-1.5 p-2 min-h-0 border-l-2 border-[#04547f]"
+                    style="width: 400px; background: linear-gradient(180deg, #066191 0%, #05537f 100%);"
+                >
+                    <EventLog />
+                    <ChatPanel />
+                    <ResourceBank />
+                    <PlayerPanels />
                 </aside>
             </div>
 
@@ -367,7 +132,7 @@ const TURN_LIMIT_SECS: f64 = shared::TURN_LIMIT_SECS as f64;
 /// turn itself; this just shows what it is about to do, off the same shared
 /// constants so the bar cannot promise a timeout that is not coming.
 #[component]
-fn TurnTimer() -> impl IntoView {
+fn TurnBar() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
     let (elapsed, set_elapsed) = create_signal(0.0f64);
@@ -422,36 +187,116 @@ fn TurnTimer() -> impl IntoView {
         (limit - secs).max(0.0).ceil() as i32
     };
 
+    let active_name = move || state.player_name(state.current_turn_player.get());
+    let active_colour = move || {
+        state
+            .players
+            .get()
+            .iter()
+            .find(|p| p.player_id == state.current_turn_player.get())
+            .map(|p| p.colour.hex())
+            .unwrap_or("#94a3b8")
+    };
+
     view! {
         <Show when=running>
-            <div class="shrink-0 flex items-center gap-3">
-                <span class=move || format!(
-                    "text-[10px] font-bold uppercase tracking-[0.2em] shrink-0 {}",
-                    if my_turn() { "text-orange-400" } else { "text-slate-500" }
-                )>
-                    {move || if my_turn() {
-                        if rolled() { "Your turn".to_string() } else { "Roll".to_string() }
-                    } else {
-                        format!("{}'s turn", state.player_name(state.current_turn_player.get()))
-                    }}
-                </span>
-                <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div
-                        class=move || format!(
-                            "h-full rounded-full transition-[width] duration-200 {}",
-                            if remaining() <= 5 { "bg-red-500" }
-                            else if remaining() <= 15 { "bg-amber-500" }
-                            else if my_turn() { "bg-orange-500" }
-                            else { "bg-slate-600" }
-                        )
-                        style=move || format!("width: {:.1}%", fraction() * 100.0)
-                    ></div>
+            <div class="shrink-0 flex items-stretch gap-1.5" style="height: 44px;">
+                // Whose turn it is, in their colour.
+                <div class="panel flex items-center gap-2 px-3 shrink-0">
+                    <span
+                        class="w-6 h-6 rounded-full border-2 border-black/45"
+                        style=move || format!("background-color: {}", active_colour())
+                    ></span>
+                    <span
+                        class="text-[14px] font-black"
+                        style=move || format!("color: {}", active_colour())
+                    >
+                        {active_name}
+                    </span>
+                    <span class="text-[12px] font-bold uppercase tracking-wider text-[#7a7263]">
+                        {move || if my_turn() { "- your turn" } else { "- turn" }}
+                    </span>
                 </div>
-                <span class="text-[10px] font-mono text-slate-400 tabular-nums w-8 text-right shrink-0">
-                    {move || format!("{}s", remaining())}
-                </span>
+
+                // How long is left in it.
+                <div class="panel flex-1 flex items-center gap-2 px-3 min-w-0">
+                    <div class="flex-1 h-2.5 rounded-full bg-[#d9cdb5] border border-[#bdb096] overflow-hidden">
+                        <div
+                            class=move || format!(
+                                "h-full transition-[width] duration-200 {}",
+                                if remaining() <= 5 { "bg-[#f04444]" }
+                                else if remaining() <= 15 { "bg-[#ffb718]" }
+                                else { "bg-[#13b83d]" }
+                            )
+                            style=move || format!("width: {:.1}%", fraction() * 100.0)
+                        ></div>
+                    </div>
+                    <span class=move || format!(
+                        "px-2 py-0.5 rounded border-2 text-[14px] font-black tabular-nums {}",
+                        if remaining() <= 5 {
+                            "bg-[#ffe2e2] border-[#c0392b] text-[#8f1f1f]"
+                        } else {
+                            "bg-[#faf4e8] border-[#a89b81] text-[#413a2c]"
+                        }
+                    )>
+                        {move || format!("0:{:02}", remaining().clamp(0, 99))}
+                    </span>
+                </div>
+
+                // The one control that ends it.
+                <button
+                    class="game-btn px-4 text-[12px] font-black uppercase tracking-wider shrink-0"
+                    on:click=move |_| state.send(ClientRequest::EndTurn)
+                >
+                    {move || if state.is_my_special_build() { "Done" } else { "End turn" }}
+                </button>
             </div>
         </Show>
+    }
+}
+
+/// The trade drawer's handle. The panel itself slides up over the water so it
+/// never squeezes the board, and closes back down to a single button.
+#[component]
+fn TradeDock() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+    let (open, set_open) = create_signal(false);
+
+    let waiting = move || state.my_pending_trade.get().is_some();
+    let incoming = move || state.incoming_trades.get().len();
+    // `>` inside the view macro parses as a tag, so the test lives out here.
+    let needs_attention = move || incoming() > 0 || waiting();
+
+    view! {
+        <div class="relative">
+            <Show when=move || open.get()>
+                <div class="absolute bottom-full left-0 mb-2 w-[360px] z-30 panel overflow-hidden
+                            animate-in slide-in-from-bottom-2 duration-150">
+                    <TradePanel on_close=Callback::new(move |_| set_open.set(false)) />
+                </div>
+            </Show>
+
+            <button
+                class=move || format!(
+                    "game-btn h-[54px] px-4 flex items-center gap-2 relative {}",
+                    if open.get() { "game-btn-green" } else { "" }
+                )
+                title="Trade with the bank or the other players"
+                on:click=move |_| set_open.update(|o| *o = !*o)
+            >
+                <Art name="trading" class="w-7 h-7 object-contain" />
+                <span class="text-[11px] font-black uppercase tracking-wider">"Trade"</span>
+
+                // Something is waiting on you: an offer to answer, or bids on
+                // your own that you have not settled.
+                <Show when=needs_attention>
+                    <span class="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-[#f04444]
+                                 border-2 border-white text-[11px] font-black text-white flex items-center justify-center">
+                        {move || if incoming() > 0 { incoming().to_string() } else { "!".to_string() }}
+                    </span>
+                </Show>
+            </button>
+        </div>
     }
 }
 
@@ -486,29 +331,25 @@ fn BuildBar() -> impl IntoView {
     };
 
     view! {
-        <div class="flex items-end gap-1.5 bg-slate-900/70 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/70 shadow-2xl">
+        <div class="panel flex items-end gap-1.5 px-2 py-1.5">
             <BuildButton
                 label="Road" art="build-road" mode=Some(BuildMode::Road)
-                cost=ROAD tint="hover:border-emerald-500 hover:text-emerald-300"
-                active_tint="border-emerald-500 text-emerald-300 bg-emerald-600/20"
+                cost=ROAD
                 enabled=Signal::derive(move || enabled(Some(BuildMode::Road), ROAD))
             />
             <BuildButton
                 label="Settlement" art="build-settlement" mode=Some(BuildMode::Settlement)
-                cost=SETTLEMENT tint="hover:border-orange-500 hover:text-orange-300"
-                active_tint="border-orange-500 text-orange-300 bg-orange-600/20"
+                cost=SETTLEMENT
                 enabled=Signal::derive(move || enabled(Some(BuildMode::Settlement), SETTLEMENT))
             />
             <BuildButton
                 label="City" art="build-city" mode=Some(BuildMode::City)
-                cost=CITY tint="hover:border-purple-500 hover:text-purple-300"
-                active_tint="border-purple-500 text-purple-300 bg-purple-600/20"
+                cost=CITY
                 enabled=Signal::derive(move || enabled(Some(BuildMode::City), CITY))
             />
             <BuildButton
                 label="Dev Card" art="build-dev-card" mode=None
-                cost=DEV_CARD tint="hover:border-sky-500 hover:text-sky-300"
-                active_tint=""
+                cost=DEV_CARD
                 enabled=Signal::derive(move || enabled(None, DEV_CARD))
             />
         </div>
@@ -523,8 +364,6 @@ fn BuildButton(
     art: &'static str,
     mode: Option<BuildMode>,
     cost: [u8; 5],
-    tint: &'static str,
-    active_tint: &'static str,
     enabled: Signal<bool>,
 ) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
@@ -543,9 +382,8 @@ fn BuildButton(
         <div class="relative group">
             <button
                 class=move || format!(
-                    "w-[62px] h-[54px] flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 transition-all                      disabled:grayscale disabled:opacity-40 disabled:!border-slate-800 disabled:!text-slate-600 disabled:cursor-not-allowed {} {}",
-                    if armed() { active_tint } else { "border-slate-700 text-slate-300" },
-                    tint,
+                    "game-btn w-[62px] h-[54px] flex flex-col items-center justify-center gap-0.5 {}",
+                    if armed() { "game-btn-green" } else { "game-btn-cream" },
                 )
                 disabled=move || !enabled.get()
                 on:click=move |_| match mode {
@@ -562,8 +400,8 @@ fn BuildButton(
             // Cost card, on hover. `pointer-events-none` so it can never sit
             // between the cursor and the button underneath it.
             <div class="pointer-events-none absolute bottom-full left-0 mb-2 hidden group-hover:block z-50">
-                <div class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 shadow-2xl whitespace-nowrap">
-                    <div class="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                <div class="panel px-2.5 py-2 whitespace-nowrap">
+                    <div class="text-[9px] font-black uppercase tracking-wider text-[#6b6354] mb-1.5">
                         {label} " costs"
                     </div>
                     // One card per unit, drawn like the cards in your hand
@@ -1122,7 +960,7 @@ fn DevCardHand() -> impl IntoView {
 
     view! {
         <Show when=move || !state.my_dev_cards.get().is_empty()>
-            <div class="flex items-end gap-1.5 bg-slate-900/70 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/70 shadow-2xl">
+            <div class="panel flex items-end gap-1.5 px-2 py-1.5">
                 <For
                     each=cards
                     key=|(i, (card, fresh))| (*i, format!("{card:?}"), *fresh)
@@ -1206,7 +1044,7 @@ fn ResourceHand() -> impl IntoView {
     };
 
     view! {
-        <div class="flex items-end gap-1.5 bg-slate-900/70 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/70 shadow-2xl">
+        <div class="panel flex items-end gap-1.5 px-2 py-1.5">
             {move || {
                 let r = state.my_resources.get();
                 view! {
@@ -1217,9 +1055,9 @@ fn ResourceHand() -> impl IntoView {
                     {card("Ore", shared::ResourceType::Ore, r.ore)}
                 }
             }}
-            <div class="ml-1 pl-3 border-l border-slate-700 flex flex-col items-center justify-center h-[53px]">
-                <span class="text-[9px] font-bold uppercase tracking-wider text-slate-500">"Total"</span>
-                <span class="text-lg font-black leading-none text-slate-200 tabular-nums">
+            <div class="ml-1 pl-3 border-l-2 border-[#ddd2ba] flex flex-col items-center justify-center h-[53px]">
+                <span class="text-[9px] font-black uppercase tracking-wider text-[#7a7263]">"Total"</span>
+                <span class="text-lg font-black leading-none text-[#2f2a1f] tabular-nums">
                     {move || {
                         let r = state.my_resources.get();
                         r.brick as u32 + r.lumber as u32 + r.wool as u32 + r.grain as u32 + r.ore as u32

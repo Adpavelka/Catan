@@ -385,6 +385,15 @@ impl Bank {
         Ok(())
     }
 
+    /// What is left, for the clients. Card identities stay hidden; only the
+    /// size of the deck travels.
+    pub fn to_info(&self) -> shared::BankInfo {
+        shared::BankInfo {
+            resources: (&self.game_resources).into(),
+            dev_cards: self.dev_cards.len(),
+        }
+    }
+
     pub fn draw_dev_card(&mut self) -> Result<DevelopmentCard, GameError> {
         self.dev_cards
             .pop()

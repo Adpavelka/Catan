@@ -777,17 +777,17 @@ pub fn Board() -> impl IntoView {
             // Zoom controls, floated over the top-right of the water.
             <div class="absolute top-2 right-2 z-10 flex flex-col gap-1">
                 <button
-                    class="w-7 h-7 rounded-md bg-slate-900/80 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 font-bold leading-none transition-colors"
+                    class="game-btn game-btn-cream w-8 h-8 font-black leading-none"
                     title="Zoom in"
                     on:click=move |_| set_zoom.update(|z| *z = clamp_zoom(*z * 1.25))
                 >"+"</button>
                 <button
-                    class="w-7 h-7 rounded-md bg-slate-900/80 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 font-bold leading-none transition-colors"
+                    class="game-btn game-btn-cream w-8 h-8 font-black leading-none"
                     title="Zoom out"
                     on:click=move |_| set_zoom.update(|z| *z = clamp_zoom(*z / 1.25))
                 >"\u{2212}"</button>
                 <button
-                    class="w-7 h-7 rounded-md bg-slate-900/80 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 text-[9px] font-bold transition-colors"
+                    class="game-btn game-btn-cream w-8 h-8 text-[9px] font-black"
                     title="Reset the view"
                     on:click=move |_| reset_view()
                 >"FIT"</button>
@@ -802,7 +802,7 @@ pub fn Board() -> impl IntoView {
                 phase.is_initial_phase() || phase.special_builder().is_some()
             }>
             <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex justify-center">
-                <div class="flex flex-wrap items-center justify-center gap-3 bg-gray-900/85 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10 shadow-2xl">
+                <div class="panel flex flex-wrap items-center justify-center gap-3 px-4 py-2.5">
                 // Show initial placement instructions
                 {move || {
                     let phase = move || state.game_phase.get();
@@ -811,13 +811,13 @@ pub fn Board() -> impl IntoView {
                     if phase().is_initial_phase() {
                         if is_my_turn() {
                             view! {
-                                <div class="text-orange-400 font-bold text-sm bg-orange-900/30 px-4 py-2 rounded-lg border border-orange-700/50">
+                                <div class="text-[#8a5a00] font-black text-sm bg-[#ffe9bd] px-4 py-2 rounded-lg border-2 border-[#d8a53c]">
                                     "Place 1 settlement, then 1 road"
                                 </div>
                             }.into_view()
                         } else {
                             view! {
-                                <div class="text-slate-400 text-sm px-4 py-2">
+                                <div class="text-[#6b6354] text-sm font-bold px-4 py-2">
                                     "Waiting for other players..."
                                 </div>
                             }.into_view()
@@ -920,12 +920,8 @@ fn DiceTray() -> impl IntoView {
     view! {
         <button
             class=move || format!(
-                "flex items-center gap-2 px-3 py-2 rounded-xl border-2 backdrop-blur-md transition-all shadow-2xl {}",
-                if can_roll() {
-                    "bg-blue-600/90 border-blue-300 hover:bg-blue-500 cursor-pointer"
-                } else {
-                    "bg-slate-900/80 border-slate-700 cursor-default"
-                }
+                "game-btn flex items-center gap-2 px-3 py-2 {}",
+                if can_roll() { "" } else { "game-btn-cream cursor-default" }
             )
             disabled=move || !can_roll()
             title=move || if can_roll() { "Roll the dice" } else { "The last roll" }
@@ -944,12 +940,12 @@ fn DiceTray() -> impl IntoView {
             <Show
                 when=can_roll
                 fallback=move || view! {
-                    <span class="text-2xl font-black text-white tabular-nums w-8 text-center">
+                    <span class="text-2xl font-black text-[#2f2a1f] tabular-nums w-8 text-center">
                         {move || { let (a, b) = shown.get(); a + b }}
                     </span>
                 }
             >
-                <span class="text-sm font-bold uppercase tracking-wider text-white pr-1">"Roll"</span>
+                <span class="text-sm font-black uppercase tracking-wider pr-1">"Roll"</span>
             </Show>
         </button>
     }
