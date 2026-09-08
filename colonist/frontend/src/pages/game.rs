@@ -193,292 +193,165 @@ fn TurnClockProvider(children: Children) -> impl IntoView {
     children()
 }
 
+/// What you hand back when a seven is rolled.
+///
+/// Click the cards you are giving up. No counters, no plus and minus buttons:
+/// discarding is choosing cards, so the interface is the cards, and the ones
+/// you have picked lift out of the row.
 #[component]
 fn DiscardCardsModal() -> impl IntoView {
+    use crate::components::bottom::{Basket, CardFace, Res};
+
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let discard_count = move || state.must_discard_count.get().unwrap_or(0);
+    let owed = move || state.must_discard_count.get().unwrap_or(0) as u8;
+    let picked = create_rw_signal(Basket::default());
 
-    // Track how many of each resource to discard
-    let (discard_brick, set_discard_brick) = create_signal(0u8);
-    let (discard_lumber, set_discard_lumber) = create_signal(0u8);
-    let (discard_wool, set_discard_wool) = create_signal(0u8);
-    let (discard_grain, set_discard_grain) = create_signal(0u8);
-    let (discard_ore, set_discard_ore) = create_signal(0u8);
-
-    // Log resources reactively
-    create_effect(move |_| {
-        let my_res = state.my_resources.get();
-        logging::log!("Discard modal - Resources: Brick={}, Lumber={}, Wool={}, Grain={}, Ore={}",
-            my_res.brick, my_res.lumber, my_res.wool, my_res.grain, my_res.ore);
-        logging::log!("Must discard: {} cards", discard_count());
-    });
-
-    // Reset selections when modal closes
     create_effect(move |_| {
         if state.must_discard_count.get().is_none() {
-            set_discard_brick.set(0);
-            set_discard_lumber.set(0);
-            set_discard_wool.set(0);
-            set_discard_grain.set(0);
-            set_discard_ore.set(0);
+            picked.set(Basket::default());
         }
     });
 
-    // Timer: 30 seconds
-    let (time_left, set_time_left) = create_signal(30);
+    let chosen = move || picked.get().total();
+    let can_confirm = move || chosen() == owed();
+    let left = move || owed().saturating_sub(chosen());
 
-    let total_discarded = move || {
-        discard_brick.get() + discard_lumber.get() + discard_wool.get() + discard_grain.get() + discard_ore.get()
-    };
-
-    let can_confirm = move || total_discarded() == discard_count() as u8;
-
-    let confirm_discard = move |_| {
-        if can_confirm() {
-            logging::log!("📤 Sending DiscardCards request to server...");
-            state.send(ClientRequest::DiscardCards {
-                resources: shared::Resources {
-                    brick: discard_brick.get(),
-                    lumber: discard_lumber.get(),
-                    wool: discard_wool.get(),
-                    grain: discard_grain.get(),
-                    ore: discard_ore.get(),
-                }
-            });
-            // Don't close modal yet - wait for ServerMessage::CardsDiscarded confirmation
-            // Modal will be closed in state.rs when we receive CardsDiscarded
-            logging::log!("⏳ Waiting for server confirmation...");
-            // Reset counters
-            set_discard_brick.set(0);
-            set_discard_lumber.set(0);
-            set_discard_wool.set(0);
-            set_discard_grain.set(0);
-            set_discard_ore.set(0);
+    // Thirty seconds, then the server is entitled to act. Ticking down in
+    // front of the player is kinder than a table that suddenly moves on.
+    let (time_left, set_time_left) = create_signal(30i32);
+    let timer = store_value(None::<leptos_dom::helpers::IntervalHandle>);
+    create_effect(move |_| {
+        if let Some(h) = timer.get_value() {
+            h.clear();
         }
-    };
-
-    // Start countdown timer and handle auto-discard
-    create_effect(move |prev_handle: Option<Option<leptos_dom::helpers::IntervalHandle>>| {
-        // Clean up previous interval if it exists
-        if let Some(Some(handle)) = prev_handle {
-            handle.clear();
-            logging::log!("🧹 Cleared previous timer interval");
+        if state.must_discard_count.get().is_none() {
+            return;
         }
-
-        if state.must_discard_count.get().is_some() {
-            // Reset timer when modal opens
-            set_time_left.set(30);
-            logging::log!("⏱️ Starting 30 second discard timer");
-
-            let state_timer = state;
-            match set_interval_with_handle(
+        set_time_left.set(30);
+        timer.set_value(
+            set_interval_with_handle(
                 move || {
-                    // Check if modal is still open
-                    if state_timer.must_discard_count.get_untracked().is_none() {
-                        // Modal closed, just return without updating signals
+                    let now = time_left.get_untracked() - 1;
+                    set_time_left.set(now.max(0));
+                    if now > 0 || state.must_discard_count.get_untracked().is_none() {
                         return;
                     }
-
-                    let current = time_left.get_untracked();
-                    if current > 0 {
-                        set_time_left.set(current - 1);
-                        if current % 5 == 0 {
-                            logging::log!("⏱️ Timer: {} seconds remaining", current);
-                        }
-                    } else {
-                        // Time's up! Auto-discard random cards
-                        logging::log!("⏰ Timer expired! Auto-discarding cards...");
-                        logging::log!("Player ID: {:?}", state_timer.player_id.get_untracked());
-
-                        let my_res = state_timer.my_resources.get_untracked();
-                        let target = state_timer.must_discard_count.get_untracked().unwrap_or(0) as u8;
-
-                        logging::log!("Discard target: {} cards", target);
-                        logging::log!("My resources: Brick={}, Lumber={}, Wool={}, Grain={}, Ore={}",
-                            my_res.brick, my_res.lumber, my_res.wool, my_res.grain, my_res.ore);
-
-                        if target == 0 {
-                            logging::log!("❌ No cards to discard, closing modal");
-                            state_timer.must_discard_count.set(None);
-                            return;
-                        }
-
-                        logging::log!("Target: {} cards, Current resources: Brick={}, Lumber={}, Wool={}, Grain={}, Ore={}",
-                            target, my_res.brick, my_res.lumber, my_res.wool, my_res.grain, my_res.ore);
-
-                        // Randomly select resources to discard
-                        let mut resources = vec![
-                            (my_res.brick, "brick"),
-                            (my_res.lumber, "lumber"),
-                            (my_res.wool, "wool"),
-                            (my_res.grain, "grain"),
-                            (my_res.ore, "ore"),
-                        ];
-
-                        // Filter out resources we don't have
-                        resources.retain(|(count, _)| *count > 0);
-                        logging::log!("Available resources to discard from: {} types", resources.len());
-
-                        if resources.is_empty() {
-                            logging::log!("❌ No resources available to discard!");
-                            state_timer.must_discard_count.set(None);
-                            return;
-                        }
-
-                        let mut discarded = 0u8;
-                        let mut brick_d = 0u8;
-                        let mut lumber_d = 0u8;
-                        let mut wool_d = 0u8;
-                        let mut grain_d = 0u8;
-                        let mut ore_d = 0u8;
-
-                        // Keep discarding until we reach the target
-                        while discarded < target && !resources.is_empty() {
-                            // Pick a random resource
-                            let idx = (js_sys::Math::random() * resources.len() as f64).floor() as usize;
-                            let (_, name) = resources[idx];
-
-                            match name {
-                                "brick" => { brick_d += 1; resources[idx].0 -= 1; }
-                                "lumber" => { lumber_d += 1; resources[idx].0 -= 1; }
-                                "wool" => { wool_d += 1; resources[idx].0 -= 1; }
-                                "grain" => { grain_d += 1; resources[idx].0 -= 1; }
-                                "ore" => { ore_d += 1; resources[idx].0 -= 1; }
-                                _ => {}
-                            }
-
-                            if resources[idx].0 == 0 {
-                                resources.remove(idx);
-                            }
-                            discarded += 1;
-                        }
-
-                        logging::log!("✅ Auto-discarding: Brick={}, Lumber={}, Wool={}, Grain={}, Ore={}",
-                            brick_d, lumber_d, wool_d, grain_d, ore_d);
-
-                        state_timer.send(ClientRequest::DiscardCards {
-                            resources: shared::Resources {
-                                brick: brick_d,
-                                lumber: lumber_d,
-                                wool: wool_d,
-                                grain: grain_d,
-                                ore: ore_d,
-                            }
-                        });
-                        state_timer.must_discard_count.set(None);
+                    // Out of time: give up cards at random rather than
+                    // leaving the table waiting on somebody who has walked
+                    // away from the keyboard.
+                    let mut bag = picked.get_untracked();
+                    let mut short = owed().saturating_sub(bag.total());
+                    while short > 0 {
+                        let held = state.my_resources.get_untracked();
+                        let spare: Vec<Res> = Res::ALL
+                            .into_iter()
+                            .filter(|k| k.in_hand(&held) > bag.get(*k))
+                            .collect();
+                        let Some(k) = spare.first().copied() else { break };
+                        bag.set(k, bag.get(k) + 1);
+                        short -= 1;
                     }
+                    state.send(ClientRequest::DiscardCards { resources: bag.to_shared() });
+                    picked.set(Basket::default());
                 },
                 std::time::Duration::from_secs(1),
-            ) {
-                Ok(handle) => Some(handle),
-                Err(_) => {
-                    logging::error!("Failed to create interval");
-                    None
-                }
-            }
-        } else {
-            logging::log!("Modal closed, no timer needed");
-            None
+            )
+            .ok(),
+        );
+    });
+    on_cleanup(move || {
+        if let Some(h) = timer.get_value() {
+            h.clear();
         }
     });
 
-    // Helper to create discard counter row - closures with >= are defined outside view! macro
-    // to avoid Leptos parsing issues with >= being interpreted as HTML tag closing
-    let discard_counter = move |name: &'static str, color: &'static str,
-                                 value: ReadSignal<u8>, setter: WriteSignal<u8>,
-                                 get_max: Signal<u8>| {
-        // Define closures outside the view! macro to avoid parsing issues with >=
-        let dec_disabled = move || value.get() == 0;
-        let inc_disabled = move || value.get() >= get_max.get();
-        let on_dec = move |_| {
-            if value.get() > 0 {
-                setter.set(value.get() - 1);
-            }
-        };
-        let on_inc = move |_| {
-            if value.get() < get_max.get() {
-                setter.set(value.get() + 1);
-            }
-        };
-
-        view! {
-            <div class="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg">
-                <div class="flex items-center gap-3">
-                    <span class=format!("font-bold {}", color)>{name}</span>
-                    <span class="text-xs text-slate-500">"(have " {move || get_max.get()} ")"</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button
-                        class="w-8 h-8 bg-red-700 hover:bg-red-600 rounded font-bold text-white disabled:opacity-30 disabled:cursor-not-allowed text-lg"
-                        on:click=on_dec
-                        disabled=dec_disabled
-                    >
-                        "-"
-                    </button>
-                    <span class="w-12 text-center font-bold text-white text-lg">{value}</span>
-                    <button
-                        class="w-8 h-8 bg-green-700 hover:bg-green-600 rounded font-bold text-white disabled:opacity-30 disabled:cursor-not-allowed text-lg"
-                        on:click=on_inc
-                        disabled=inc_disabled
-                    >
-                        "+"
-                    </button>
-                </div>
-            </div>
+    let confirm = move |_| {
+        if can_confirm() {
+            state.send(ClientRequest::DiscardCards {
+                resources: picked.get_untracked().to_shared(),
+            });
         }
     };
 
-    // Create signals for max values (from player's resources)
-    let max_brick = Signal::derive(move || state.my_resources.get().brick);
-    let max_lumber = Signal::derive(move || state.my_resources.get().lumber);
-    let max_wool = Signal::derive(move || state.my_resources.get().wool);
-    let max_grain = Signal::derive(move || state.my_resources.get().grain);
-    let max_ore = Signal::derive(move || state.my_resources.get().ore);
+    let urgent = move || time_left.get() <= 10;
 
     view! {
-        <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm pointer-events-auto">
-            <div class="bg-slate-900 border-2 border-red-600 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
-                <div class="flex justify-between items-center mb-2">
-                    <h2 class="text-2xl font-bold text-red-500 flex items-center gap-2"><Icon kind=IconKind::Warning /> "Discard Cards"</h2>
-                    <div class=move || {
-                        let t = time_left.get();
-                        if t <= 10 {
-                            "text-2xl font-black text-red-500 animate-pulse"
-                        } else {
-                            "text-2xl font-black text-yellow-500"
-                        }
-                    }>
-                        {time_left} "s"
-                    </div>
-                </div>
-                <p class="text-slate-300 mb-4">
-                    "You must discard " <span class="text-red-400 font-bold">{discard_count}</span> " cards. Select which resources to discard:"
+        <GameDialog title="The robber takes his cut">
+            <div class="flex items-center gap-3 mb-3">
+                <p class="text-[14px] text-[#5c5445] flex-1">
+                    "A seven was rolled. Choose "
+                    <span class="font-black text-[#8a5a00]">{owed}</span>
+                    " cards to give up."
                 </p>
-
-                <div class="space-y-3 mb-4">
-                    {discard_counter("Brick", "text-red-500", discard_brick, set_discard_brick, max_brick)}
-                    {discard_counter("Wood", "text-green-500", discard_lumber, set_discard_lumber, max_lumber)}
-                    {discard_counter("Sheep", "text-lime-400", discard_wool, set_discard_wool, max_wool)}
-                    {discard_counter("Wheat", "text-yellow-400", discard_grain, set_discard_grain, max_grain)}
-
-                    {discard_counter("Ore", "text-slate-400", discard_ore, set_discard_ore, max_ore)}
-                </div>
-
-                <div class="flex justify-between items-center pt-4 border-t border-slate-700">
-                    <div class="text-sm text-slate-400">
-                        "Selected: " <span class=move || if can_confirm() { "text-green-400 font-bold" } else { "text-red-400 font-bold" }>{total_discarded} " / " {discard_count}</span>
-                    </div>
-                    <button
-                        class="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                        on:click=confirm_discard
-                        disabled=move || !can_confirm()
-                    >
-                        "DISCARD"
-                    </button>
-                </div>
+                <span class=move || format!(
+                    "px-2.5 py-1 rounded-md border-2 text-[16px] font-black tabular-nums shrink-0 {}",
+                    if urgent() {
+                        "bg-[#ffe2e2] border-[#c0392b] text-[#8f1f1f] animate-pulse"
+                    } else {
+                        "bg-[#faf4e7] border-[#a89b81] text-[#4a4335]"
+                    }
+                )>
+                    {move || format!("{}s", time_left.get())}
+                </span>
             </div>
-        </div>
+
+            // Your hand, every card drawn. Clicking one moves it to the pile
+            // you are giving up; clicking it again takes it back.
+            <div class="hud-tray p-2.5 flex items-center gap-[3px] flex-wrap min-h-[96px]">
+                {Res::ALL.map(|k| {
+                    let held = move || k.in_hand(&state.my_resources.get());
+                    let up = move || picked.get().get(k);
+                    view! {
+                        {move || (0..held()).map(|i| {
+                            let is_up = i >= held().saturating_sub(up());
+                            view! {
+                                <button
+                                    class="game-card-pick"
+                                    title=move || if is_up {
+                                        format!("{} - click to keep it", k.label())
+                                    } else {
+                                        format!("{} - click to give it up", k.label())
+                                    }
+                                    on:click=move |_| picked.update(|b| {
+                                        if is_up {
+                                            b.set(k, b.get(k).saturating_sub(1));
+                                        } else if b.total() < owed() {
+                                            b.set(k, b.get(k) + 1);
+                                        }
+                                    })
+                                >
+                                    <CardFace
+                                        art=k.art()
+                                        alt=k.label()
+                                        size="w-[54px] h-[76px]"
+                                        dimmed=is_up
+                                        selected=is_up
+                                    />
+                                </button>
+                            }
+                        }).collect_view()}
+                    }
+                }).to_vec()}
+            </div>
+
+            <div class="flex items-center gap-2 mt-3">
+                <span class="text-[13px] text-[#7a7263]">
+                    {move || if left() == 0 {
+                        "That is the lot.".to_string()
+                    } else {
+                        format!("{} more to choose", left())
+                    }}
+                </span>
+                <button
+                    class="game-btn game-btn-red ml-auto px-6 h-11 text-[14px] font-black uppercase tracking-wider"
+                    disabled=move || !can_confirm()
+                    on:click=confirm
+                >
+                    "Hand them over"
+                </button>
+            </div>
+        </GameDialog>
     }
 }
 
@@ -610,8 +483,7 @@ pub fn IncomingTrades() -> impl IntoView {
 
     view! {
         <Show when=move || !state.incoming_trades.get().is_empty()>
-            <div class="space-y-2 mt-2 pt-2 border-t border-slate-800">
-                <div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">"Incoming"</div>
+            <div class="flex flex-col gap-1.5">
                 <For
                     each=move || state.incoming_trades.get()
                     key=|trade| trade.offer_id
@@ -628,8 +500,229 @@ pub fn IncomingTrades() -> impl IntoView {
 /// will send `TradeCancelled`; this is display only, so the two cannot drift.
 const TRADE_TIMEOUT_SECONDS: f64 = shared::TRADE_LIFETIME_SECS as f64;
 
-/// Terms to answer somebody else's offer with. Sends a counter, which is a
-/// trade from us to the active player - never to another waiting player.
+/// An offer somebody has put to you.
+///
+/// Deliberately the same object as the panel the proposer sees: their avatar,
+/// a green arrow down for what would come to you, a red arrow up for what
+/// would leave you, and square controls on the right. The only differences
+/// are whose face is on it and what the buttons do.
+#[component]
+fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
+    use crate::components::offer_status::{to_basket, Arrow, PlayerMark, SmallButton, TermCards};
+
+    let state = use_context::<GameState>().expect("GameState missing");
+    let offer_id = trade.offer_id;
+    let received_at = trade.received_at;
+    let proposer = trade.proposer_id;
+    let proposer_name = state.player_name(proposer);
+
+    // A counter is aimed at me alone, so accepting settles it outright rather
+    // than joining a queue of bidders.
+    let is_counter = trade.counters.is_some();
+
+    let (seconds_left, set_seconds_left) = create_signal(TRADE_TIMEOUT_SECONDS);
+    let timer = store_value(None::<leptos_dom::helpers::IntervalHandle>);
+    create_effect(move |_| {
+        if let Some(handle) = timer.get_value() {
+            handle.clear();
+        }
+        let handle = set_interval_with_handle(
+            move || {
+                let elapsed = (js_sys::Date::now() - received_at) / 1000.0;
+                set_seconds_left.set((TRADE_TIMEOUT_SECONDS - elapsed).max(0.0));
+            },
+            std::time::Duration::from_secs(1),
+        );
+        timer.set_value(handle.ok());
+    });
+    on_cleanup(move || {
+        if let Some(handle) = timer.get_value() {
+            handle.clear();
+        }
+    });
+
+    // Whether I have already answered, and how.
+    let i_accepted = move || state.my_accepted_offers.get().contains(&offer_id);
+    let my_counter = move || {
+        state
+            .my_counter_offers
+            .get()
+            .iter()
+            .find(|(original, _)| *original == offer_id)
+            .map(|(_, counter)| *counter)
+    };
+    let answered = move || i_accepted() || my_counter().is_some();
+    let unanswered = move || !answered();
+
+    // Can I cover what they are asking for?
+    let asking = trade.requesting.clone();
+    let can_afford = move || {
+        let r = state.my_resources.get();
+        asking.brick <= r.brick
+            && asking.lumber <= r.lumber
+            && asking.wool <= r.wool
+            && asking.grain <= r.grain
+            && asking.ore <= r.ore
+    };
+    // An offer with an unnamed card on it cannot be taken as it stands; the
+    // only answer is to counter with the card named.
+    let has_wildcard = trade.offering_any > 0 || trade.requesting_any > 0;
+    let can_accept = move || can_afford() && !has_wildcard;
+    let short = move || !can_afford() && !answered();
+    let may_counter = move || !is_counter;
+
+    let (countering, set_countering) = create_signal(false);
+
+    let accept = move |_| {
+        if is_counter {
+            state.send(ClientRequest::ConfirmTrade { offer_id, partner_id: proposer });
+        } else {
+            state.send(ClientRequest::TradeResponse { offer_id, accept: true });
+        }
+    };
+    let decline = move |_| {
+        if is_counter {
+            state.send(ClientRequest::CancelTrade { offer_id });
+        } else {
+            state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+        }
+    };
+    let withdraw = move |_| {
+        if let Some(counter_id) = my_counter() {
+            state.send(ClientRequest::CancelTrade { offer_id: counter_id });
+        } else {
+            state.send(ClientRequest::TradeResponse { offer_id, accept: false });
+        }
+    };
+
+    // What comes to me is what they are offering; what leaves me is what they
+    // are asking for. The proposer's panel says the same deal the other way
+    // round, which is exactly what the arrows are for.
+    let incoming = to_basket(&trade.offering);
+    let incoming_any = trade.offering_any;
+    let outgoing = to_basket(&trade.requesting);
+    let outgoing_any = trade.requesting_any;
+
+    let urgent = move || seconds_left.get() <= 10.0;
+
+    view! {
+        <div class="flex flex-col gap-1.5">
+            <div class="hud-tray flex items-center gap-2.5 px-3" style="height: 54px;">
+                <PlayerMark who=Signal::derive(move || Some(proposer)) size=38 />
+                <span class="text-[14px] font-black text-[#413a2c] truncate">
+                    {proposer_name}
+                    {if is_counter { " counters" } else { " offers" }}
+                </span>
+
+                // The offer dies on a clock somebody else started, so the time
+                // left is part of the offer, not a detail.
+                <span class=move || format!(
+                    "ml-auto px-2.5 py-1 rounded-md border-2 text-[15px] font-black tabular-nums {}",
+                    if urgent() {
+                        "bg-[#ffe2e2] border-[#c0392b] text-[#8f1f1f] animate-pulse"
+                    } else {
+                        "bg-[#faf4e7] border-[#a89b81] text-[#4a4335]"
+                    }
+                )>
+                    {move || format!("{}s", seconds_left.get().ceil() as i32)}
+                </span>
+            </div>
+
+            <div class="hud-tray px-3 py-2 flex flex-col gap-1">
+                <div class="flex items-center gap-2.5 min-h-[62px]">
+                    <Arrow up=false />
+                    <TermCards
+                        basket=Signal::derive(move || incoming)
+                        wild=Signal::derive(move || incoming_any)
+                    />
+                </div>
+
+                <div class="flex items-center gap-2.5 min-h-[62px]">
+                    <Arrow up=true />
+                    <TermCards
+                        basket=Signal::derive(move || outgoing)
+                        wild=Signal::derive(move || outgoing_any)
+                    />
+
+                    <div class="ml-auto flex items-center gap-1.5 shrink-0">
+                        <Show
+                            when=unanswered
+                            fallback=move || view! {
+                                // Answered. It is their move now - they may
+                                // still pick somebody else - so this stays
+                                // until they settle it.
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-[12px] font-bold text-[#1c7a33]">
+                                        {move || if my_counter().is_some() {
+                                            "Countered"
+                                        } else {
+                                            "Waiting on them"
+                                        }}
+                                    </span>
+                                    <SmallButton
+                                        label="Take your answer back"
+                                        enabled=Signal::derive(|| true)
+                                        on_click=Callback::new(withdraw)
+                                    >
+                                        <path d="M9 14 4 9l5-5"/>
+                                        <path d="M4 9h11a5 5 0 0 1 0 10h-1"/>
+                                    </SmallButton>
+                                </div>
+                            }
+                        >
+                            <SmallButton
+                                label="Turn it down"
+                                enabled=Signal::derive(|| true)
+                                on_click=Callback::new(decline)
+                            >
+                                <path d="M6 6 18 18"/><path d="M18 6 6 18"/>
+                            </SmallButton>
+
+                            // A counter is already a reply to me alone;
+                            // countering a counter is not a move.
+                            <Show when=may_counter>
+                                <SmallButton
+                                    label="Answer with terms of your own"
+                                    enabled=Signal::derive(|| true)
+                                    on_click=Callback::new(move |_| set_countering.set(true))
+                                >
+                                    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/>
+                                    <path d="M14.5 5.5 18.5 9.5"/>
+                                </SmallButton>
+                            </Show>
+
+                            <SmallButton
+                                label=if has_wildcard {
+                                    "Counter to name the unspecified card"
+                                } else {
+                                    "Take it"
+                                }
+                                enabled=Signal::derive(can_accept)
+                                on_click=Callback::new(accept)
+                            >
+                                <path d="M4 12.5 9.5 18 20 6"/>
+                            </SmallButton>
+                        </Show>
+                    </div>
+                </div>
+
+                <Show when=short>
+                    <div class="text-[12px] text-[#8a5a00]">
+                        "You do not hold what they are asking for."
+                    </div>
+                </Show>
+            </div>
+
+            <Show when=move || countering.get()>
+                <CounterOfferForm
+                    offer_id=offer_id
+                    on_done=Callback::new(move |_| set_countering.set(false))
+                />
+            </Show>
+        </div>
+    }
+}
+
 #[component]
 fn CounterOfferForm(offer_id: u64, on_done: Callback<()>) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
@@ -725,238 +818,6 @@ fn CounterOfferForm(offer_id: u64, on_done: Callback<()>) -> impl IntoView {
                     "SEND COUNTER"
                 </button>
             </div>
-        </div>
-    }
-}
-
-#[component]
-fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-    let offer_id = trade.offer_id;
-    let received_at = trade.received_at;
-
-    // Timer state - seconds remaining
-    let (seconds_left, set_seconds_left) = create_signal(TRADE_TIMEOUT_SECONDS);
-
-    // Tick the countdown. The handle has to be cleared when this row goes
-    // away: leptos only runs the effect's own cleanup when it re-runs, so an
-    // interval left behind here would keep firing after the row is gone.
-    let timer = store_value(None::<leptos_dom::helpers::IntervalHandle>);
-
-    create_effect(move |_| {
-        if let Some(handle) = timer.get_value() {
-            handle.clear();
-        }
-
-        let handle = set_interval_with_handle(
-            move || {
-                let elapsed = (js_sys::Date::now() - received_at) / 1000.0;
-                set_seconds_left.set((TRADE_TIMEOUT_SECONDS - elapsed).max(0.0));
-            },
-            std::time::Duration::from_secs(1),
-        );
-
-        timer.set_value(handle.ok());
-    });
-
-    on_cleanup(move || {
-        if let Some(handle) = timer.get_value() {
-            handle.clear();
-        }
-    });
-
-    // Whether I have already bid on this offer and am waiting to be picked.
-    let i_accepted = move || state.my_accepted_offers.get().contains(&offer_id);
-
-    // A counter is aimed at me alone, so accepting it settles it outright
-    // rather than joining a queue of bidders.
-    let is_counter = trade.counters.is_some();
-    let counterer = trade.proposer_id;
-
-    // Have I already answered this offer with terms of my own?
-    let my_counter = move || {
-        state.my_counter_offers.get()
-            .iter()
-            .find(|(original, _)| *original == offer_id)
-            .map(|(_, counter)| *counter)
-    };
-
-    let (show_counter_form, set_show_counter_form) = create_signal(false);
-
-    let proposer_name = state.players.get()
-        .iter()
-        .find(|p| p.player_id == trade.proposer_id)
-        .map(|p| p.name.clone())
-        .unwrap_or_else(|| format!("Player {}", trade.proposer_id));
-
-    // Check if I can afford what they're requesting
-    let can_afford = move || {
-        let res = state.my_resources.get();
-        trade.requesting.brick <= res.brick &&
-        trade.requesting.lumber <= res.lumber &&
-        trade.requesting.wool <= res.wool &&
-        trade.requesting.grain <= res.grain &&
-        trade.requesting.ore <= res.ore
-    };
-
-    // Format resources
-    let format_resources = |r: &shared::Resources| -> String {
-        let mut parts = Vec::new();
-        if r.brick > 0 { parts.push(format!("{}x Brick", r.brick)); }
-        if r.lumber > 0 { parts.push(format!("{}x Wood", r.lumber)); }
-        if r.wool > 0 { parts.push(format!("{}x Sheep", r.wool)); }
-        if r.grain > 0 { parts.push(format!("{}x Wheat", r.grain)); }
-        if r.ore > 0 { parts.push(format!("{}x Ore", r.ore)); }
-        if parts.is_empty() { "nothing".to_string() } else { parts.join(" ") }
-    };
-
-    let offering_str = format_resources(&trade.offering);
-    let requesting_str = format_resources(&trade.requesting);
-
-    // Calculate progress bar width (percentage remaining)
-    let progress_width = move || {
-        let remaining = seconds_left.get();
-        let percentage = (remaining / TRADE_TIMEOUT_SECONDS) * 100.0;
-        format!("{}%", percentage.max(0.0))
-    };
-
-    // Timer color based on remaining time
-    let timer_color = move || {
-        let remaining = seconds_left.get();
-        if remaining <= 5.0 {
-            "bg-red-600"
-        } else if remaining <= 10.0 {
-            "bg-yellow-600"
-        } else {
-            "bg-blue-600"
-        }
-    };
-
-    view! {
-        <div class="bg-blue-900/30 border border-blue-700/50 rounded p-2 text-[9px] relative overflow-hidden">
-            // Timer progress bar background
-            <div class="absolute bottom-0 left-0 right-0 h-1 bg-slate-700">
-                <div
-                    class=move || format!("h-full transition-all duration-1000 {}", timer_color())
-                    style=move || format!("width: {}", progress_width())
-                ></div>
-            </div>
-
-            <div class="flex justify-between items-center mb-1">
-                <div class="font-bold text-blue-300">
-                    {proposer_name}
-                    {if is_counter { " (counter)" } else { "" }}
-                </div>
-                <div class=move || {
-                    let remaining = seconds_left.get();
-                    if remaining <= 5.0 {
-                        "text-red-400 font-bold"
-                    } else if remaining <= 10.0 {
-                        "text-yellow-400 font-bold"
-                    } else {
-                        "text-slate-400"
-                    }
-                }>
-                    {move || format!("{}s", seconds_left.get().ceil() as i32)}
-                </div>
-            </div>
-            <div class="text-slate-300">
-                <span class="text-green-400">"Gives: "</span>{offering_str}
-            </div>
-            <div class="text-slate-300">
-                <span class="text-red-400">"Wants: "</span>{requesting_str}
-            </div>
-            {if is_counter {
-                // Somebody's counter to my offer: I settle it directly.
-                view! {
-                    <div class="flex gap-1 mt-2">
-                        <button
-                            class="flex-1 py-1 bg-red-700 hover:bg-red-600 rounded font-bold"
-                            on:click=move |_| {
-                                state.send(ClientRequest::CancelTrade { offer_id });
-                            }
-                        >
-                            "REJECT"
-                        </button>
-                        <button
-                            class="flex-1 py-1 bg-green-700 hover:bg-green-600 rounded font-bold disabled:opacity-40"
-                            disabled=move || !can_afford()
-                            on:click=move |_| {
-                                state.send(ClientRequest::ConfirmTrade {
-                                    offer_id,
-                                    partner_id: counterer,
-                                });
-                            }
-                        >
-                            "TRADE"
-                        </button>
-                    </div>
-                }.into_view()
-            } else {
-                view! {
-                    <Show
-                        when=move || i_accepted() || my_counter().is_some()
-                        fallback=move || view! {
-                            <div class="flex gap-1 mt-2">
-                                <button
-                                    class="flex-1 py-1 bg-red-700 hover:bg-red-600 rounded font-bold"
-                                    on:click=move |_| {
-                                        state.send(ClientRequest::TradeResponse { offer_id, accept: false });
-                                    }
-                                >
-                                    "DECLINE"
-                                </button>
-                                <button
-                                    class="flex-1 py-1 bg-amber-700 hover:bg-amber-600 rounded font-bold"
-                                    on:click=move |_| set_show_counter_form.set(true)
-                                >
-                                    "COUNTER"
-                                </button>
-                                <button
-                                    class="flex-1 py-1 bg-green-700 hover:bg-green-600 rounded font-bold disabled:opacity-40"
-                                    disabled=move || !can_afford()
-                                    on:click=move |_| {
-                                        state.send(ClientRequest::TradeResponse { offer_id, accept: true });
-                                    }
-                                >
-                                    "ACCEPT"
-                                </button>
-                            </div>
-                        }
-                    >
-                        // Answered. It is their move now - they may pick
-                        // somebody else, so this stays until they settle.
-                        <div class="mt-2 space-y-1">
-                            <div class="text-green-400 font-bold text-center">
-                                {move || if my_counter().is_some() {
-                                    "✓ Countered - waiting for them to choose"
-                                } else {
-                                    "✓ Accepted - waiting for them to choose"
-                                }}
-                            </div>
-                            <button
-                                class="w-full py-1 bg-slate-700 hover:bg-slate-600 rounded font-bold"
-                                on:click=move |_| {
-                                    if let Some(counter_id) = my_counter() {
-                                        state.send(ClientRequest::CancelTrade { offer_id: counter_id });
-                                    } else {
-                                        state.send(ClientRequest::TradeResponse { offer_id, accept: false });
-                                    }
-                                }
-                            >
-                                "WITHDRAW"
-                            </button>
-                        </div>
-                    </Show>
-
-                    <Show when=move || show_counter_form.get()>
-                        <CounterOfferForm
-                            offer_id=offer_id
-                            on_done=Callback::new(move |_| set_show_counter_form.set(false))
-                        />
-                    </Show>
-                }.into_view()
-            }}
         </div>
     }
 }

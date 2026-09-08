@@ -19,7 +19,7 @@ use crate::state::{GameState, MyOffer};
 use shared::{ClientRequest, Resources};
 
 /// Turn the wire's resource bag into the local one.
-fn to_basket(r: &Resources) -> Basket {
+pub fn to_basket(r: &Resources) -> Basket {
     Basket {
         wood: r.lumber,
         brick: r.brick,
@@ -212,7 +212,7 @@ fn OfferCard(offer: MyOffer) -> impl IntoView {
 
 /// A player's colour disc with a simple figure in it.
 #[component]
-fn PlayerMark(who: Signal<Option<Uuid>>, #[prop(default = 44)] size: u32) -> impl IntoView {
+pub fn PlayerMark(who: Signal<Option<Uuid>>, #[prop(default = 44)] size: u32) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
     let colour = move || {
@@ -297,7 +297,7 @@ fn Responder(who: Uuid, accepted: bool, chosen: RwSignal<Option<Uuid>>) -> impl 
 /// The fat directional arrow. Green down for what comes in, red up for what
 /// goes out - the row's whole meaning, so it is drawn large.
 #[component]
-fn Arrow(up: bool) -> impl IntoView {
+pub fn Arrow(up: bool) -> impl IntoView {
     view! {
         <svg
             class="w-[28px] h-[34px] shrink-0" viewBox="0 0 24 28"
@@ -317,7 +317,7 @@ fn Arrow(up: bool) -> impl IntoView {
 /// brick cards, so the deal can be read by counting rather than by squinting
 /// at a number in a corner.
 #[component]
-fn TermCards(basket: Signal<Basket>, wild: Signal<u8>) -> impl IntoView {
+pub fn TermCards(basket: Signal<Basket>, wild: Signal<u8>) -> impl IntoView {
     let nothing = move || basket.get().total() == 0 && wild.get() == 0;
     let has_wild = move || wild.get() > 0;
 
@@ -342,7 +342,7 @@ fn TermCards(basket: Signal<Basket>, wild: Signal<u8>) -> impl IntoView {
 
 /// A small square control in the panel's action row.
 #[component]
-fn SmallButton(
+pub fn SmallButton(
     label: &'static str,
     enabled: Signal<bool>,
     on_click: Callback<()>,

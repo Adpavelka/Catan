@@ -271,12 +271,6 @@ fn HandTray() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
     let draft = use_context::<TradeDraft>().expect("TradeDraft missing");
 
-    // What is left after whatever is already committed to the offer.
-    let spare = move |k: Res| {
-        k.in_hand(&state.my_resources.get())
-            .saturating_sub(draft.offer.get().get(k))
-    };
-
     let dev_cards = move || state.my_dev_cards.get();
     // Each card with whether *it* was drawn this turn.
     //
@@ -314,31 +308,56 @@ fn HandTray() -> impl IntoView {
     // scroll to are cards you forget you hold. So the row is measured and the
     // cards overlap by exactly as much as it takes to fit, and no more - a
     // small hand still sits out flat with a gap between each card.
+    //
+    // The resource cards are one flat run rather than a group per kind, which
+    // is what makes the arithmetic exact: with per-kind wrappers the gaps
+    // between groups were not in the sum, so the row overflowed anyway.
     let tray: NodeRef<html::Div> = create_node_ref();
     let width = create_rw_signal(0.0f64);
-    let measure = move || {
-        if let Some(el) = tray.get_untracked() {
-            width.set(el.client_width() as f64);
-        }
-    };
-    tray.on_load(move |_| measure());
-    window_event_listener(ev::resize, move |_| measure());
+    let resize_tick = create_rw_signal(0u32);
+    window_event_listener(ev::resize, move |_| resize_tick.update(|n| *n += 1));
 
-    // Every card in the hand, resources then development cards.
-    let card_count = move || {
-        let r = state.my_resources.get();
-        (r.brick + r.lumber + r.wool + r.grain + r.ore) as usize + dev_cards().len()
-    };
-
-    /// Card width, the gap wanted between them, and the least of a card that
-    /// has to stay visible for it to be clickable.
+    /// Card width, the gap wanted between cards, and the least of a card that
+    /// has to stay visible for it to still be worth aiming at.
     const CARD_W: f64 = 63.0;
     const GAP: f64 = 3.0;
-    const MIN_VISIBLE: f64 = 20.0;
+    const MIN_VISIBLE: f64 = 22.0;
+    /// The tray's own padding, and the room the development cards take.
+    const TRAY_PAD: f64 = 30.0;
+    const DEV_W: f64 = 74.0;
+
+    // One entry per resource card, in board order, flagged if it is already
+    // up for trade. Which copy of a kind is flagged does not matter, so the
+    // committed ones are taken off the right-hand end of each run.
+    let hand = move || {
+        let held = state.my_resources.get();
+        let up = draft.offer.get();
+        Res::ALL
+            .into_iter()
+            .flat_map(|k| {
+                let n = k.in_hand(&held);
+                let committed = up.get(k);
+                (0..n).map(move |i| (k, i >= n.saturating_sub(committed)))
+            })
+            .collect::<Vec<(Res, bool)>>()
+    };
+
+    // Re-measure after anything that could change the fit, on the next frame
+    // so the browser has laid the row out first.
+    create_effect(move |_| {
+        let _ = hand().len();
+        let _ = dev_cards().len();
+        let _ = resize_tick.get();
+        request_animation_frame(move || {
+            if let Some(el) = tray.get_untracked() {
+                width.set(el.client_width() as f64);
+            }
+        });
+    });
 
     let overlap = create_memo(move |_| {
-        let n = card_count();
-        let avail = width.get();
+        let n = hand().len();
+        let avail = width.get() - TRAY_PAD - if dev_cards().is_empty() { 0.0 } else { DEV_W };
         if n < 2 || avail <= 0.0 {
             return 0.0;
         }
@@ -347,66 +366,62 @@ fn HandTray() -> impl IntoView {
             return 0.0;
         }
         // Spread the shortfall across the joins, but never past the point
-        // where a card is too slim to aim at.
-        let needed = (natural - avail) / (n - 1) as f64;
-        needed.min(CARD_W + GAP - MIN_VISIBLE)
+        // where a card is too slim to pick out.
+        ((natural - avail) / (n - 1) as f64).min(CARD_W + GAP - MIN_VISIBLE)
     });
-    // The overlap is applied as a negative margin, so it is subtracted from
-    // the gap rather than added to it.
-    let tuck = move || format!("margin-left: -{:.1}px", overlap.get());
+
+    // Numbered outside the view macro: a turbofish inside it parses as tags.
+    let hand_numbered = move || {
+        hand()
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<(usize, (Res, bool))>>()
+    };
 
     view! {
         <div
             node_ref=tray
-            class="hud-tray flex-1 min-w-0 flex items-center gap-3 px-3.5 overflow-hidden"
+            class="hud-tray flex-1 min-w-0 flex items-center px-3.5 overflow-hidden"
             style="height: 119px;"
         >
-            {Res::ALL.map(|k| {
-                let held = move || k.in_hand(&state.my_resources.get());
-                // A card is dim once it is already up for trade. Which copy
-                // dims does not matter, so the committed ones are taken off
-                // the right-hand end of the run.
-                let committed = move || draft.offer.get().get(k);
-
-                view! {
-                    // A hair of space inside a kind, more between kinds, so a
-                    // hand reads as runs of like cards without a divider.
-                    <div class="flex items-center gap-[3px] shrink-0 self-center">
-                        {move || (0..held()).map(|i| {
-                            let is_up = i >= held().saturating_sub(committed());
-                            // Raise each card above the one to its left, so a
-                            // tucked run still reads left to right.
-                            let z = i as i32;
-                            view! {
-                                <button
-                                    class="shrink-0 game-card-pick relative"
-                                    style=move || format!(
-                                        "z-index: {z}; {}",
-                                        if i == 0 { String::new() } else { tuck() },
-                                    )
-                                    title=move || if is_up {
-                                        format!("{} - up for trade, right-click to take it back", k.label())
-                                    } else {
-                                        format!("{} - click to put it up for trade", k.label())
-                                    }
-                                    on:click=move |_| {
-                                        if spare(k) > 0 {
-                                            draft.open.set(true);
-                                            draft.offer.update(|b| b.set(k, b.get(k) + 1));
-                                        }
-                                    }
-                                    on:contextmenu=move |ev| {
-                                        ev.prevent_default();
+            <div class="flex items-center shrink-0">
+                <For
+                    each=hand_numbered
+                    key=|(i, (k, up))| (*i, k.label(), *up)
+                    children=move |(i, (k, is_up))| {
+                        view! {
+                            <button
+                                class="shrink-0 game-card-pick relative"
+                                // Later cards sit above earlier ones, so a
+                                // closed-up run still reads left to right.
+                                style=move || format!(
+                                    "z-index: {i}; margin-left: {:.1}px",
+                                    if i == 0 { 0.0 } else { GAP - overlap.get() },
+                                )
+                                title=move || if is_up {
+                                    format!("{} - up for trade, click to take it back", k.label())
+                                } else {
+                                    format!("{} - click to put it up for trade", k.label())
+                                }
+                                on:click=move |_| {
+                                    if is_up {
                                         draft.offer.update(|b| b.set(k, b.get(k).saturating_sub(1)));
+                                    } else {
+                                        draft.open.set(true);
+                                        draft.offer.update(|b| b.set(k, b.get(k) + 1));
                                     }
-                                >
-                                    <CardFace art=k.art() alt=k.label() dimmed=is_up />
-                                </button>
-                            }
-                        }).collect_view()}
-                    </div>
-                }
-            }).to_vec()}
+                                }
+                                on:contextmenu=move |ev| {
+                                    ev.prevent_default();
+                                    draft.offer.update(|b| b.set(k, b.get(k).saturating_sub(1)));
+                                }
+                            >
+                                <CardFace art=k.art() alt=k.label() dimmed=is_up />
+                            </button>
+                        }
+                    }
+                />
+            </div>
 
             // Development cards sit at the end of the hand, as they do on a
             // real table, and are played from here.
