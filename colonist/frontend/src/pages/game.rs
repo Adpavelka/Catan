@@ -2,7 +2,7 @@ use leptos::*;
 use uuid::Uuid;
 use crate::components::board::Board;
 use crate::state::GameState;
-use crate::components::icons::{Icon, IconKind};
+use crate::components::icons::{Art, Icon, IconKind};
 use crate::components::bottom::BottomLayer;
 use crate::components::flight::ResourceFlight;
 use crate::components::sidebar::{ChatPanel, EventLog, PlayerPanels, ResourceBank};
@@ -492,36 +492,111 @@ fn RobPlayerModal() -> impl IntoView {
     };
 
     view! {
-        <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm pointer-events-auto">
-            <div class="bg-slate-900 border-2 border-orange-600 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
-                <h2 class="text-2xl font-bold text-orange-500 mb-2 flex items-center gap-2"><Icon kind=IconKind::Robber /> "Rob a Player"</h2>
-                <p class="text-slate-300 mb-4">
-                    "Select a player to steal a random resource card from:"
-                </p>
+        <GameDialog title="Take a card">
+            <p class="text-[14px] text-[#5c5445] mb-3">
+                "The robber is on their land. Pick who loses a card - you will
+                 not know which until it is in your hand."
+            </p>
 
-                <div class="space-y-2 mb-4">
-                    <For
-                        each=move || state.must_steal_from_players.get()
-                        key=|id| *id
-                        children=move |victim_id| {
-                            let player_name = state.players.get()
-                                .iter()
-                                .find(|p| p.player_id == victim_id)
-                                .map(|p| p.name.clone())
-                                .unwrap_or_else(|| format!("Player {}", victim_id));
+            <div class="flex flex-wrap gap-2.5">
+                <For
+                    each=move || state.must_steal_from_players.get()
+                    key=|id| *id
+                    children=move |victim_id| {
+                        let name = state.player_name(victim_id);
+                        let colour = state
+                            .players
+                            .get()
+                            .iter()
+                            .find(|p| p.player_id == victim_id)
+                            .map(|p| p.colour.hex())
+                            .unwrap_or("#94a3b8");
+                        let held = state
+                            .players
+                            .get()
+                            .iter()
+                            .find(|p| p.player_id == victim_id)
+                            .map(|p| p.resource_count)
+                            .unwrap_or(0);
 
-                            view! {
-                                <button
-                                    class="w-full py-3 px-4 bg-slate-800 hover:bg-orange-600 border border-slate-700 rounded-lg text-sm font-bold transition-colors text-left"
-                                    on:click=move |_| rob_player(victim_id)
+                        view! {
+                            <button
+                                class="hud-tray flex items-center gap-3 px-3 py-2.5 min-w-[190px]
+                                       hover:-translate-y-0.5 active:translate-y-0 transition-transform"
+                                on:click=move |_| rob_player(victim_id)
+                            >
+                                <span
+                                    class="w-11 h-11 rounded-full shrink-0 flex items-center justify-center
+                                           border-[3px] border-white shadow-[0_0_0_2px_rgba(13,62,92,0.6)]"
+                                    style=format!("background-color: {colour}")
                                 >
-                                    {player_name}
-                                </button>
-                            }
+                                    <Art name="trade-offerer" alt="" class="w-7 h-7 object-contain" />
+                                </span>
+                                <span class="text-left">
+                                    <span class="block text-[15px] font-black" style=format!("color: {colour}")>
+                                        {name}
+                                    </span>
+                                    <span class="block text-[12px] text-[#7a7263]">
+                                        {held} " cards"
+                                    </span>
+                                </span>
+                            </button>
                         }
-                    />
-                </div>
+                    }
+                />
             </div>
+        </GameDialog>
+    }
+}
+
+/// The frame every in-game dialog uses: cream card stock on a dimmed table,
+/// with the title in the same small caps as the side panels.
+#[component]
+fn GameDialog(title: &'static str, children: Children) -> impl IntoView {
+    view! {
+        <div class="fixed inset-0 z-[9999] flex items-center justify-center bg-[#052f47]/70 pointer-events-auto">
+            <div class="hud-tray p-5 max-w-lg w-full mx-4" style="border-width: 3px;">
+                <div class="text-[12px] font-black uppercase tracking-[0.18em] text-[#7a7263] mb-2.5">
+                    {title}
+                </div>
+                {children()}
+            </div>
+        </div>
+    }
+}
+
+/// A row of resource cards to pick from, used by the cards that ask you to
+/// name one. Cards, not buttons with words on them: the rest of the game
+/// says "wheat" with a picture of wheat.
+#[component]
+fn ResourcePicker(
+    on_pick: Callback<shared::ResourceType>,
+    /// Ringed when it matches.
+    #[prop(optional)]
+    selected: Option<Signal<Option<shared::ResourceType>>>,
+) -> impl IntoView {
+    use crate::components::bottom::{CardFace, Res};
+
+    view! {
+        <div class="flex items-center justify-center gap-2.5">
+            {Res::ALL.map(|k| {
+                let res = k.shared();
+                let is_on = move || selected.is_some_and(|s| s.get() == Some(res));
+                view! {
+                    <button
+                        class="game-card-pick"
+                        title=k.label()
+                        on:click=move |_| on_pick.call(res)
+                    >
+                        <CardFace
+                            art=k.art()
+                            alt=k.label()
+                            size="w-[62px] h-[86px]"
+                            selected=Signal::derive(is_on)
+                        />
+                    </button>
+                }
+            }).to_vec()}
         </div>
     }
 }
@@ -890,127 +965,90 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
 fn YearOfPlentyModal() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let (pick1, set_pick1) = create_signal::<Option<shared::ResourceType>>(None);
-    let (pick2, set_pick2) = create_signal::<Option<shared::ResourceType>>(None);
+    // The two cards you are taking, in the order you picked them.
+    let picks = create_rw_signal(Vec::<shared::ResourceType>::new());
 
-    // Reset the modal selections when it closes
     create_effect(move |_| {
         if !state.year_of_plenty_pending.get() {
-            set_pick1.set(None);
-            set_pick2.set(None);
+            picks.set(Vec::new());
         }
     });
 
-    let can_confirm = move || pick1.get().is_some() && pick2.get().is_some();
+    let can_confirm = move || picks.get().len() == 2;
 
     let confirm = move |_| {
-        if let (Some(r1), Some(r2)) = (pick1.get(), pick2.get()) {
-            state.send(ClientRequest::YearOfPlentyChoice {
-                resource1: r1,
-                resource2: r2,
-            });
-
-            // UX: optimistically close/reset; server will also send YearOfPlentyResourcesReceived
-            set_pick1.set(None);
-            set_pick2.set(None);
+        let p = picks.get_untracked();
+        if let [r1, r2] = p[..] {
+            state.send(ClientRequest::YearOfPlentyChoice { resource1: r1, resource2: r2 });
+            picks.set(Vec::new());
         }
     };
 
-    let resource_btn = move |res: shared::ResourceType, label: &'static str, color: &'static str| {
-        let selected1 = Signal::derive(move || pick1.get() == Some(res));
-        let selected2 = Signal::derive(move || pick2.get() == Some(res));
-
-        let select = move |_| {
-            match (pick1.get(), pick2.get()) {
-                (None, _) => set_pick1.set(Some(res)),
-                (Some(_), None) => set_pick2.set(Some(res)),
-                (Some(_), Some(_)) => {
-                    // If both filled, replace second (simple UX)
-                    set_pick2.set(Some(res));
-                }
+    // Clicking a card adds it; clicking past two replaces the second, so you
+    // are never stuck having to clear the whole thing to change your mind.
+    let pick = move |res: shared::ResourceType| {
+        picks.update(|p| {
+            if p.len() < 2 {
+                p.push(res);
+            } else {
+                p[1] = res;
             }
-        };
-
-        view! {
-            <button
-                class=move || {
-                    let base = "px-3 py-2 rounded-lg border text-[11px] font-bold transition-all";
-                    let is_selected = selected1.get() || selected2.get();
-                    if is_selected {
-                        format!("{base} bg-green-700/40 border-green-500 text-white")
-                    } else {
-                        format!("{base} bg-slate-800/60 border-slate-700 text-slate-200 hover:bg-slate-700/60")
-                    }
-                }
-                on:click=select
-                title=label
-            >
-                <span class=color>{label}</span>
-            </button>
-        }
-    };
-
-    let clear1 = move |_| set_pick1.set(None);
-    let clear2 = move |_| set_pick2.set(None);
-
-    let pick_label = move |p: Option<shared::ResourceType>| -> &'static str {
-        match p {
-            Some(shared::ResourceType::Brick) => "Brick",
-            Some(shared::ResourceType::Wood) => "Wood",
-            Some(shared::ResourceType::Sheep) => "Sheep",
-            Some(shared::ResourceType::Wheat) => "Wheat",
-            Some(shared::ResourceType::Ore) => "Ore",
-            _ => "—",
-        }
+        });
     };
 
     view! {
-        <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm pointer-events-auto">
-            <div class="bg-slate-900 border-2 border-emerald-600 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
-                <div class="flex justify-between items-start mb-2">
-                    <div>
-                        <h2 class="text-2xl font-bold text-emerald-400 flex items-center gap-2"><Icon kind=IconKind::Wheat /> "Year of Plenty"</h2>
-                        <p class="text-slate-300 text-sm">"Choose 2 resources to receive from the bank."</p>
-                    </div>
-                    <div class="text-[10px] text-slate-400">
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono">"1:"</span>
-                            <span class="font-bold text-slate-200">{move || pick_label(pick1.get())}</span>
-                            <button class="text-slate-400 hover:text-white" on:click=clear1 title="Clear pick 1">"×"</button>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-mono">"2:"</span>
-                            <span class="font-bold text-slate-200">{move || pick_label(pick2.get())}</span>
-                            <button class="text-slate-400 hover:text-white" on:click=clear2 title="Clear pick 2">"×"</button>
-                        </div>
-                    </div>
-                </div>
+        <GameDialog title="Year of plenty">
+            <p class="text-[14px] text-[#5c5445] mb-3">
+                "Take any two cards from the bank."
+            </p>
 
-                <div class="grid grid-cols-2 gap-2 mt-4">
-                    {resource_btn(shared::ResourceType::Brick, "Brick", "text-red-400")}
-                    {resource_btn(shared::ResourceType::Wood, "Wood", "text-green-400")}
-                    {resource_btn(shared::ResourceType::Sheep, "Sheep", "text-lime-300")}
-                    {resource_btn(shared::ResourceType::Wheat, "Wheat", "text-yellow-300")}
-                    {resource_btn(shared::ResourceType::Ore, "Ore", "text-slate-300")}
-                </div>
+            <ResourcePicker on_pick=Callback::new(pick) />
 
-                <div class="flex justify-end gap-2 pt-4 mt-4 border-t border-slate-800">
-                    <button
-                        class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200"
-                        on:click=move |_| { set_pick1.set(None); set_pick2.set(None); }
-                    >
-                        "Reset"
-                    </button>
-                    <button
-                        class="px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-[11px] font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled=move || !can_confirm()
-                        on:click=confirm
-                    >
-                        "Confirm"
-                    </button>
-                </div>
+            // What you have taken so far, as the cards themselves.
+            <div class="flex items-center justify-center gap-2 mt-4 min-h-[76px]">
+                <Show
+                    when=move || !picks.get().is_empty()
+                    fallback=|| view! {
+                        <span class="text-[13px] italic text-[#a89e8b]">"Pick two."</span>
+                    }
+                >
+                    {move || picks.get().into_iter().enumerate().map(|(i, res)| {
+                        let k = crate::components::bottom::Res::ALL
+                            .into_iter()
+                            .find(|k| k.shared() == res);
+                        view! {
+                            <button
+                                class="game-card-pick"
+                                title="Put it back"
+                                on:click=move |_| picks.update(|p| { p.remove(i); })
+                            >
+                                {k.map(|k| view! {
+                                    <crate::components::bottom::CardFace
+                                        art=k.art() alt=k.label() size="w-[54px] h-[74px]"
+                                    />
+                                })}
+                            </button>
+                        }
+                    }).collect_view()}
+                </Show>
             </div>
-        </div>
+
+            <div class="flex gap-2 mt-4">
+                <button
+                    class="game-btn game-btn-cream px-5 h-11 text-[13px] font-black uppercase tracking-wider"
+                    on:click=move |_| picks.set(Vec::new())
+                >
+                    "Clear"
+                </button>
+                <button
+                    class="game-btn game-btn-green flex-1 h-11 text-[14px] font-black uppercase tracking-wider"
+                    disabled=move || !can_confirm()
+                    on:click=confirm
+                >
+                    "Take them"
+                </button>
+            </div>
+        </GameDialog>
     }
 }
 
@@ -1018,69 +1056,39 @@ fn YearOfPlentyModal() -> impl IntoView {
 fn MonopolyModal() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let (selected, set_selected) = create_signal::<Option<shared::ResourceType>>(None);
+    let selected = create_rw_signal(Option::<shared::ResourceType>::None);
 
-    // Reset selection when modal closes
     create_effect(move |_| {
         if !state.monopoly_pending.get() {
-            set_selected.set(None);
+            selected.set(None);
         }
     });
 
     let confirm = move |_| {
-        if let Some(resource) = selected.get() {
+        if let Some(resource) = selected.get_untracked() {
             state.send(ClientRequest::MonopolyChoice { resource });
-            set_selected.set(None);
-        }
-    };
-
-    let resource_btn = move |res: shared::ResourceType, label: &'static str, color: &'static str| {
-        let is_selected = Signal::derive(move || selected.get() == Some(res));
-
-        view! {
-            <button
-                class=move || {
-                    let base = "px-4 py-3 rounded-lg border text-sm font-bold transition-all";
-                    if is_selected.get() {
-                        format!("{base} bg-purple-700/40 border-purple-500 text-white")
-                    } else {
-                        format!("{base} bg-slate-800/60 border-slate-700 text-slate-200 hover:bg-slate-700/60")
-                    }
-                }
-                on:click=move |_| set_selected.set(Some(res))
-                title=label
-            >
-                <span class=color>{label}</span>
-            </button>
+            selected.set(None);
         }
     };
 
     view! {
-        <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] backdrop-blur-sm pointer-events-auto">
-            <div class="bg-slate-900 border-2 border-purple-600 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
-                <div class="mb-4">
-                    <h2 class="text-2xl font-bold text-purple-400">"Monopoly"</h2>
-                    <p class="text-slate-300 text-sm">"Choose a resource to steal from ALL other players."</p>
-                </div>
+        <GameDialog title="Monopoly">
+            <p class="text-[14px] text-[#5c5445] mb-3">
+                "Name one card. Every other player hands you every one they hold."
+            </p>
 
-                <div class="grid grid-cols-2 gap-2">
-                    {resource_btn(shared::ResourceType::Brick, "Brick", "text-red-400")}
-                    {resource_btn(shared::ResourceType::Wood, "Wood", "text-green-400")}
-                    {resource_btn(shared::ResourceType::Sheep, "Sheep", "text-lime-300")}
-                    {resource_btn(shared::ResourceType::Wheat, "Wheat", "text-yellow-300")}
-                    {resource_btn(shared::ResourceType::Ore, "Ore", "text-slate-300")}
-                </div>
+            <ResourcePicker
+                on_pick=Callback::new(move |res| selected.set(Some(res)))
+                selected=Signal::derive(move || selected.get())
+            />
 
-                <div class="flex justify-end pt-4 mt-4 border-t border-slate-800">
-                    <button
-                        class="px-4 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 text-sm font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled=move || selected.get().is_none()
-                        on:click=confirm
-                    >
-                        "Confirm"
-                    </button>
-                </div>
-            </div>
-        </div>
+            <button
+                class="game-btn game-btn-green w-full h-11 mt-4 text-[14px] font-black uppercase tracking-wider"
+                disabled=move || selected.get().is_none()
+                on:click=confirm
+            >
+                "Call it"
+            </button>
+        </GameDialog>
     }
 }

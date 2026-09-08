@@ -22,6 +22,13 @@ impl Lobby {
             return self.send_error(pid, e);
         }
 
+        // Whether the table is waiting on the person walking away. Read
+        // before the removal, which slides the next player into their slot.
+        let was_on_turn = self
+            .games
+            .get(&game_id)
+            .is_some_and(|game| game.turn_manager.players.get_current_player().id == pid);
+
         let mut should_remove_game = false;
         let mut closed_trades = Vec::new();
         {
@@ -52,6 +59,32 @@ impl Lobby {
                 game_id: game_id.clone(),
             },
         );
+
+        // Tell the players who stayed. Without this their roster still lists
+        // somebody who has gone, and - if that somebody was on turn - their
+        // board sits waiting on a player who will never move again. The
+        // leaver is already out of the game, so a broadcast does not reach
+        // them; they got their own `Left` above.
+        if !should_remove_game {
+            self.broadcast_to_game(
+                &game_id,
+                ServerMessage::Left {
+                    player_id: pid,
+                    game_id: game_id.clone(),
+                },
+            );
+            self.broadcast_players_update(&game_id);
+
+            if was_on_turn {
+                if let Some(next) = self
+                    .games
+                    .get(&game_id)
+                    .map(|game| game.turn_manager.players.get_current_player().id)
+                {
+                    self.broadcast_to_game(&game_id, ServerMessage::NextTurn { player_id: next });
+                }
+            }
+        }
 
         if should_remove_game {
             let gid_for_repo = game_id.clone();

@@ -537,12 +537,14 @@ pub fn Board() -> impl IntoView {
                                 let label = port_label(&port.port_type);
                                 let color = port_color(&port.port_type);
 
-                                // The piers run almost the whole way out and
-                                // stop just short of the hull: a walkway that
-                                // vanishes under the boat reads as a mistake,
-                                // one that stops halfway reads as a stub.
-                                let dock_x = mid_x + out_nx * 44.0;
-                                let dock_y = mid_y + out_ny * 44.0;
+                                // The walkways meet the underside of the
+                                // hull. The boat is drawn upright whatever
+                                // direction the harbour faces, so "under" is
+                                // straight down the screen from its centre -
+                                // aiming at the centre instead buried the
+                                // planks in the middle of the boat.
+                                let dock_x = port_x;
+                                let dock_y = port_y + 19.0;
 
                                 view! {
                                     <g>
@@ -650,19 +652,27 @@ pub fn Board() -> impl IntoView {
                                     )
                                 };
 
+                                let upgrading = move || {
+                                    state_click.build_mode.get() == BuildMode::City
+                                        && has_my_settlement()
+                                };
+
                                 view! {
+                                    // A ring when upgrading, so it reads as a
+                                    // halo around the settlement it replaces;
+                                    // a dot when placing, where there is
+                                    // nothing on the spot yet.
                                     <circle
                                         cx=vx
                                         cy=vy
-                                        r="10"
-                                        class=move || {
-                                            let mode = state_click.build_mode.get();
-                                            let base = "cursor-pointer stroke-black stroke-1 transition-all ";
-                                            if mode == BuildMode::City && has_my_settlement() {
-                                                format!("{} fill-orange-500 animate-pulse", base)
-                                            } else {
-                                                format!("{} fill-white/30 hover:fill-white/80", base)
-                                            }
+                                        r=move || if upgrading() { "21" } else { "10" }
+                                        stroke-width=move || if upgrading() { "5" } else { "1" }
+                                        class=move || if upgrading() {
+                                            "cursor-pointer fill-transparent stroke-[#ffb718] \
+                                             hover:stroke-[#ffd76b] animate-pulse transition-all"
+                                        } else {
+                                            "cursor-pointer stroke-black fill-white/30 \
+                                             hover:fill-white/80 transition-all"
                                         }
                                         on:click=move |_| {
                                             match state_click.build_mode.get() {
@@ -981,15 +991,6 @@ pub fn DiceTray() -> impl IntoView {
                     </div>
                 }
             }}
-
-            // Only shown when they are live: otherwise the dice speak for
-            // themselves and a word next to them is noise.
-            <Show when=can_roll>
-                <span class="self-center px-3 py-2 rounded-lg game-btn text-[15px] font-black
-                             uppercase tracking-wider">
-                    "Roll"
-                </span>
-            </Show>
         </button>
     }
 }
@@ -1124,7 +1125,8 @@ fn PlacedRoad(from: (f32, f32), to: (f32, f32), colour: &'static str) -> impl In
                 height=long
                 preserveAspectRatio="none"
                 style=format!(
-                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.45));",
+                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.45)); \
+                     pointer-events: none;",
                     tint_id(colour)
                 )
             />
@@ -1146,7 +1148,7 @@ fn Pier(from: (f32, f32), to: (f32, f32)) -> impl IntoView {
                 width="14"
                 height=length
                 preserveAspectRatio="none"
-                style="filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.4));"
+                style="filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.4)); pointer-events: none;"
             />
         </g>
     }
@@ -1180,7 +1182,8 @@ fn Piece(
                 href=format!("/assets/{art}.svg")
                 x=-half y=-half width=size height=size
                 style=format!(
-                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));",
+                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.5)); \
+                     pointer-events: none;",
                     tint_id(colour)
                 )
             >

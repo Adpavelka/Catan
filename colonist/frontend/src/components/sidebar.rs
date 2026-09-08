@@ -258,8 +258,18 @@ fn PlayerPanel(player_id: Uuid) -> impl IntoView {
                                        shadow-[inset_0_2px_0_rgba(255,255,255,0.45)]"
                                 style=format!("background-color: {colour}")
                             >
+                                // Your own total includes the points sitting
+                                // hidden in your hand. Everyone else's cannot:
+                                // that is the whole point of hiding them.
                                 <span class="text-base font-black text-white ink tabular-nums">
-                                    {p.victory_points}
+                                    {move || {
+                                        let public = p.victory_points as i32;
+                                        if is_me() {
+                                            public + state.secret_victory_points.get()
+                                        } else {
+                                            public
+                                        }
+                                    }}
                                 </span>
                             </div>
 

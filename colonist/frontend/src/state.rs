@@ -30,6 +30,21 @@ pub struct PendingTradeOffer {
     pub counters: Option<u64>,
 }
 
+/// An offer of mine that is still on the table, and how people have answered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MyOffer {
+    pub offer_id: u64,
+    pub offering: Resources,
+    pub requesting: Resources,
+    pub offering_any: u8,
+    pub requesting_any: u8,
+    /// Bids, oldest first. Accepting is a bid, not a settlement - I pick one.
+    pub accepters: Vec<Uuid>,
+    /// Refusals, so the panel can show a cross rather than leaving a player
+    /// blank: "said no" and "has not answered yet" are different waits.
+    pub decliners: Vec<Uuid>,
+}
+
 /// One line of player chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatLine {
@@ -123,18 +138,10 @@ pub struct GameState {
 
     // Player-to-player trading state
     pub incoming_trades: RwSignal<Vec<PendingTradeOffer>>,
-    pub my_pending_trade: RwSignal<Option<u64>>,  // Trade ID of trade I proposed
-    /// Players who have said they will take my offer, oldest bid first. I pick
-    /// one of them to settle with; accepting alone moves nothing.
-    pub my_trade_accepters: RwSignal<Vec<Uuid>>,
-    /// Players who have turned my offer down. Kept so the status panel can
-    /// show a red cross against them rather than just leaving them blank -
-    /// "said no" and "has not answered" are different things to wait on.
-    pub my_trade_decliners: RwSignal<Vec<Uuid>>,
-    /// The terms of my own outstanding offer, as (giving, asking, giving_any,
-    /// asking_any). The panel has to redraw the deal, and the offer is only
-    /// ever sent to me once.
-    pub my_offer_terms: RwSignal<Option<(Resources, Resources, u8, u8)>>,
+    /// Every offer of mine still on the table, oldest first. Several at once
+    /// is ordinary play - put two deals up and take whichever lands - and the
+    /// server caps how many, so this is a list rather than an Option.
+    pub my_offers: RwSignal<Vec<MyOffer>>,
     /// Offer ids I have accepted and am waiting on the proposer to settle.
     pub my_accepted_offers: RwSignal<Vec<u64>>,
     /// Counters I have outstanding, as (offer I answered, my counter's id).
@@ -156,6 +163,16 @@ pub fn card_label(card: &shared::DevCardType) -> &'static str {
 }
 
 impl GameState {
+    /// How many offers one player may have open at once. Mirrors the
+    /// server's cap so the control greys out instead of inviting a click that
+    /// comes back as an error.
+    pub const MAX_OPEN_OFFERS: usize = 4;
+
+    /// Whether I already have as many offers on the table as I am allowed.
+    pub fn offers_are_full(&self) -> bool {
+        self.my_offers.get().len() >= Self::MAX_OPEN_OFFERS
+    }
+
     /// Whether the 5-6 special building phase is currently offered to us.
     pub fn is_my_special_build(&self) -> bool {
         match (self.game_phase.get().special_builder(), self.player_id.get()) {
@@ -203,9 +220,7 @@ impl GameState {
 
         let mut incoming = Vec::new();
         let mut accepted = Vec::new();
-        let mut mine = None;
-        let mut my_accepters = Vec::new();
-        let mut my_terms = None;
+        let mut mine: Vec<MyOffer> = Vec::new();
         let mut my_counters = Vec::new();
 
         for snapshot in snapshots {
@@ -218,16 +233,19 @@ impl GameState {
                 if let Some(original) = snapshot.counters {
                     my_counters.push((original, snapshot.offer_id));
                 } else {
-                    mine = Some(snapshot.offer_id);
-                    my_accepters = snapshot.accepted_by;
-                    // Restore the terms too, so a reconnect redraws the deal
-                    // rather than showing an offer with nothing in it.
-                    my_terms = Some((
-                        snapshot.offering,
-                        snapshot.requesting,
-                        snapshot.offering_any,
-                        snapshot.requesting_any,
-                    ));
+                    // Terms and bids both, so a reconnect redraws the deal
+                    // rather than showing an offer with nothing in it. The
+                    // server reports who accepted but not who refused, so the
+                    // decline tally starts over rather than being invented.
+                    mine.push(MyOffer {
+                        offer_id: snapshot.offer_id,
+                        offering: snapshot.offering,
+                        requesting: snapshot.requesting,
+                        offering_any: snapshot.offering_any,
+                        requesting_any: snapshot.requesting_any,
+                        accepters: snapshot.accepted_by,
+                        decliners: Vec::new(),
+                    });
                 }
                 continue;
             }
@@ -255,13 +273,9 @@ impl GameState {
 
         self.incoming_trades.set(incoming);
         self.my_accepted_offers.set(accepted);
-        self.my_pending_trade.set(mine);
-        self.my_trade_accepters.set(my_accepters);
+        mine.sort_by_key(|o| o.offer_id);
+        self.my_offers.set(mine);
         self.my_counter_offers.set(my_counters);
-        self.my_offer_terms.set(my_terms);
-        // The server sends who accepted, not who declined, so a reconnect
-        // starts the decline tally over rather than inventing one.
-        self.my_trade_decliners.set(Vec::new());
     }
 
     /// Drops any record of a counter once `offer_id` is gone, whether that id
@@ -789,15 +803,18 @@ impl GameState {
                     // My own offer. A counter I sent is not "my offer" in the
                     // panel sense - it is my answer to somebody else's.
                     if Some(proposer_id) == my_id && counters.is_none() {
-                        self.my_pending_trade.set(Some(offer_id));
-                        self.my_trade_accepters.set(Vec::new());
-                        self.my_trade_decliners.set(Vec::new());
-                        self.my_offer_terms.set(Some((
-                            offering.clone(),
-                            requesting.clone(),
-                            offering_any,
-                            requesting_any,
-                        )));
+                        self.my_offers.update(|offers| {
+                            offers.retain(|o| o.offer_id != offer_id);
+                            offers.push(MyOffer {
+                                offer_id,
+                                offering: offering.clone(),
+                                requesting: requesting.clone(),
+                                offering_any,
+                                requesting_any,
+                                accepters: Vec::new(),
+                                decliners: Vec::new(),
+                            });
+                        });
                     }
 
                     // Countering replaces whatever I had said before, so drop
@@ -809,8 +826,12 @@ impl GameState {
                                 ids.retain(|(orig, _)| *orig != original);
                                 ids.push((original, offer_id));
                             });
-                        } else if self.my_pending_trade.get_untracked() == Some(original) {
-                            self.my_trade_accepters.update(|ids| ids.retain(|id| *id != proposer_id));
+                        } else {
+                            self.my_offers.update(|offers| {
+                                if let Some(o) = offers.iter_mut().find(|o| o.offer_id == original) {
+                                    o.accepters.retain(|id| *id != proposer_id);
+                                }
+                            });
                         }
                     }
 
@@ -848,13 +869,14 @@ impl GameState {
 
                     // Nothing has moved yet: this only adds a candidate the
                     // proposer can settle with.
-                    if self.my_pending_trade.get_untracked() == Some(offer_id) {
-                        self.my_trade_accepters.update(|ids| {
-                            if !ids.contains(&accepter_id) {
-                                ids.push(accepter_id);
+                    self.my_offers.update(|offers| {
+                        if let Some(o) = offers.iter_mut().find(|o| o.offer_id == offer_id) {
+                            if !o.accepters.contains(&accepter_id) {
+                                o.accepters.push(accepter_id);
                             }
-                        });
-                    }
+                            o.decliners.retain(|id| *id != accepter_id);
+                        }
+                    });
 
                     if Some(accepter_id) == my_id {
                         self.my_accepted_offers.update(|ids| {
@@ -871,9 +893,11 @@ impl GameState {
                     logging::log!("Trade {} acceptance withdrawn by {}", offer_id, accepter_id);
                     let my_id = self.player_id.get_untracked();
 
-                    if self.my_pending_trade.get_untracked() == Some(offer_id) {
-                        self.my_trade_accepters.update(|ids| ids.retain(|id| *id != accepter_id));
-                    }
+                    self.my_offers.update(|offers| {
+                        if let Some(o) = offers.iter_mut().find(|o| o.offer_id == offer_id) {
+                            o.accepters.retain(|id| *id != accepter_id);
+                        }
+                    });
 
                     if Some(accepter_id) == my_id {
                         self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
@@ -892,13 +916,8 @@ impl GameState {
                     self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
                     self.forget_counters(offer_id);
 
-                    // Clear my pending trade if it was mine
-                    if self.my_pending_trade.get_untracked() == Some(offer_id) {
-                        self.my_pending_trade.set(None);
-                        self.my_trade_accepters.set(Vec::new());
-                        self.my_trade_decliners.set(Vec::new());
-                        self.my_offer_terms.set(None);
-                    }
+                    // If it was mine, it is off the table.
+                    self.my_offers.update(|offers| offers.retain(|o| o.offer_id != offer_id));
 
                     // Show message
                     let proposer_name = self.players.get_untracked()
@@ -925,14 +944,15 @@ impl GameState {
                     self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
                     self.forget_counters(offer_id);
 
-                    // Clear my pending trade if it was mine. The server is the
-                    // only thing that can retire an offer, so this is also how
-                    // an expired offer releases the proposer to make another.
-                    if self.my_pending_trade.get_untracked() == Some(offer_id) {
-                        self.my_pending_trade.set(None);
-                        self.my_trade_accepters.set(Vec::new());
-                        self.my_trade_decliners.set(Vec::new());
-                        self.my_offer_terms.set(None);
+                    // The server is the only thing that can retire an offer,
+                    // so this is also how an expired one leaves my list.
+                    let was_mine = self
+                        .my_offers
+                        .get_untracked()
+                        .iter()
+                        .any(|o| o.offer_id == offer_id);
+                    if was_mine {
+                        self.my_offers.update(|offers| offers.retain(|o| o.offer_id != offer_id));
                         self.messages.update(|m| m.push("Your trade offer closed.".to_string()));
                     }
                 }
@@ -943,10 +963,12 @@ impl GameState {
                     let my_id = self.player_id.get_untracked();
 
                     if Some(proposer_id) == my_id {
-                        self.my_trade_accepters.update(|ids| ids.retain(|id| *id != decliner_id));
-                        self.my_trade_decliners.update(|ids| {
-                            if !ids.contains(&decliner_id) {
-                                ids.push(decliner_id);
+                        self.my_offers.update(|offers| {
+                            if let Some(o) = offers.iter_mut().find(|o| o.offer_id == offer_id) {
+                                o.accepters.retain(|id| *id != decliner_id);
+                                if !o.decliners.contains(&decliner_id) {
+                                    o.decliners.push(decliner_id);
+                                }
                             }
                         });
                     }
@@ -1027,8 +1049,16 @@ impl GameState {
                     }
                 ServerMessage::Left {player_id, game_id} => {
                     logging::log!("Player {} has left the game {}", player_id, game_id);
-                    self.is_in_game.set(false);
-                    self.game_id.set(None);
+
+                    // This arrives twice over: once to the player leaving, and
+                    // once to everyone still at the table so their roster
+                    // drops them. Only the first should tear down a session -
+                    // clearing it for everybody would throw the whole table
+                    // out when one person quit.
+                    if Some(player_id) == self.player_id.get_untracked() {
+                        self.is_in_game.set(false);
+                        self.game_id.set(None);
+                    }
                     let player_name = self.players.get_untracked()
                         .iter()
                         .find(|p| p.player_id == player_id)
@@ -1097,8 +1127,6 @@ pub fn provide_game_state() {
         chat: create_rw_signal(Vec::new()),
         last_roll_event: create_rw_signal(None),
         turn_epoch: create_rw_signal(0),
-        my_trade_decliners: create_rw_signal(Vec::new()),
-        my_offer_terms: create_rw_signal(None),
         bank: create_rw_signal(shared::BankInfo::default()),
         is_in_game: create_rw_signal(false),
         lobby_games: create_rw_signal(Vec::new()),
@@ -1151,8 +1179,7 @@ pub fn provide_game_state() {
 
         // Player-to-player trading state
         incoming_trades: create_rw_signal(Vec::new()),
-        my_pending_trade: create_rw_signal(None),
-        my_trade_accepters: create_rw_signal(Vec::new()),
+        my_offers: create_rw_signal(Vec::new()),
         my_accepted_offers: create_rw_signal(Vec::new()),
         my_counter_offers: create_rw_signal(Vec::new()),
         // Winner

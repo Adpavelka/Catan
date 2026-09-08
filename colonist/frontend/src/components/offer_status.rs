@@ -15,7 +15,7 @@ use leptos::*;
 use uuid::Uuid;
 
 use crate::components::bottom::{Basket, CardFace, MysteryCard, TradeDraft};
-use crate::state::GameState;
+use crate::state::{GameState, MyOffer};
 use shared::{ClientRequest, Resources};
 
 /// Turn the wire's resource bag into the local one.
@@ -29,181 +29,184 @@ fn to_basket(r: &Resources) -> Basket {
     }
 }
 
+/// Every offer you currently have on the table, stacked in the top-right.
 #[component]
 pub fn OfferStatus() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
+    let any = move || !state.my_offers.get().is_empty();
+
+    view! {
+        <Show when=any>
+            // Fixed, not absolute: this belongs to the top-right of the
+            // window, and an absolute box would be positioned against
+            // whichever ancestor happened to be relative.
+            <div class="fixed top-3 z-[60] flex flex-col gap-1.5 items-end"
+                 style="right: 416px; width: 485px;">
+                <For
+                    each=move || state.my_offers.get()
+                    key=|o| o.offer_id
+                    children=move |offer: MyOffer| view! { <OfferCard offer=offer /> }
+                />
+            </div>
+        </Show>
+    }
+}
+
+/// One offer: what it is, who has answered, and what you can do about it.
+#[component]
+fn OfferCard(offer: MyOffer) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
     let draft = use_context::<TradeDraft>().expect("TradeDraft missing");
 
+    let offer_id = offer.offer_id;
     let (collapsed, set_collapsed) = create_signal(false);
-    // Who I have picked to settle with. Cleared whenever the offer changes.
     let chosen = create_rw_signal(Option::<Uuid>::None);
 
-    let offer_id = move || state.my_pending_trade.get();
-    let terms = move || state.my_offer_terms.get();
-    let live = move || offer_id().is_some() && terms().is_some();
+    // Read the offer back out of state rather than trusting the copy this
+    // component was built with: bids arrive after it is on screen.
+    let live = create_memo(move |_| {
+        state.my_offers.get().into_iter().find(|o| o.offer_id == offer_id)
+    });
+    let accepters = move || live.get().map(|o| o.accepters).unwrap_or_default();
+    let decliners = move || live.get().map(|o| o.decliners).unwrap_or_default();
 
-    let accepters = move || state.my_trade_accepters.get();
-    let decliners = move || state.my_trade_decliners.get();
-
-    // A single bidder needs no picking: the choice is already made.
+    // One bidder needs no picking; the choice is already made.
     create_effect(move |_| {
         let a = accepters();
-        chosen.update(|c| {
-            match a.len() {
-                0 => *c = None,
-                1 => *c = Some(a[0]),
-                // Keep an existing pick only while that player is still in.
-                _ => {
-                    if !c.is_some_and(|id| a.contains(&id)) {
-                        *c = None;
-                    }
+        chosen.update(|c| match a.len() {
+            0 => *c = None,
+            1 => *c = Some(a[0]),
+            _ => {
+                if !c.is_some_and(|id| a.contains(&id)) {
+                    *c = None;
                 }
             }
         });
     });
 
-    let can_confirm = move || chosen.get().is_some() && offer_id().is_some();
-    // Hoisted: a bare `>` inside the view macro parses as a closing tag.
+    let can_confirm = move || chosen.get().is_some();
     let must_pick = move || accepters().len() > 1 && chosen.get().is_none();
 
     let confirm = move |_| {
-        if let (Some(id), Some(partner)) = (offer_id(), chosen.get_untracked()) {
-            state.send(ClientRequest::ConfirmTrade { offer_id: id, partner_id: partner });
+        if let Some(partner) = chosen.get_untracked() {
+            state.send(ClientRequest::ConfirmTrade { offer_id, partner_id: partner });
         }
     };
-    let cancel = move |_| {
-        if let Some(id) = offer_id() {
-            state.send(ClientRequest::CancelTrade { offer_id: id });
-        }
-    };
-    // Editing takes the offer off the table and puts its cards back on the
-    // bench, so the window opens showing what you had rather than blank.
+    let cancel = move |_| state.send(ClientRequest::CancelTrade { offer_id });
+    // Editing takes it off the table and puts its cards back on the bench, so
+    // the window opens showing what you had rather than blank.
     let edit = move |_| {
-        let Some((give, ask, give_any, ask_any)) = terms() else { return };
-        if let Some(id) = offer_id() {
-            state.send(ClientRequest::CancelTrade { offer_id: id });
-        }
-        draft.offer.set(to_basket(&give));
-        draft.receive.set(to_basket(&ask));
-        draft.offer_any.set(give_any);
-        draft.receive_any.set(ask_any);
+        let Some(o) = live.get_untracked() else { return };
+        state.send(ClientRequest::CancelTrade { offer_id });
+        draft.offer.set(to_basket(&o.offering));
+        draft.receive.set(to_basket(&o.requesting));
+        draft.offer_any.set(o.offering_any);
+        draft.receive_any.set(o.requesting_any);
         draft.open.set(true);
     };
 
+    let asked = Signal::derive(move || live.get().map(|o| to_basket(&o.requesting)).unwrap_or_default());
+    let asked_any = Signal::derive(move || live.get().map_or(0, |o| o.requesting_any));
+    let given = Signal::derive(move || live.get().map(|o| to_basket(&o.offering)).unwrap_or_default());
+    let given_any = Signal::derive(move || live.get().map_or(0, |o| o.offering_any));
+
     view! {
-        <Show when=live>
-            <div class="absolute top-3 right-3 z-40 flex flex-col gap-1.5" style="width: 485px;">
+        <div class="w-full flex flex-col gap-1.5">
+            <div class="hud-tray flex items-center px-3" style="height: 60px;">
+                <span class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263]">
+                    "Your offer"
+                </span>
 
-                // Header: whose offer this is, and the collapse control.
-                <div class="hud-tray flex items-center px-3" style="height: 60px;">
-                    <span class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263]">
-                        "Your offer"
-                    </span>
+                <span class="flex-1 flex justify-center">
+                    <PlayerMark who=Signal::derive(move || state.player_id.get()) size=44 />
+                </span>
 
-                    <span class="flex-1 flex justify-center">
-                        <PlayerMark who=Signal::derive(move || state.player_id.get()) size=50 />
-                    </span>
-
-                    <button
-                        class="w-9 h-9 flex items-center justify-center rounded-md hover:bg-black/10"
-                        title=move || if collapsed.get() { "Show the offer" } else { "Collapse" }
-                        on:click=move |_| set_collapsed.update(|c| *c = !*c)
+                <button
+                    class="w-9 h-9 flex items-center justify-center rounded-md hover:bg-black/10"
+                    title=move || if collapsed.get() { "Show the offer" } else { "Collapse" }
+                    on:click=move |_| set_collapsed.update(|c| *c = !*c)
+                >
+                    <svg
+                        class=move || format!(
+                            "w-5 h-4 transition-transform {}",
+                            if collapsed.get() { "rotate-180" } else { "" }
+                        )
+                        viewBox="0 0 24 18" fill="none" stroke="#1d2430"
+                        stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"
                     >
-                        <svg
-                            class=move || format!(
-                                "w-5 h-4 transition-transform {}",
-                                if collapsed.get() { "rotate-180" } else { "" }
-                            )
-                            viewBox="0 0 24 18" fill="none" stroke="#1d2430"
-                            stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"
-                        >
-                            <path d="M3 13 12 4l9 9"/>
-                        </svg>
-                    </button>
-                </div>
-
-                // Body: the two directions, the answers, and the controls.
-                <Show when=move || !collapsed.get()>
-                    <div class="hud-tray px-3 py-2 flex flex-col justify-center gap-1"
-                         style="min-height: 155px;">
-
-                        // What would come to you, and how people answered.
-                        <div class="flex items-center gap-2.5 min-h-[68px]">
-                            <PlayerMark who=Signal::derive(move || state.player_id.get()) size=44 />
-                            <Arrow up=false />
-                            <TermCards
-                                basket=Signal::derive(move || terms().map(|t| to_basket(&t.1)).unwrap_or_default())
-                                wild=Signal::derive(move || terms().map_or(0, |t| t.3))
-                            />
-
-                            // Everyone who has answered, with how.
-                            <div class="ml-auto flex items-center gap-1.5 shrink-0">
-                                <For
-                                    each=move || {
-                                        let mut v: Vec<(Uuid, bool)> =
-                                            accepters().into_iter().map(|id| (id, true)).collect();
-                                        v.extend(decliners().into_iter().map(|id| (id, false)));
-                                        v
-                                    }
-                                    key=|(id, ok)| (*id, *ok)
-                                    children=move |(pid, accepted)| view! {
-                                        <Responder
-                                            who=pid
-                                            accepted=accepted
-                                            chosen=chosen
-                                        />
-                                    }
-                                />
-                            </div>
-                        </div>
-
-                        // What would leave you, and the controls.
-                        <div class="flex items-center gap-2.5 min-h-[68px]">
-                            <PlayerMark who=Signal::derive(move || state.player_id.get()) size=44 />
-                            <Arrow up=true />
-                            <TermCards
-                                basket=Signal::derive(move || terms().map(|t| to_basket(&t.0)).unwrap_or_default())
-                                wild=Signal::derive(move || terms().map_or(0, |t| t.2))
-                            />
-
-                            <div class="ml-auto flex items-center gap-1.5 shrink-0">
-                                <SmallButton
-                                    label="Change this offer"
-                                    enabled=Signal::derive(|| true)
-                                    on_click=Callback::new(edit)
-                                >
-                                    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/>
-                                    <path d="M14.5 5.5 18.5 9.5"/>
-                                </SmallButton>
-
-                                <SmallButton
-                                    label="Take the offer back"
-                                    enabled=Signal::derive(|| true)
-                                    on_click=Callback::new(cancel)
-                                >
-                                    <path d="M6 6 18 18"/><path d="M18 6 6 18"/>
-                                </SmallButton>
-
-                                <SmallButton
-                                    label="Settle with the player you picked"
-                                    enabled=Signal::derive(can_confirm)
-                                    on_click=Callback::new(confirm)
-                                >
-                                    <path d="M4 12.5 9.5 18 20 6"/>
-                                </SmallButton>
-                            </div>
-                        </div>
-
-                        // Only said when there is a choice to make.
-                        <Show when=must_pick>
-                            <div class="text-[11px] text-[#8a5a00] text-center">
-                                "Click whose bid you want to take."
-                            </div>
-                        </Show>
-                    </div>
-                </Show>
+                        <path d="M3 13 12 4l9 9"/>
+                    </svg>
+                </button>
             </div>
-        </Show>
+
+            <Show when=move || !collapsed.get()>
+                <div class="hud-tray px-3 py-2 flex flex-col justify-center gap-1"
+                     style="min-height: 155px;">
+
+                    // What would come to you, and how people answered.
+                    <div class="flex items-center gap-2.5 min-h-[68px]">
+                        <PlayerMark who=Signal::derive(move || state.player_id.get()) size=44 />
+                        <Arrow up=false />
+                        <TermCards basket=asked wild=asked_any />
+
+                        <div class="ml-auto flex items-center gap-1.5 shrink-0">
+                            <For
+                                each=move || {
+                                    let mut v: Vec<(Uuid, bool)> =
+                                        accepters().into_iter().map(|id| (id, true)).collect();
+                                    v.extend(decliners().into_iter().map(|id| (id, false)));
+                                    v
+                                }
+                                key=|(id, ok)| (*id, *ok)
+                                children=move |(pid, accepted)| view! {
+                                    <Responder who=pid accepted=accepted chosen=chosen />
+                                }
+                            />
+                        </div>
+                    </div>
+
+                    // What would leave you, and the controls.
+                    <div class="flex items-center gap-2.5 min-h-[68px]">
+                        <PlayerMark who=Signal::derive(move || state.player_id.get()) size=44 />
+                        <Arrow up=true />
+                        <TermCards basket=given wild=given_any />
+
+                        <div class="ml-auto flex items-center gap-1.5 shrink-0">
+                            <SmallButton
+                                label="Change this offer"
+                                enabled=Signal::derive(|| true)
+                                on_click=Callback::new(edit)
+                            >
+                                <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/>
+                                <path d="M14.5 5.5 18.5 9.5"/>
+                            </SmallButton>
+
+                            <SmallButton
+                                label="Take the offer back"
+                                enabled=Signal::derive(|| true)
+                                on_click=Callback::new(cancel)
+                            >
+                                <path d="M6 6 18 18"/><path d="M18 6 6 18"/>
+                            </SmallButton>
+
+                            <SmallButton
+                                label="Settle with the player you picked"
+                                enabled=Signal::derive(can_confirm)
+                                on_click=Callback::new(confirm)
+                            >
+                                <path d="M4 12.5 9.5 18 20 6"/>
+                            </SmallButton>
+                        </div>
+                    </div>
+
+                    <Show when=must_pick>
+                        <div class="text-[11px] text-[#8a5a00] text-center">
+                            "Click whose bid you want to take."
+                        </div>
+                    </Show>
+                </div>
+            </Show>
+        </div>
     }
 }
 

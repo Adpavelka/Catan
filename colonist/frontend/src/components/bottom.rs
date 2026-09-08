@@ -149,14 +149,6 @@ impl TradeDraft {
         self.receive_any.set(0);
         self.offer_any.set(0);
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.receive.get().total()
-            + self.offer.get().total()
-            + self.receive_any.get()
-            + self.offer_any.get()
-            == 0
-    }
 }
 
 // ------------------------------------------------------------------- cards
@@ -286,20 +278,87 @@ fn HandTray() -> impl IntoView {
     };
 
     let dev_cards = move || state.my_dev_cards.get();
-    // Numbered outside the view macro: a turbofish inside it parses as tags.
+    // Each card with whether *it* was drawn this turn.
+    //
+    // Freshness has to be per card, not per kind: buying a second knight used
+    // to grey out the first one as well, because the test was "is a knight
+    // among this turn's draws". The cards of a kind are interchangeable, so
+    // the last N of each kind are taken to be the N drawn this turn.
+    //
+    // Built outside the view macro: a turbofish inside it parses as tags.
     let dev_cards_keyed = move || {
-        dev_cards()
-            .into_iter()
+        let hand = dev_cards();
+        let drawn = state.fresh_dev_cards.get();
+        let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+        hand.iter()
             .enumerate()
-            .collect::<Vec<(usize, DevCardType)>>()
+            .map(|(i, card)| {
+                let kind = format!("{card:?}");
+                let held = hand.iter().filter(|c| format!("{c:?}") == kind).count();
+                let fresh_of_kind = drawn.iter().filter(|c| format!("{c:?}") == kind).count();
+                let ordinal = seen.entry(kind).or_insert(0);
+                let is_fresh = *ordinal >= held.saturating_sub(fresh_of_kind);
+                *ordinal += 1;
+                (i, card.clone(), is_fresh)
+            })
+            .collect::<Vec<(usize, DevCardType, bool)>>()
     };
     let has_dev_cards = move || !dev_cards().is_empty();
     let hand_is_empty =
         move || state.my_resources.get() == shared::Resources::default() && dev_cards().is_empty();
 
+    // A big hand closes up rather than running off the end of the tray.
+    //
+    // Scrolling was the old answer and it was the wrong one: cards you have to
+    // scroll to are cards you forget you hold. So the row is measured and the
+    // cards overlap by exactly as much as it takes to fit, and no more - a
+    // small hand still sits out flat with a gap between each card.
+    let tray: NodeRef<html::Div> = create_node_ref();
+    let width = create_rw_signal(0.0f64);
+    let measure = move || {
+        if let Some(el) = tray.get_untracked() {
+            width.set(el.client_width() as f64);
+        }
+    };
+    tray.on_load(move |_| measure());
+    window_event_listener(ev::resize, move |_| measure());
+
+    // Every card in the hand, resources then development cards.
+    let card_count = move || {
+        let r = state.my_resources.get();
+        (r.brick + r.lumber + r.wool + r.grain + r.ore) as usize + dev_cards().len()
+    };
+
+    /// Card width, the gap wanted between them, and the least of a card that
+    /// has to stay visible for it to be clickable.
+    const CARD_W: f64 = 63.0;
+    const GAP: f64 = 3.0;
+    const MIN_VISIBLE: f64 = 20.0;
+
+    let overlap = create_memo(move |_| {
+        let n = card_count();
+        let avail = width.get();
+        if n < 2 || avail <= 0.0 {
+            return 0.0;
+        }
+        let natural = n as f64 * CARD_W + (n - 1) as f64 * GAP;
+        if natural <= avail {
+            return 0.0;
+        }
+        // Spread the shortfall across the joins, but never past the point
+        // where a card is too slim to aim at.
+        let needed = (natural - avail) / (n - 1) as f64;
+        needed.min(CARD_W + GAP - MIN_VISIBLE)
+    });
+    // The overlap is applied as a negative margin, so it is subtracted from
+    // the gap rather than added to it.
+    let tuck = move || format!("margin-left: -{:.1}px", overlap.get());
+
     view! {
         <div
-            class="hud-tray flex-1 min-w-0 flex items-center gap-3 px-3.5 overflow-x-auto custom-scrollbar"
+            node_ref=tray
+            class="hud-tray flex-1 min-w-0 flex items-center gap-3 px-3.5 overflow-hidden"
             style="height: 119px;"
         >
             {Res::ALL.map(|k| {
@@ -315,9 +374,16 @@ fn HandTray() -> impl IntoView {
                     <div class="flex items-center gap-[3px] shrink-0 self-center">
                         {move || (0..held()).map(|i| {
                             let is_up = i >= held().saturating_sub(committed());
+                            // Raise each card above the one to its left, so a
+                            // tucked run still reads left to right.
+                            let z = i as i32;
                             view! {
                                 <button
-                                    class="shrink-0 game-card-pick"
+                                    class="shrink-0 game-card-pick relative"
+                                    style=move || format!(
+                                        "z-index: {z}; {}",
+                                        if i == 0 { String::new() } else { tuck() },
+                                    )
                                     title=move || if is_up {
                                         format!("{} - up for trade, right-click to take it back", k.label())
                                     } else {
@@ -348,8 +414,10 @@ fn HandTray() -> impl IntoView {
                 <div class="flex items-center gap-2 pl-3 ml-1 border-l-2 border-[#ddd2ba] shrink-0 self-center">
                     <For
                         each=dev_cards_keyed
-                        key=|(i, c)| (*i, format!("{c:?}"))
-                        children=move |(_, card)| view! { <DevCardInHand card=card /> }
+                        key=|(i, c, fresh)| (*i, format!("{c:?}"), *fresh)
+                        children=move |(_, card, fresh)| view! {
+                            <DevCardInHand card=card fresh=fresh />
+                        }
                     />
                 </div>
             </Show>
@@ -363,14 +431,13 @@ fn HandTray() -> impl IntoView {
 
 /// One development card in hand, playable or not.
 #[component]
-fn DevCardInHand(card: DevCardType) -> impl IntoView {
+fn DevCardInHand(card: DevCardType, fresh: bool) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
     let is_point = card == DevCardType::VictoryPoint;
-    // Signals rather than closures: these are read from several places, and a
-    // closure that captures is not Copy.
-    let for_fresh = card.clone();
-    let fresh = Signal::derive(move || state.fresh_dev_cards.get().contains(&for_fresh));
+    // A signal rather than a closure: read from several places, and a closure
+    // that captures is not Copy.
+    let fresh = Signal::derive(move || fresh);
     let my_turn = Signal::derive(move || {
         state.player_id.get() == Some(state.current_turn_player.get())
     });
@@ -757,8 +824,8 @@ fn OfferDock() -> impl IntoView {
     view! {
         <Show when=any>
             <div
-                class="absolute z-40 flex flex-col gap-2 items-stretch"
-                style="right: 12px; bottom: 250px; width: 320px;"
+                class="fixed z-[59] flex flex-col gap-2 items-stretch"
+                style="right: 416px; top: 12px; width: 340px;"
             >
                 <div class="hud-tray px-3 py-2">
                     <div class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263] mb-1.5">
@@ -788,25 +855,43 @@ fn TradePanel() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
     let draft = use_context::<TradeDraft>().expect("TradeDraft missing");
 
-    // ---- the bank deal: n of one kind for one of another, at your best rate.
-    let bank_give = move || -> Option<Res> {
-        let give = draft.offer.get();
-        let kinds: Vec<Res> = Res::ALL.into_iter().filter(|k| give.get(*k) > 0).collect();
-        (kinds.len() == 1).then(|| kinds[0])
-    };
-    let bank_want = move || -> Option<Res> {
-        let want = draft.receive.get();
-        (want.total() == 1)
-            .then(|| Res::ALL.into_iter().find(|k| want.get(*k) == 1))
-            .flatten()
-    };
-    let bank_deal = move || -> Option<(Res, Res)> {
+    // ---- the bank deal.
+    //
+    // Every kind you put up must be an exact multiple of *its own* rate - the
+    // rate depends on the ports you hold, so four brick and two ore can both
+    // be one card's worth in the same deal - and the number of cards you ask
+    // for has to match the number of exchanges that buys. Four brick plus four
+    // ore for a sheep and a wood is a perfectly ordinary two-exchange deal.
+    let bank_exchanges = move || -> Option<Vec<(Res, Res)>> {
         if draft.receive_any.get() > 0 || draft.offer_any.get() > 0 {
             return None;
         }
-        let (g, w) = (bank_give()?, bank_want()?);
-        let rate = state.get_best_ratio(g.shared());
-        (draft.offer.get().get(g) == rate && g != w).then_some((g, w))
+        let (give, want) = (draft.offer.get(), draft.receive.get());
+        if give.total() == 0 || want.total() == 0 {
+            return None;
+        }
+
+        // What you are giving, expanded into one entry per exchange it buys.
+        let mut credits: Vec<Res> = Vec::new();
+        for k in Res::ALL {
+            let n = give.get(k);
+            if n == 0 {
+                continue;
+            }
+            let rate = state.get_best_ratio(k.shared());
+            if rate == 0 || n % rate != 0 {
+                return None;
+            }
+            credits.extend(std::iter::repeat(k).take((n / rate) as usize));
+        }
+
+        let taken = want.spread();
+        if credits.len() != taken.len() {
+            return None;
+        }
+        // The bank will not swap a card for the same kind of card.
+        let pairs: Vec<(Res, Res)> = credits.into_iter().zip(taken).collect();
+        pairs.iter().all(|(g, t)| g != t).then_some(pairs)
     };
 
     // ---- the table deal: both sides hold something, and a wildcard cannot
@@ -818,43 +903,18 @@ fn TradePanel() -> impl IntoView {
     };
 
     let on_turn = move || state.can_build_now();
-    let can_bank = move || on_turn() && bank_deal().is_some();
-    let can_offer =
-        move || on_turn() && table_ready() && state.my_pending_trade.get().is_none();
-
-    // Why a control is dark, in words. A greyed button that will not say what
-    // is wrong is the most annoying thing in an interface.
-    let hint = move || -> Option<String> {
-        if !on_turn() {
-            return Some("You can only trade on your own turn, after rolling.".into());
-        }
-        if draft.is_empty() {
-            return Some("Click a card above to ask for it, or one of yours below to offer it.".into());
-        }
-        if let Some(g) = bank_give() {
-            let rate = state.get_best_ratio(g.shared());
-            let up = draft.offer.get().get(g);
-            if up != rate && bank_want().is_some() && !table_ready() {
-                return Some(format!(
-                    "The bank wants {rate} {} for one card - you have put up {up}.",
-                    g.label().to_lowercase()
-                ));
-            }
-        }
-        if state.my_pending_trade.get().is_some() {
-            return Some("You already have an offer on the table.".into());
-        }
-        if !table_ready() {
-            return Some("Put something on both sides of the deal.".into());
-        }
-        None
-    };
+    let can_bank = move || on_turn() && bank_exchanges().is_some();
+    let can_offer = move || on_turn() && table_ready() && !state.offers_are_full();
 
     let send_to_bank = move |_| {
-        if let Some((g, w)) = bank_deal() {
+        let Some(pairs) = bank_exchanges() else { return };
+        // The protocol settles one exchange at a time. Each is independently
+        // affordable - that is what `bank_exchanges` just checked - so sending
+        // them in sequence is the same deal, and the server validates each.
+        for (g, w) in pairs {
             state.send(ClientRequest::BankTrade { give: g.shared(), receive: w.shared() });
-            draft.clear();
         }
+        draft.clear();
     };
 
     let send_to_table = move |_| {
@@ -921,21 +981,6 @@ fn TradePanel() -> impl IntoView {
                             count=Signal::derive(move || draft.receive_any.get())
                         />
                     </button>
-
-                    // The bank sits at the far end of the palette, apart from
-                    // the cards: it is who you might deal with, not a thing to
-                    // put on the table. It shows your rate for what you have
-                    // put up.
-                    <div class="ml-auto flex items-center gap-2 pr-1" title="The bank">
-                        <Show when=move || bank_give().is_some()>
-                            <span class="text-[15px] font-black text-[#5c5445] tabular-nums">
-                                {move || bank_give()
-                                    .map(|g| format!("{}:1", state.get_best_ratio(g.shared())))
-                                    .unwrap_or_default()}
-                            </span>
-                        </Show>
-                        <Art name="bank" alt="Bank" class="w-12 h-12 object-contain" />
-                    </div>
                 </div>
 
                 // MIDDLE: the two directions. Deliberately roomy - the cards
@@ -966,16 +1011,6 @@ fn TradePanel() -> impl IntoView {
                     />
                 </div>
 
-                // BOTTOM: your own cards, as stacks. Clicking one puts it up.
-                <div class="hud-tray flex items-center gap-3 px-3" style="height: 104px;">
-                    <OfferableHand />
-
-                    <Show when=move || hint().is_some()>
-                        <span class="ml-auto pr-1 text-[12px] text-[#8a5a00] max-w-[300px] text-right leading-snug">
-                            {move || hint().unwrap_or_default()}
-                        </span>
-                    </Show>
-                </div>
             </div>
 
             // ---- RIGHT: bank it, offer it, or drop it.
@@ -1091,82 +1126,6 @@ fn TradeActionButton(
                 </span>
             })}
         </button>
-    }
-}
-
-/// Your own cards inside the trade window. One card per card - a stack reads
-/// as a single thick card, and you cannot count what you cannot see.
-#[component]
-fn OfferableHand() -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-    let draft = use_context::<TradeDraft>().expect("TradeDraft missing");
-
-    let spare = move |k: Res| {
-        k.in_hand(&state.my_resources.get())
-            .saturating_sub(draft.offer.get().get(k))
-    };
-    let empty = move || state.my_resources.get() == shared::Resources::default();
-
-    view! {
-        <div class="flex items-center gap-2.5 overflow-x-auto custom-scrollbar min-w-0">
-            {Res::ALL.map(|k| {
-                let held = move || k.in_hand(&state.my_resources.get());
-                let committed = move || draft.offer.get().get(k);
-
-                view! {
-                    <div class="flex items-center gap-[3px] shrink-0">
-                        {move || (0..held()).map(|i| {
-                            let is_up = i >= held().saturating_sub(committed());
-                            view! {
-                                <button
-                                    class="game-card-pick shrink-0"
-                                    title=move || if is_up {
-                                        format!("{} - up for trade, click again to take it back", k.label())
-                                    } else {
-                                        format!("{} - click to put it up", k.label())
-                                    }
-                                    on:click=move |_| {
-                                        if is_up {
-                                            draft.offer.update(|b| b.set(k, b.get(k).saturating_sub(1)));
-                                        } else if spare(k) > 0 {
-                                            draft.offer.update(|b| b.set(k, b.get(k) + 1));
-                                        }
-                                    }
-                                >
-                                    <CardFace
-                                        art=k.art()
-                                        alt=k.label()
-                                        size="w-[54px] h-[76px]"
-                                        dimmed=is_up
-                                    />
-                                </button>
-                            }
-                        }).collect_view()}
-                    </div>
-                }
-            }).to_vec()}
-
-            // The unnamed card you are willing to hand over, for them to pick.
-            <button
-                class="game-card-pick shrink-0"
-                title="Offer a card of their choosing"
-                on:click=move |_| draft.offer_any.update(|n| *n = n.saturating_add(1))
-                on:contextmenu=move |ev| {
-                    ev.prevent_default();
-                    draft.offer_any.update(|n| *n = n.saturating_sub(1));
-                }
-            >
-                <MysteryCard
-                    size="w-[54px] h-[76px]"
-                    alt="Offer a card of their choosing"
-                    count=Signal::derive(move || draft.offer_any.get())
-                />
-            </button>
-
-            <Show when=empty>
-                <span class="text-[13px] italic text-[#a89e8b]">"You have no cards to offer."</span>
-            </Show>
-        </div>
     }
 }
 

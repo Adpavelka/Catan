@@ -24,6 +24,9 @@ fn resources_to_set(res: &shared::Resources) -> crate::game::entities::resources
 }
 
 
+/// How many offers one player may have open at the same time.
+const MAX_OPEN_OFFERS_PER_PLAYER: usize = 4;
+
 impl GameInstance {
     pub fn handle_bank_trade(&mut self, pid: Uuid,
         give: ResourceType,
@@ -111,9 +114,21 @@ impl GameInstance {
             }
         }
 
-        // One open offer each, so a client cannot flood the table.
-        if self.pending_trades.values().any(|t| t.proposer_id == pid) {
-            return Err("You already have an offer on the table.".to_string());
+        // Several offers at once are fine - putting two deals to the table and
+        // taking whichever lands is ordinary play - but not unlimited, or a
+        // client could bury everyone else under offers they each have to
+        // answer. Whether you can actually pay is re-checked when an offer is
+        // settled, so overlapping offers that spend the same card simply fail
+        // at the point the second one is taken.
+        let mine = self
+            .pending_trades
+            .values()
+            .filter(|t| t.proposer_id == pid)
+            .count();
+        if mine >= MAX_OPEN_OFFERS_PER_PLAYER {
+            return Err(format!(
+                "You already have {MAX_OPEN_OFFERS_PER_PLAYER} offers on the table."
+            ));
         }
 
         let tm = &mut self.turn_manager;
@@ -660,12 +675,57 @@ mod tests {
     }
 
     #[test]
-    fn a_player_may_only_have_one_offer_open() {
+    fn several_offers_may_be_open_at_once_up_to_the_cap() {
         let (mut game, proposer, _, _) = table();
-        offer_brick_for_lumber(&mut game, proposer);
 
-        let err = game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1), 0, 0).unwrap_err();
-        assert!(err.contains("already have an offer"), "got: {err}");
+        // Putting more than one deal to the table is ordinary play.
+        for _ in 0..MAX_OPEN_OFFERS_PER_PLAYER {
+            game.handle_trade_offer(proposer, None, res(1, 0), res(0, 1), 0, 0)
+                .expect("within the cap");
+        }
+        assert_eq!(
+            game.pending_trades
+                .values()
+                .filter(|t| t.proposer_id == proposer)
+                .count(),
+            MAX_OPEN_OFFERS_PER_PLAYER
+        );
+
+        // Past it, so one client cannot bury the table.
+        let err = game
+            .handle_trade_offer(proposer, None, res(1, 0), res(0, 1), 0, 0)
+            .unwrap_err();
+        assert!(err.contains("offers on the table"), "got: {err}");
+    }
+
+    #[test]
+    fn overlapping_offers_that_spend_the_same_card_fail_at_settle_time() {
+        let (mut game, proposer, first, second) = table();
+
+        // Two offers that together want more brick than the proposer holds
+        // (they have five). Both are legal to make; only one can be settled.
+        let a = game.handle_trade_offer(proposer, None, res(3, 0), res(0, 1), 0, 0).unwrap();
+        let b = game.handle_trade_offer(proposer, None, res(3, 0), res(0, 1), 0, 0).unwrap();
+        let (a, b) = match (a, b) {
+            (
+                ServerMessage::TradeProposed { offer_id: a, .. },
+                ServerMessage::TradeProposed { offer_id: b, .. },
+            ) => (a, b),
+            other => panic!("expected two proposals, got {other:?}"),
+        };
+
+        game.handle_trade_response(first, a, true).unwrap();
+        game.handle_trade_response(second, b, true).unwrap();
+        game.handle_confirm_trade(proposer, a, first).unwrap();
+
+        // The brick is gone, so the second offer withdraws itself rather than
+        // sitting there as something that can never be settled.
+        let out = game.handle_confirm_trade(proposer, b, second).unwrap();
+        assert!(
+            matches!(out, ServerMessage::TradeCancelled { offer_id } if offer_id == b),
+            "got: {out:?}"
+        );
+        assert!(!game.pending_trades.contains_key(&b));
     }
 
     #[test]
