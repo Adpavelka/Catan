@@ -299,8 +299,6 @@ fn HandTray() -> impl IntoView {
             .collect::<Vec<(usize, DevCardType, bool)>>()
     };
     let has_dev_cards = move || !dev_cards().is_empty();
-    let hand_is_empty =
-        move || state.my_resources.get() == shared::Resources::default() && dev_cards().is_empty();
 
     // A big hand closes up rather than running off the end of the tray.
     //
@@ -435,10 +433,6 @@ fn HandTray() -> impl IntoView {
                         }
                     />
                 </div>
-            </Show>
-
-            <Show when=hand_is_empty>
-                <span class="text-[13px] italic text-[#a89e8b] pl-1">"No cards in hand."</span>
             </Show>
         </div>
     }
