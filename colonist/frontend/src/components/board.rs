@@ -549,17 +549,17 @@ pub fn Board() -> impl IntoView {
                             let (px, py) = axial_to_pixel(robber_q, robber_r, 60.0);
                             view! {
                                 <g transform=format!("translate({}, {})", px, py)>
-                                    // Semi-transparent dark circle background
-                                    <circle
-                                        cx="0"
-                                        cy="0"
-                                        r="20"
-                                        class="fill-black/40 stroke-red-600 stroke-2"
-                                    />
+                                    // Just the piece, standing on the tile the
+                                    // way it stands on a real board. It used to
+                                    // sit in a dark disc with a red ring, which
+                                    // read as a warning badge rather than as a
+                                    // playing piece. A shadow keeps it legible
+                                    // against the pale desert instead.
                                     <image
                                         href="/assets/robber.svg"
                                         x="-19" y="-19" width="38" height="38"
                                         class="pointer-events-none"
+                                        style="filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.55));"
                                     />
                                 </g>
                             }.into_view()
