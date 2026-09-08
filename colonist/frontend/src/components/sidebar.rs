@@ -292,8 +292,11 @@ fn PlayerPanel(player_id: Uuid) -> impl IntoView {
                                 // Their public holdings. Counts only - a hand
                                 // is never shown to anybody else.
                                 <div class="flex items-center gap-2.5 mt-0.5 text-[12px] font-bold text-[#4a4335]">
+                                    // A face-down card, not a brick: the count
+                                    // is of cards whose kinds nobody else may
+                                    // see, so naming one of them is a lie.
                                     <span class="flex items-center gap-1" title="Resource cards">
-                                        <Art name="brick" class="w-3 h-4 object-cover rounded-[2px]" />
+                                        <Art name="any-card" class="w-3 h-4 object-contain" />
                                         {p.resource_count}
                                     </span>
                                     <span class="flex items-center gap-1" title="Development cards">
