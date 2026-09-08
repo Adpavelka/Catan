@@ -1,7 +1,7 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
 use crate::components::icons::{port_art, DieFace};
-use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PortType, PortInfo};
+use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PortInfo};
 use uuid::Uuid;
 
 // Convert axial coordinates (q, r) to pixel coordinates for SVG
@@ -9,33 +9,6 @@ fn axial_to_pixel(q: i32, r: i32, size: f32) -> (f32, f32) {
     let x = size * (3f32.sqrt() * q as f32 + 3f32.sqrt() / 2.0 * r as f32);
     let y = size * (3.0 / 2.0 * r as f32);
     (x, y)
-}
-
-// ===== Port rendering helpers (using shared::PortType from server) =====
-
-
-
-fn port_label(port_type: &PortType) -> &'static str {
-    match port_type {
-        PortType::ThreeToOne => "3:1",
-        PortType::TwoToOne(_) => "2:1",
-    }
-}
-
-/// Ink for the ratio text under a harbour badge, matched to the resource so
-/// the label reads as part of the same marker.
-fn port_color(port_type: &PortType) -> &'static str {
-    match port_type {
-        PortType::ThreeToOne => "#ffffff",
-        PortType::TwoToOne(res) => match res {
-            ResourceType::Brick => "#fb923c",
-            ResourceType::Wood => "#34d399",
-            ResourceType::Sheep => "#a3e635",
-            ResourceType::Wheat => "#fbbf24",
-            ResourceType::Ore => "#cbd5e1",
-            ResourceType::Desert => "#ffffff",
-        },
-    }
 }
 
 // Get color for a resource type
@@ -533,10 +506,6 @@ pub fn Board() -> impl IntoView {
                                 let port_x = mid_x + out_nx * 62.0;
                                 let port_y = mid_y + out_ny * 62.0;
 
-                                // Get port display properties from server-sent port type
-                                let label = port_label(&port.port_type);
-                                let color = port_color(&port.port_type);
-
                                 // The walkways meet the underside of the
                                 // hull. The boat is drawn upright whatever
                                 // direction the harbour faces, so "under" is
@@ -554,28 +523,19 @@ pub fn Board() -> impl IntoView {
                                         <Pier from=(v2x, v2y) to=(dock_x, dock_y) />
 
                                         <g transform=format!("translate({}, {})", port_x, port_y)>
-                                            // The drawn harbour badge, with the
-                                            // ratio still spelled out under it:
-                                            // the picture says which resource,
-                                            // the text says the rate. The
-                                            // artwork sits straight on the
-                                            // water - a disc behind it only
-                                            // boxed it in.
+                                            // The harbour badge and nothing
+                                            // else. The sail already carries
+                                            // both halves of the deal - which
+                                            // resource, at what rate - so a
+                                            // caption under it said the same
+                                            // thing twice. The artwork sits
+                                            // straight on the water; a disc
+                                            // behind it only boxed it in.
                                             <image
                                                 href=format!("/assets/{}.svg", port_art(&port.port_type))
                                                 x="-24" y="-26" width="48" height="48"
                                                 style="filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.45));"
                                             />
-                                            <text
-                                                y="21"
-                                                text-anchor="middle"
-                                                dominant-baseline="central"
-                                                fill=color
-                                                class="text-[12px] font-black"
-                                                style="paint-order: stroke; stroke: #0b1b2b; stroke-width: 3px;"
-                                            >
-                                                {label}
-                                            </text>
                                         </g>
                                     </g>
                                 }
