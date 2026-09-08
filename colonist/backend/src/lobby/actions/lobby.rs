@@ -50,9 +50,19 @@ impl Lobby {
             self.broadcast_to_game(&game_id, ServerMessage::TradeCancelled { offer_id });
         }
 
-            self.player_to_game.remove(&pid);
+        self.player_to_game.remove(&pid);
 
-            self.send_server_msg(
+        info!(
+            "Player {} left game {}; {} remaining, game kept: {}",
+            pid,
+            game_id,
+            self.games
+                .get(&game_id)
+                .map_or(0, |game| game.turn_manager.players.len()),
+            !should_remove_game,
+        );
+
+        self.send_server_msg(
             pid,
             ServerMessage::Left {
                 player_id: pid,
