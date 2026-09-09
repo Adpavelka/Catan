@@ -1,12 +1,10 @@
-//! Resource cards flying from the tile that produced them to the player who
-//! got them.
+//! Cards in flight: from the tile that produced them to the player who got
+//! them, and from a robbed player to whoever robbed them.
 //!
-//! The payout is worked out here rather than read off the wire. The client
-//! already knows the board, the buildings and the robber, so it can derive
-//! exactly what a roll produces - and this is decoration, so if it ever
-//! disagreed with the server the resource counts would still be the server's.
-//! Deriving it locally means no new protocol and no per-hex bookkeeping on the
-//! backend.
+//! What a roll pays out is derived by `GameState::roll_payout` rather than
+//! read off the wire - see there for why. A steal does come off the wire,
+//! because only the server knows which card the robber's hand happened to
+//! find.
 //!
 //! Positions come from the live DOM: the hex `<g>` elements carry `data-hex`
 //! and the player rows carry `data-player`, so a card starts where its tile is
@@ -64,74 +62,46 @@ fn player_centre(pid: Uuid) -> Option<(f64, f64)> {
     Some((b.x() + b.width() / 2.0, b.y() + b.height() / 2.0))
 }
 
-/// The six vertices of a hex, in the same axial-times-three coordinates the
-/// board uses for buildings.
-fn hex_vertices(q: i32, r: i32) -> [(i32, i32); 6] {
-    let base = (q * 3, r * 3);
-    const NB: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
-    std::array::from_fn(|i| {
-        let a = NB[i];
-        let b = NB[(i + 1) % 6];
-        (base.0 + a.0 + b.0, base.1 + a.1 + b.1)
-    })
-}
-
 #[component]
 pub fn ResourceFlight() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
     let flyers = create_rw_signal(Vec::<Flyer>::new());
     let next_id = store_value(0u64);
 
+    // Put a batch of cards in the air and take them down again when the last
+    // of them has landed. Each batch clears itself: one shared timer would cut
+    // short cards from a roll that landed while the previous lot were still
+    // up.
+    let launch = move |batch: Vec<Flyer>| {
+        if batch.is_empty() {
+            return;
+        }
+        let ids: Vec<u64> = batch.iter().map(|f| f.id).collect();
+        let longest = batch.last().map_or(0, |f| f.delay) + FLIGHT_MS + 100;
+        flyers.update(|v| v.extend(batch));
+        set_timeout(
+            move || flyers.update(|v| v.retain(|f| !ids.contains(&f.id))),
+            std::time::Duration::from_millis(longest),
+        );
+    };
+
+    // What a roll paid out, tile by tile.
     create_effect(move |_| {
         let Some((total, _seq)) = state.last_roll_event.get() else {
             return;
         };
-        // Seven pays nobody; it moves the robber instead.
-        if total == 7 {
-            return;
-        }
-
-        let robber = state.robber_pos.get_untracked();
-        let hexes = state.hexes.get_untracked();
-        let settlements = state.settlements.get_untracked();
-        let cities = state.cities.get_untracked();
-
-        // The DOM has to have caught up with this roll before anything can be
-        // measured, so the work happens on the next frame rather than inline.
-        let mut planned: Vec<(i32, i32, Uuid, ResourceType)> = Vec::new();
-        for hex in hexes.iter() {
-            if hex.number != total
-                || hex.resource == ResourceType::Desert
-                || robber == Some((hex.q, hex.r))
-            {
-                continue;
-            }
-            for v in hex_vertices(hex.q, hex.r) {
-                // A city is two cards, a settlement one.
-                let mut owed: Vec<Uuid> = settlements
-                    .iter()
-                    .filter(|b| (b.x, b.y) == v)
-                    .map(|b| b.player_id)
-                    .collect();
-                for c in cities.iter().filter(|b| (b.x, b.y) == v) {
-                    owed.push(c.player_id);
-                    owed.push(c.player_id);
-                }
-                for pid in owed {
-                    planned.push((hex.q, hex.r, pid, hex.resource));
-                }
-            }
-        }
-
+        let mut planned = state.roll_payout(total);
         if planned.is_empty() {
             return;
         }
         planned.truncate(MAX_CARDS);
 
+        // The DOM has to have caught up with this roll before anything can be
+        // measured, so the work happens a frame later rather than inline.
         set_timeout(
             move || {
                 let mut batch = Vec::with_capacity(planned.len());
-                for (i, (q, r, pid, res)) in planned.iter().enumerate() {
+                for (i, ((q, r), pid, res)) in planned.iter().enumerate() {
                     let (Some(from), Some(to)) = (hex_centre(*q, *r), player_centre(*pid)) else {
                         continue;
                     };
@@ -146,19 +116,35 @@ pub fn ResourceFlight() -> impl IntoView {
                         delay: (i as u64) * STAGGER_MS,
                     });
                 }
-                if batch.is_empty() {
-                    return;
-                }
-                let ids: Vec<u64> = batch.iter().map(|f| f.id).collect();
-                let longest = batch.last().map_or(0, |f| f.delay) + FLIGHT_MS + 100;
-                flyers.update(|v| v.extend(batch));
+                launch(batch);
+            },
+            std::time::Duration::from_millis(60),
+        );
+    });
 
-                // Each batch clears itself: a shared timer would cut short
-                // cards from a roll that landed while these were still up.
-                set_timeout(
-                    move || flyers.update(|v| v.retain(|f| !ids.contains(&f.id))),
-                    std::time::Duration::from_millis(longest),
-                );
+    // One card crossing from the robbed player to the robber. Face down for
+    // everyone but the two of them, because that is all anybody else is told.
+    create_effect(move |_| {
+        let Some(steal) = state.last_steal_event.get() else {
+            return;
+        };
+        set_timeout(
+            move || {
+                let (Some(from), Some(to)) =
+                    (player_centre(steal.victim), player_centre(steal.thief))
+                else {
+                    return;
+                };
+                let id = next_id.get_value();
+                next_id.set_value(id + 1);
+                launch(vec![Flyer {
+                    id,
+                    art: steal.resource.map_or("any-card", resource_art),
+                    label: steal.resource.map_or("A card", label_of),
+                    from,
+                    to,
+                    delay: 0,
+                }]);
             },
             std::time::Duration::from_millis(60),
         );

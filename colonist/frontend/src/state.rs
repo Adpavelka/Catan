@@ -45,6 +45,17 @@ pub struct MyOffer {
     pub decliners: Vec<Uuid>,
 }
 
+/// A card taken by the robber, for the animation to follow.
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub struct StealEvent {
+    pub thief: Uuid,
+    pub victim: Uuid,
+    /// `None` for onlookers, who are not told which card it was.
+    pub resource: Option<shared::ResourceType>,
+    /// Monotonic, so two identical steals still count as two events.
+    pub seq: u64,
+}
+
 /// One line of player chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatLine {
@@ -100,6 +111,13 @@ pub struct GameState {
     /// eights in a row are the same number but two different events, and a
     /// signal that only carried the total would not fire for the second.
     pub last_roll_event: RwSignal<Option<(u8, u64)>>,
+    /// A card that has just changed hands to the robber: who took it, who lost
+    /// it, which card it was, and the same ticking counter as the roll.
+    ///
+    /// The card is only named for the two players in it. Everyone else is told
+    /// that *a* card moved, which is what they are entitled to know, and the
+    /// animation shows them a face-down one.
+    pub last_steal_event: RwSignal<Option<StealEvent>>,
     /// Ticks once per turn handed out by the server.
     ///
     /// The turn clock resets off this rather than off `current_turn_player`.
@@ -160,6 +178,30 @@ pub fn card_label(card: &shared::DevCardType) -> &'static str {
         shared::DevCardType::Monopoly => "Monopoly",
         shared::DevCardType::YearOfPlenty => "Year of Plenty",
     }
+}
+
+/// A resource's name in running prose, for the log.
+pub fn resource_label(res: shared::ResourceType) -> &'static str {
+    match res {
+        shared::ResourceType::Wood => "wood",
+        shared::ResourceType::Brick => "brick",
+        shared::ResourceType::Sheep => "sheep",
+        shared::ResourceType::Wheat => "wheat",
+        shared::ResourceType::Ore => "ore",
+        shared::ResourceType::Desert => "nothing",
+    }
+}
+
+/// The six corners of a hex, in the axial-times-three coordinates the server
+/// uses for buildings. Mirrors the server's own formula.
+fn hex_vertices(q: i32, r: i32) -> [(i32, i32); 6] {
+    let base = (q * 3, r * 3);
+    const NB: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
+    std::array::from_fn(|i| {
+        let a = NB[i];
+        let b = NB[(i + 1) % 6];
+        (base.0 + a.0 + b.0, base.1 + a.1 + b.1)
+    })
 }
 
 impl GameState {
@@ -298,6 +340,45 @@ impl GameState {
             .unwrap_or_else(|| format!("Player {}", player_id))
     }
 
+    /// What a roll of `total` pays out, as one entry per card: the tile it
+    /// comes off, who gets it, and what it is.
+    ///
+    /// Worked out here rather than read off the wire. We already hold the
+    /// board, the buildings and the robber, so the answer is derivable, and
+    /// the counts themselves still come from the server's `ResourceUpdate` -
+    /// this only drives the log line and the animation. Deriving it means no
+    /// new protocol and no per-hex bookkeeping on the backend.
+    pub fn roll_payout(&self, total: u8) -> Vec<((i32, i32), Uuid, shared::ResourceType)> {
+        // Seven pays nobody; it moves the robber instead.
+        if total == 7 {
+            return Vec::new();
+        }
+        let robber = self.robber_pos.get_untracked();
+        let settlements = self.settlements.get_untracked();
+        let cities = self.cities.get_untracked();
+
+        let mut paid = Vec::new();
+        for hex in self.hexes.get_untracked() {
+            if hex.number != total
+                || hex.resource == shared::ResourceType::Desert
+                || robber == Some((hex.q, hex.r))
+            {
+                continue;
+            }
+            for v in hex_vertices(hex.q, hex.r) {
+                for b in settlements.iter().filter(|b| (b.x, b.y) == v) {
+                    paid.push(((hex.q, hex.r), b.player_id, hex.resource));
+                }
+                // A city is two cards, a settlement one.
+                for b in cities.iter().filter(|b| (b.x, b.y) == v) {
+                    paid.push(((hex.q, hex.r), b.player_id, hex.resource));
+                    paid.push(((hex.q, hex.r), b.player_id, hex.resource));
+                }
+            }
+        }
+        paid
+    }
+
     pub fn send(&self, req: ClientRequest) {
         if let Some(tx) = self.ws_sender.get_untracked() {
             if let Ok(json) = serde_json::to_string(&req) {
@@ -411,6 +492,35 @@ impl GameState {
                         .unwrap_or_else(|| format!("Player {}", player_id));
 
                     self.messages.update(|m| m.push(format!("{} rolled {} ({}+{})", player_name, total, dice_1, dice_2)));
+
+                    // Who the roll paid, and in what. Without this the log
+                    // says a number came up and nothing about what it did,
+                    // which is the half people actually watch for - a card
+                    // count on somebody's row goes up and you cannot tell
+                    // whether they took wheat or ore off the tile you wanted.
+                    let mut tally: Vec<(Uuid, Vec<(shared::ResourceType, u32)>)> = Vec::new();
+                    for (_, pid, res) in self.roll_payout(total) {
+                        let per_player = match tally.iter_mut().find(|(who, _)| *who == pid) {
+                            Some((_, cards)) => cards,
+                            None => {
+                                tally.push((pid, Vec::new()));
+                                &mut tally.last_mut().expect("just pushed").1
+                            }
+                        };
+                        match per_player.iter_mut().find(|(kind, _)| *kind == res) {
+                            Some((_, n)) => *n += 1,
+                            None => per_player.push((res, 1)),
+                        }
+                    }
+                    for (pid, cards) in tally {
+                        let got = cards
+                            .into_iter()
+                            .map(|(res, n)| format!("{n} {}", resource_label(res)))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let line = format!("{} got {}", self.player_name(pid), got);
+                        self.messages.update(|m| m.push(line));
+                    }
                 }
                 ServerMessage::ResourceUpdate { player_id, resources } => {
                     logging::log!("Resource update for player {}: {:?}", player_id, resources);
@@ -622,6 +732,15 @@ impl GameState {
                         }
                     };
                     self.messages.update(|m| m.push(line));
+
+                    // Nothing moved if there was nothing to take, and an
+                    // animation of nothing is just a flicker.
+                    if stole_a_card {
+                        self.last_steal_event.update(|e| {
+                            let seq = e.map_or(0, |s: StealEvent| s.seq + 1);
+                            *e = Some(StealEvent { thief: thief_id, victim: victim_id, resource, seq });
+                        });
+                    }
                 }
                 ServerMessage::MustDiscardCards { player_id, count } => {
                     logging::log!("Player {} must discard {} cards", player_id, count);
@@ -1126,6 +1245,7 @@ pub fn provide_game_state() {
         messages: create_rw_signal(Vec::new()),
         chat: create_rw_signal(Vec::new()),
         last_roll_event: create_rw_signal(None),
+        last_steal_event: create_rw_signal(None),
         turn_epoch: create_rw_signal(0),
         bank: create_rw_signal(shared::BankInfo::default()),
         is_in_game: create_rw_signal(false),

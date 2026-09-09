@@ -320,9 +320,17 @@ fn HandTray() -> impl IntoView {
     const CARD_W: f64 = 63.0;
     const GAP: f64 = 3.0;
     const MIN_VISIBLE: f64 = 22.0;
-    /// The tray's own padding, and the room the development cards take.
+    /// The tray's own padding.
     const TRAY_PAD: f64 = 30.0;
-    const DEV_W: f64 = 74.0;
+    /// A development card, the gap between two of them, and the rule and
+    /// padding that set the run apart from the resources. These have to be the
+    /// real measurements: the room kept for them used to be one flat number,
+    /// so a third card was already wider than its own allowance and the run
+    /// was pushed off the end of the tray where it could not be clicked.
+    const DEV_W: f64 = 68.0;
+    const DEV_GAP: f64 = 8.0;
+    const DEV_LEAD: f64 = 18.0;
+    const DEV_MIN_VISIBLE: f64 = 30.0;
 
     // One entry per resource card, in board order, flagged if it is already
     // up for trade. Which copy of a kind is flagged does not matter, so the
@@ -353,19 +361,48 @@ fn HandTray() -> impl IntoView {
         });
     });
 
-    let overlap = create_memo(move |_| {
-        let n = hand().len();
-        let avail = width.get() - TRAY_PAD - if dev_cards().is_empty() { 0.0 } else { DEV_W };
+    /// How much each card after the first has to give up for `n` of them to
+    /// fit in `avail`, never past the point where one is too slim to aim at.
+    fn closing(n: usize, avail: f64, w: f64, gap: f64, min_visible: f64) -> f64 {
         if n < 2 || avail <= 0.0 {
             return 0.0;
         }
-        let natural = n as f64 * CARD_W + (n - 1) as f64 * GAP;
+        let natural = n as f64 * w + (n - 1) as f64 * gap;
         if natural <= avail {
             return 0.0;
         }
-        // Spread the shortfall across the joins, but never past the point
-        // where a card is too slim to pick out.
-        ((natural - avail) / (n - 1) as f64).min(CARD_W + GAP - MIN_VISIBLE)
+        ((natural - avail) / (n - 1) as f64).min(w + gap - min_visible)
+    }
+
+    // The development cards close up first, and only against what is left once
+    // the resources have closed up as far as they are allowed to. They are the
+    // cards you have to be able to click - a resource card is a click you can
+    // always make from the trade window instead - and there are rarely more
+    // than a handful, so they keep their room.
+    let dev_overlap = create_memo(move |_| {
+        let held = hand().len();
+        let resource_floor = if held == 0 {
+            0.0
+        } else {
+            CARD_W + (held - 1) as f64 * MIN_VISIBLE
+        };
+        let avail = width.get() - TRAY_PAD - DEV_LEAD - resource_floor;
+        closing(dev_cards().len(), avail, DEV_W, DEV_GAP, DEV_MIN_VISIBLE)
+    });
+
+    // What the development run actually occupies once it has closed up.
+    let dev_run = move || {
+        let n = dev_cards().len();
+        if n == 0 {
+            0.0
+        } else {
+            DEV_LEAD + n as f64 * DEV_W + (n - 1) as f64 * (DEV_GAP - dev_overlap.get())
+        }
+    };
+
+    let overlap = create_memo(move |_| {
+        let avail = width.get() - TRAY_PAD - dev_run();
+        closing(hand().len(), avail, CARD_W, GAP, MIN_VISIBLE)
     });
 
     // Numbered outside the view macro: a turbofish inside it parses as tags.
@@ -424,12 +461,20 @@ fn HandTray() -> impl IntoView {
             // Development cards sit at the end of the hand, as they do on a
             // real table, and are played from here.
             <Show when=has_dev_cards>
-                <div class="flex items-center gap-2 pl-3 ml-1 border-l-2 border-[#ddd2ba] shrink-0 self-center">
+                <div class="flex items-center pl-3 ml-1 border-l-2 border-[#ddd2ba] shrink-0 self-center">
                     <For
                         each=dev_cards_keyed
                         key=|(i, c, fresh)| (*i, format!("{c:?}"), *fresh)
-                        children=move |(_, card, fresh)| view! {
-                            <DevCardInHand card=card fresh=fresh />
+                        children=move |(i, card, fresh)| view! {
+                            <span
+                                class="shrink-0"
+                                style=move || format!(
+                                    "z-index: {i}; margin-left: {:.1}px",
+                                    if i == 0 { 0.0 } else { DEV_GAP - dev_overlap.get() },
+                                )
+                            >
+                                <DevCardInHand card=card fresh=fresh />
+                            </span>
                         }
                     />
                 </div>
@@ -743,11 +788,23 @@ fn HudButton(
     on_click: Callback<()>,
     children: Children,
 ) -> impl IntoView {
+    // A priced control you can afford right now wears a gold rim. The plain
+    // cyan ones - trade, end turn - are always available on your turn, so a
+    // rim on those would say nothing; the rim is there to answer "what can I
+    // build", and it has to be visible without hovering anything.
+    let priced = cost.is_some();
+
     view! {
         <button
             class=move || format!(
                 "hud-btn group relative w-[112px] h-[112px] flex items-center justify-center {}",
-                if armed.get() { "hud-btn-armed" } else { "" }
+                if armed.get() {
+                    "hud-btn-armed"
+                } else if priced && enabled.get() {
+                    "hud-btn-ready"
+                } else {
+                    ""
+                }
             )
             title=label
             aria-label=label

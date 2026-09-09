@@ -180,14 +180,36 @@
             0 1px 0 rgb(13 62 92 / 0.5),
             inset 0 4px 8px rgb(4 60 88 / 0.28);
     }
-    /* Unaffordable keeps the button: only the icon goes quiet, so the player
-       can still see the action exists. */
+    /* Unaffordable. The button stays where it is - the action still exists and
+       its count is still worth reading - but it drops out of the foreground:
+       the colour goes, the lift goes, and it sits flat against the water.
+       Greying only the icon left it looking almost as live as the real ones,
+       which is what made a buildable piece hard to pick out. */
     .hud-btn:disabled {
         cursor: not-allowed;
+        background: linear-gradient(170deg, #9fb3c0 0%, #8ba1b0 42%, #74899a 100%);
+        border-color: #d3dee5;
+        box-shadow:
+            0 0 0 3px rgb(29 62 84 / 0.55),
+            0 2px 0 rgb(13 62 92 / 0.35),
+            inset 0 2px 5px rgb(255 255 255 / 0.3);
+        opacity: 0.72;
     }
     .hud-btn:disabled .hud-icon {
-        filter: grayscale(0.9) brightness(0.72);
-        opacity: 0.6;
+        filter: grayscale(1) brightness(0.85);
+        opacity: 0.55;
+    }
+    /* Affordable right now. A gold rim, the same gold the board uses for the
+       player on turn and for an upgradeable settlement, so "you can do this"
+       looks the same wherever it appears. */
+    .hud-btn-ready {
+        box-shadow:
+            0 0 0 3px #ffb718,
+            0 0 12px rgb(255 183 24 / 0.55),
+            0 5px 0 rgb(13 62 92 / 0.5),
+            0 7px 11px rgb(0 0 0 / 0.33),
+            inset 0 4px 8px rgb(255 255 255 / 0.5),
+            inset 0 -4px 7px rgb(4 60 88 / 0.16);
     }
     /* Armed: this build is selected and the board is waiting for a spot. */
     .hud-btn-armed {
