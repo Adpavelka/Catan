@@ -261,6 +261,77 @@ pub fn BottomLayer() -> impl IntoView {
 
 // ----------------------------------------------------------------- the tray
 
+/// Resource card width, the gap wanted between two of them, and the sliver of
+/// a card that is left showing once the run has closed up as far as it goes.
+///
+/// The sliver is small on purpose. A resource card that has closed up to a
+/// stripe is still countable, and is still reachable from the trade window; a
+/// card pushed past the end of the tray is neither, because the tray clips.
+const CARD_W: f64 = 63.0;
+const GAP: f64 = 3.0;
+const MIN_VISIBLE: f64 = 6.0;
+/// The tray's own padding.
+const TRAY_PAD: f64 = 30.0;
+/// The most of the tray the development cards may take when the two runs
+/// cannot both have what they want. They come first, but not to the point of
+/// leaving the resources nowhere to go.
+const DEV_SHARE: f64 = 0.5;
+/// The same three for a development card, plus the rule and padding that set
+/// the run apart from the resources.
+///
+/// These have to be the real measurements. The room kept for them used to be
+/// one flat 74px whatever the hand held, so a second card was already wider
+/// than its own allowance and the run was pushed off the end of the tray,
+/// where it could not be clicked.
+const DEV_W: f64 = 68.0;
+const DEV_GAP: f64 = 8.0;
+const DEV_LEAD: f64 = 18.0;
+const DEV_MIN_VISIBLE: f64 = 26.0;
+
+/// How much each card after the first has to give up for `n` of them to fit in
+/// `avail`, never past the point where one is too slim to aim at.
+fn closing(n: usize, avail: f64, w: f64, gap: f64, min_visible: f64) -> f64 {
+    if n < 2 || avail <= 0.0 {
+        return 0.0;
+    }
+    let natural = n as f64 * w + (n - 1) as f64 * gap;
+    if natural <= avail {
+        return 0.0;
+    }
+    ((natural - avail) / (n - 1) as f64).min(w + gap - min_visible)
+}
+
+/// What a run of `n` cards occupies once it has closed up by `overlap`.
+fn run_width(n: usize, w: f64, gap: f64, overlap: f64) -> f64 {
+    if n == 0 {
+        0.0
+    } else {
+        n as f64 * w + (n - 1) as f64 * (gap - overlap)
+    }
+}
+
+/// What the development cards occupy in a tray with `usable` width to spend.
+///
+/// They are laid out before the resources and against a budget of their own,
+/// rather than against whatever the resources have left over. A development
+/// card is only playable from the tray, so one pushed past the end is a card
+/// you have lost; a resource card closed up to a stripe is still countable and
+/// can still be picked up in the trade window. Hence the order - and hence the
+/// budget, so a fistful of them cannot leave the hand nowhere to go.
+fn dev_run(n: usize, resources: usize, usable: f64) -> f64 {
+    if n == 0 {
+        return 0.0;
+    }
+    let wanted = DEV_LEAD + run_width(n, DEV_W, DEV_GAP, 0.0);
+    // What the hand needs once it has closed up as far as it is allowed to.
+    // The development cards give that back first, and only then start eating
+    // into their own share.
+    let hand_floor = run_width(resources, CARD_W, GAP, CARD_W + GAP - MIN_VISIBLE);
+    let budget = wanted.min((usable - hand_floor).max(usable * DEV_SHARE));
+    let overlap = closing(n, budget - DEV_LEAD, DEV_W, DEV_GAP, DEV_MIN_VISIBLE);
+    DEV_LEAD + run_width(n, DEV_W, DEV_GAP, overlap)
+}
+
 /// The player's own cards, in a wide tray along the bottom-left.
 ///
 /// Every card is drawn: three sheep are three sheep side by side, not one
@@ -315,23 +386,6 @@ fn HandTray() -> impl IntoView {
     let resize_tick = create_rw_signal(0u32);
     window_event_listener(ev::resize, move |_| resize_tick.update(|n| *n += 1));
 
-    /// Card width, the gap wanted between cards, and the least of a card that
-    /// has to stay visible for it to still be worth aiming at.
-    const CARD_W: f64 = 63.0;
-    const GAP: f64 = 3.0;
-    const MIN_VISIBLE: f64 = 22.0;
-    /// The tray's own padding.
-    const TRAY_PAD: f64 = 30.0;
-    /// A development card, the gap between two of them, and the rule and
-    /// padding that set the run apart from the resources. These have to be the
-    /// real measurements: the room kept for them used to be one flat number,
-    /// so a third card was already wider than its own allowance and the run
-    /// was pushed off the end of the tray where it could not be clicked.
-    const DEV_W: f64 = 68.0;
-    const DEV_GAP: f64 = 8.0;
-    const DEV_LEAD: f64 = 18.0;
-    const DEV_MIN_VISIBLE: f64 = 30.0;
-
     // One entry per resource card, in board order, flagged if it is already
     // up for trade. Which copy of a kind is flagged does not matter, so the
     // committed ones are taken off the right-hand end of each run.
@@ -361,48 +415,24 @@ fn HandTray() -> impl IntoView {
         });
     });
 
-    /// How much each card after the first has to give up for `n` of them to
-    /// fit in `avail`, never past the point where one is too slim to aim at.
-    fn closing(n: usize, avail: f64, w: f64, gap: f64, min_visible: f64) -> f64 {
-        if n < 2 || avail <= 0.0 {
-            return 0.0;
-        }
-        let natural = n as f64 * w + (n - 1) as f64 * gap;
-        if natural <= avail {
-            return 0.0;
-        }
-        ((natural - avail) / (n - 1) as f64).min(w + gap - min_visible)
-    }
+    let usable = move || width.get() - TRAY_PAD;
+    let dev_taken = create_memo(move |_| dev_run(dev_cards().len(), hand().len(), usable()));
 
-    // The development cards close up first, and only against what is left once
-    // the resources have closed up as far as they are allowed to. They are the
-    // cards you have to be able to click - a resource card is a click you can
-    // always make from the trade window instead - and there are rarely more
-    // than a handful, so they keep their room.
-    let dev_overlap = create_memo(move |_| {
-        let held = hand().len();
-        let resource_floor = if held == 0 {
-            0.0
-        } else {
-            CARD_W + (held - 1) as f64 * MIN_VISIBLE
-        };
-        let avail = width.get() - TRAY_PAD - DEV_LEAD - resource_floor;
-        closing(dev_cards().len(), avail, DEV_W, DEV_GAP, DEV_MIN_VISIBLE)
+    // Recovered from the run's width so the margin between two cards can be
+    // set without `dev_run` having to hand back two numbers.
+    let dev_overlap = create_memo(move |_| match dev_cards().len() {
+        n if n < 2 => 0.0,
+        n => DEV_GAP - (dev_taken.get() - DEV_LEAD - n as f64 * DEV_W) / (n - 1) as f64,
     });
 
-    // What the development run actually occupies once it has closed up.
-    let dev_run = move || {
-        let n = dev_cards().len();
-        if n == 0 {
-            0.0
-        } else {
-            DEV_LEAD + n as f64 * DEV_W + (n - 1) as f64 * (DEV_GAP - dev_overlap.get())
-        }
-    };
-
     let overlap = create_memo(move |_| {
-        let avail = width.get() - TRAY_PAD - dev_run();
-        closing(hand().len(), avail, CARD_W, GAP, MIN_VISIBLE)
+        closing(
+            hand().len(),
+            usable() - dev_taken.get(),
+            CARD_W,
+            GAP,
+            MIN_VISIBLE,
+        )
     });
 
     // Numbered outside the view macro: a turbofish inside it parses as tags.
@@ -1271,5 +1301,113 @@ fn DropZone(
                 </Show>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 387px is what the tray actually measures at a 1600px window, once the
+    /// action bar and the sidebar have taken their share. 942px is the width
+    /// the HUD was drawn for.
+    const TRAYS: [f64; 4] = [387.0, 500.0, 700.0, 942.0];
+
+    fn usable(tray: f64) -> f64 {
+        tray - TRAY_PAD
+    }
+
+    fn resource_run(tray: f64, resources: usize, dev: usize) -> f64 {
+        let avail = usable(tray) - dev_run(dev, resources, usable(tray));
+        run_width(
+            resources,
+            CARD_W,
+            GAP,
+            closing(resources, avail, CARD_W, GAP, MIN_VISIBLE),
+        )
+    }
+
+    #[test]
+    fn a_small_hand_sits_out_flat() {
+        assert_eq!(closing(4, 400.0, CARD_W, GAP, MIN_VISIBLE), 0.0);
+        assert_eq!(closing(1, 10.0, CARD_W, GAP, MIN_VISIBLE), 0.0);
+        assert_eq!(closing(0, 10.0, CARD_W, GAP, MIN_VISIBLE), 0.0);
+        assert_eq!(resource_run(942.0, 5, 0), run_width(5, CARD_W, GAP, 0.0));
+        // ...and so does a small pile of development cards.
+        assert_eq!(
+            dev_run(3, 2, usable(942.0)),
+            DEV_LEAD + run_width(3, DEV_W, DEV_GAP, 0.0)
+        );
+    }
+
+    #[test]
+    fn closing_up_takes_the_run_to_exactly_the_room_available() {
+        let overlap = closing(10, 400.0, CARD_W, GAP, MIN_VISIBLE);
+        assert!(overlap > 0.0, "ten cards do not fit flat in 400px");
+        assert!((run_width(10, CARD_W, GAP, overlap) - 400.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_card_never_closes_up_past_being_worth_aiming_at() {
+        assert_eq!(
+            closing(30, 120.0, CARD_W, GAP, MIN_VISIBLE),
+            CARD_W + GAP - MIN_VISIBLE
+        );
+    }
+
+    /// The regression. The room kept for development cards was a flat 74px
+    /// whatever the hand held, so from the second card on the run was wider
+    /// than its own allowance and hung off the end of the tray, where the tray
+    /// clips it and it cannot be clicked.
+    #[test]
+    fn a_development_card_is_never_the_one_pushed_out() {
+        const OLD_FLAT_RESERVATION: f64 = 74.0;
+        for dev in 1..=8 {
+            let wanted = DEV_LEAD + run_width(dev, DEV_W, DEV_GAP, 0.0);
+            if dev > 1 {
+                assert!(
+                    wanted > OLD_FLAT_RESERVATION,
+                    "{dev} cards want {wanted}px, more than the old flat reservation gave"
+                );
+            }
+            for tray in TRAYS {
+                for resources in 0..=19 {
+                    let run = dev_run(dev, resources, usable(tray));
+                    assert!(
+                        run <= usable(tray) + 0.001,
+                        "{dev} development cards and {resources} resources push \
+                         the development run off a {tray}px tray"
+                    );
+                    // Every card still shows enough of itself to be aimed at.
+                    let shown = (run - DEV_LEAD - DEV_W) / (dev.max(2) - 1) as f64;
+                    assert!(
+                        dev == 1 || shown >= DEV_MIN_VISIBLE - 0.001,
+                        "a development card closed up to {shown:.1}px"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Everything fits, over the hands a game actually produces. Past this -
+    /// five or more development cards *and* a very large hand in the narrowest
+    /// tray - no arrangement fits, and the resources are the ones that give,
+    /// by the priority above.
+    #[test]
+    fn a_realistic_hand_fits_the_tray_it_is_given() {
+        for tray in TRAYS {
+            for dev in 0..=4 {
+                for resources in 0..=19 {
+                    let total =
+                        resource_run(tray, resources, dev) + dev_run(dev, resources, usable(tray));
+                    assert!(
+                        total <= usable(tray) + 0.001,
+                        "{resources} resources and {dev} development cards overflow \
+                         a {tray}px tray by {:.1}px",
+                        total - usable(tray)
+                    );
+                }
+            }
+        }
     }
 }
