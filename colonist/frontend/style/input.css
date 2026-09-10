@@ -320,4 +320,230 @@
         color: #fff;
         box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
     }
+
+    /* ------------------------------------------------- end-of-game stats */
+
+    /* The table is still there when the game ends - people want to look at
+       the position they finished in - so this darkens the board rather than
+       covering it, and does not blur it. */
+    .stats-veil {
+        background: rgb(3 22 34 / 0.72);
+        animation: stats-fade 220ms ease-out both;
+    }
+
+    /* The sheet the statistics sit on. Deep navy with a thin cyan rim, the
+       same rim the HUD buttons use, so it reads as part of the game rather
+       than a browser dialog dropped on top of it. */
+    .stats-sheet {
+        background: linear-gradient(180deg, rgb(7 45 68 / 0.94) 0%, rgb(4 30 46 / 0.96) 100%);
+        border: 2px solid rgb(86 198 225 / 0.4);
+        border-radius: 12px;
+        box-shadow:
+            0 14px 40px rgb(0 0 0 / 0.5),
+            inset 0 1px 0 rgb(255 255 255 / 0.1);
+        animation: stats-rise 260ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+
+    @keyframes stats-fade {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes stats-rise {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: none; }
+    }
+
+    /* One tab. Quiet until it is the live one, which gets white text and the
+       cyan rule underneath. The border is always there, transparent when off,
+       so switching tabs does not shift the row by a pixel. */
+    .stats-tab {
+        color: rgb(197 223 236 / 0.62);
+        font-weight: 700;
+        border-bottom: 3px solid transparent;
+        padding: 0.4rem 0.15rem 0.45rem;
+        transition: color 120ms ease, border-color 160ms ease;
+        white-space: nowrap;
+    }
+    .stats-tab:hover {
+        color: #e8f7fd;
+    }
+    .stats-tab-on {
+        color: #fff;
+        font-weight: 900;
+        border-bottom-color: var(--cyan);
+    }
+
+    /* A small caption over a block of figures, in the same voice as the side
+       panels' headings. */
+    .stats-caption {
+        color: rgb(160 200 219 / 0.75);
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+    }
+
+    /* A statistics matrix. One grid holds every cell of every row, which is
+       what keeps the icon, the heading and each player's figure in the same
+       column however long the names are. */
+    .stats-matrix {
+        display: grid;
+        align-items: center;
+        width: 100%;
+    }
+    .stats-cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.3rem 0.2rem;
+        min-width: 0;
+        border-bottom: 1px solid rgb(255 255 255 / 0.09);
+    }
+    .stats-cell-last {
+        border-bottom: 0;
+    }
+    .stats-name-cell {
+        justify-content: flex-start;
+        gap: 0.5rem;
+        padding-left: 0.35rem;
+        padding-right: 0.6rem;
+    }
+    /* The heading strip: no rule under it beyond the one the first row draws,
+       and the artwork sized so eleven of them still fit across. */
+    .stats-head {
+        border-bottom: 2px solid rgb(86 198 225 / 0.3);
+        padding-bottom: 0.4rem;
+    }
+    /* Artwork that is already painted on a plate of its own. */
+    .stats-icon {
+        width: clamp(27px, 2.4vw, 36px);
+        height: clamp(27px, 2.4vw, 36px);
+        object-fit: contain;
+    }
+    /* Artwork we are plating ourselves: smaller by the plate's own padding
+       and rim, so both kinds finish the same size on the page. */
+    .stats-plate .stats-icon {
+        width: clamp(19px, 1.75vw, 26px);
+        height: clamp(19px, 1.75vw, 26px);
+    }
+    .stats-figure {
+        color: #eaf6fb;
+        font-size: clamp(13px, 1.15vw, 16px);
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+    /* The headline figure of a matrix - the score - carries the row. */
+    .stats-figure-lead {
+        color: #fff;
+        font-size: clamp(16px, 1.5vw, 21px);
+        font-weight: 900;
+    }
+    .stats-figure-zero {
+        color: rgb(234 246 251 / 0.28);
+    }
+    /* The plate the statistics artwork is painted on, for the icons that do
+       not come with one of their own. Same teal and same pale rim as the
+       resource marks, so a heading row mixing the two reads as one row. */
+    .stats-plate {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3px;
+        border-radius: 7px;
+        background: #55a4b0;
+        border: 2px solid #c0e9ff;
+    }
+
+    /* The winner's row, picked out in the same gold the board uses for the
+       player on turn. The tint goes on every cell; the edge only on the one
+       that starts the row, or it rules the row into columns. */
+    .stats-row-win {
+        background: rgb(255 183 24 / 0.09);
+    }
+    .stats-row-win-lead {
+        box-shadow: inset 3px 0 0 #ffb718;
+    }
+
+    /* A player's disc, drawn from the end-of-game snapshot rather than the
+       live roster: somebody who walked out still belongs in the final table. */
+    .stats-disc {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 9999px;
+        border: 2px solid rgb(255 255 255 / 0.85);
+        box-shadow: 0 0 0 2px rgb(4 30 46 / 0.8);
+        flex-shrink: 0;
+    }
+
+    /* A control that leaves the screen. Dark and translucent so it sits on
+       the sheet rather than shouting over the figures. */
+    .stats-home {
+        background: rgb(9 52 76 / 0.85);
+        border: 2px solid rgb(86 198 225 / 0.45);
+        border-radius: 10px;
+        color: #eaf6fb;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        transition: background 120ms ease, transform 80ms ease;
+    }
+    .stats-home:hover {
+        background: rgb(16 78 110 / 0.9);
+    }
+    .stats-home:active {
+        transform: translateY(2px);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .stats-veil,
+        .stats-sheet {
+            animation: none;
+        }
+    }
+
+    /* ------------------------------------------------------ stats charts */
+
+    /* The plot area, with a few faint rules across it so a bar can be read
+       against something. Four bands, not a graph-paper grid. */
+    .stats-plot {
+        background-image: repeating-linear-gradient(
+            to top,
+            rgb(255 255 255 / 0.07) 0 1px,
+            transparent 1px 25%
+        );
+        border-bottom: 2px solid rgb(86 198 225 / 0.35);
+    }
+    /* A bar and the figure that rides on it, stacked and pushed to the axis. */
+    .stats-bar-track {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        height: 100%;
+    }
+    /* A bar is a flat colour with a dark edge, like a playing piece - not a
+       gradient. It grows once, on the way in. */
+    .stats-bar {
+        width: 100%;
+        max-width: 64px;
+        min-height: 2px;
+        border: 1px solid rgb(0 0 0 / 0.45);
+        border-bottom: 0;
+        border-radius: 3px 3px 0 0;
+        box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.3);
+        height: var(--bar-height, 0%);
+        animation: stats-bar-grow 460ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+    @keyframes stats-bar-grow {
+        from { height: 0; }
+        to { height: var(--bar-height, 0%); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .stats-bar {
+            animation: none;
+        }
+    }
 }

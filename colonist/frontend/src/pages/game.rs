@@ -2,10 +2,11 @@ use leptos::*;
 use uuid::Uuid;
 use crate::components::board::Board;
 use crate::state::GameState;
-use crate::components::icons::{Art, Icon, IconKind};
+use crate::components::icons::Art;
 use crate::components::bottom::BottomLayer;
 use crate::components::flight::ResourceFlight;
 use crate::components::sidebar::{ChatPanel, EventLog, PlayerPanels, ResourceBank};
+use crate::components::stats::GameEndStats;
 use crate::components::toolbar::LeftToolbar;
 use shared::{ClientRequest, GamePhase};
 
@@ -86,36 +87,9 @@ pub fn GamePage() -> impl IntoView {
                     <div class="animate-pulse w-3 h-3 bg-yellow-400 rounded-full"></div>
                 </div>
             </Show>
-            <Show when=move || state.winner_player_id.get().is_some()>
-                    <div class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-md pointer-events-auto">
-                        <div class="bg-slate-900 border-4 border-yellow-500 rounded-3xl p-10 flex flex-col items-center shadow-[0_0_50px_rgba(234,179,8,0.3)] animate-in fade-in zoom-in duration-300">
-                            <div class="text-6xl mb-4 text-amber-400 flex justify-center"><Icon kind=IconKind::Trophy /></div>
-                            <h2 class="text-5xl font-black text-white mb-2 tracking-tighter">"VICTORY"</h2>
-                            <div class="h-1 w-32 bg-yellow-500 mb-6"></div>
-
-                            <p class="text-2xl text-slate-300 mb-8 text-center">
-                                {move || {
-                                    let winner_id = state.winner_player_id.get().unwrap_or_default();
-                                    state.players.get().iter()
-                                        .find(|p| p.player_id == winner_id)
-                                        .map(|p| p.name.clone())
-                                        .unwrap_or_else(|| "Unknown Explorer".to_string())
-                                }}
-                                <span class="block text-yellow-500 font-bold mt-2">"has colonized the island!"</span>
-                            </p>
-
-                            <button
-                                class="bg-yellow-600 hover:bg-yellow-500 text-white px-10 py-4 rounded-xl font-black transition-all shadow-lg active:scale-95"
-                                on:click=|_| {
-                                    // Logic to return to lobby or refresh
-                                    let _ = window().location().set_href("/");
-                                }
-                            >
-                                "RETURN TO LOBBY"
-                            </button>
-                        </div>
-                    </div>
-                </Show>
+            // The end of the game: the board stays where it is, darkened,
+            // with the statistics on a sheet over it.
+            <GameEndStats />
             </div> // Close pointer-events wrapper
         </div>
     }

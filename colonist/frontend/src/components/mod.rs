@@ -5,4 +5,5 @@ pub(crate) mod log;
 pub(crate) mod icons;
 pub(crate) mod offer_status;
 pub(crate) mod sidebar;
+pub(crate) mod stats;
 pub(crate) mod toolbar;
