@@ -1,5 +1,6 @@
 use crate::game::entities::bonus_points::BonusCard;
 use crate::game::entities::pending_trade::PendingTrade;
+use crate::game::entities::statistics::Statistics;
 use crate::game::entities::turn_manager::TurnManager;
 use serde::{Deserialize, Serialize};
 use shared::{GamePhase, InitialRound, PendingAction, PlacementStep};
@@ -45,6 +46,12 @@ pub struct GameInstance {
     /// clock never re-armed and fired its deadline again every single tick.
     #[serde(default)]
     clock_turn_seq: Option<u64>,
+
+    /// The running tally behind the end-of-game screen. Counters only - see
+    /// `statistics`. Defaulted so games saved before it existed still load,
+    /// and simply report an empty table.
+    #[serde(default)]
+    pub stats: Statistics,
 }
 
 /// What the turn clock wants done, once a deadline has passed.
@@ -110,6 +117,7 @@ impl GameInstance {
             clock_player: None,
             clock_started_secs: 0,
             clock_turn_seq: None,
+            stats: Statistics::default(),
         }
     }
 
@@ -163,6 +171,8 @@ impl GameInstance {
             round: InitialRound::First,
             step: PlacementStep::BuildSettlement,
         };
+        // The clock measures play, not how long people took to sit down.
+        self.stats.start(now_secs());
     }
 
 
@@ -549,6 +559,115 @@ impl GameInstance {
         self.pending_actions
             .get(&pid)
             .map_or(false, |actions| actions.contains(&action))
+    }
+
+    /// What a roll of `total` would have paid out, had the robber not been
+    /// standing on the tile. One entry per player who lost cards to it.
+    ///
+    /// Worked out here rather than inside the bank: the bank's payout loop
+    /// skips the robbed hex before it knows who was standing next to it, and
+    /// threading a second return value through it to serve a counter would put
+    /// bookkeeping in the middle of the rules.
+    pub(crate) fn robber_blocked_payout(&self, total: u8) -> Vec<(Uuid, u32)> {
+        // A seven pays nobody, so it blocks nothing either.
+        if total == 7 {
+            return Vec::new();
+        }
+
+        let board = &self.turn_manager.board;
+        let Some(hex) = board.hexes.get(&self.turn_manager.get_robber_pos()) else {
+            return Vec::new();
+        };
+        if hex.number != total || hex.resource == shared::ResourceType::Desert {
+            return Vec::new();
+        }
+
+        let mut blocked: Vec<(Uuid, u32)> = Vec::new();
+        for coord in &hex.adjacent_vertices {
+            let Some(vertex) = board.vertices.get(coord) else { continue };
+            let (Some(building), Some(owner)) = (&vertex.building, vertex.owner) else { continue };
+
+            let amount = building.production();
+            match blocked.iter_mut().find(|(id, _)| *id == owner) {
+                Some((_, running)) => *running += amount,
+                None => blocked.push((owner, amount)),
+            }
+        }
+
+        blocked
+    }
+
+    /// The finished tally, ready to send. Combines the counters kept as the
+    /// game ran with what can simply be read off the final position - the
+    /// points breakdown, the pieces on the board - so nothing that the board
+    /// already knows is tracked twice and risks drifting from it.
+    pub fn stats_snapshot(&self) -> shared::GameStats {
+        use crate::game::entities::building::VertexBuilding;
+
+        let turn_manager = &self.turn_manager;
+        let road_holder = turn_manager.road_bonus.holder();
+        let army_holder = turn_manager.army_bonus.holder();
+        let road_points = turn_manager.road_bonus.points();
+        let army_points = turn_manager.army_bonus.points();
+
+        let players = (0..turn_manager.players.len())
+            .filter_map(|index| turn_manager.players.get_by_index(index))
+            .map(|player| {
+                let mut settlements = 0u8;
+                let mut cities = 0u8;
+                for vertex in turn_manager.board.vertices.values() {
+                    if vertex.owner != Some(player.id) {
+                        continue;
+                    }
+                    match vertex.building {
+                        Some(VertexBuilding::Settlement) => settlements += 1,
+                        // A city is worth two: the point the settlement it
+                        // replaced already carried, and the one the upgrade
+                        // added.
+                        Some(VertexBuilding::City) => cities += 2,
+                        None => {}
+                    }
+                }
+
+                let points = shared::PointBreakdown {
+                    settlements,
+                    cities,
+                    dev_cards: player.get_secret_victory_points(),
+                    longest_road: if road_holder == Some(player.id) { road_points } else { 0 },
+                    largest_army: if army_holder == Some(player.id) { army_points } else { 0 },
+                };
+
+                let tally = self.stats.player(player.id);
+
+                shared::PlayerStats {
+                    player_id: player.id,
+                    name: player.name.clone(),
+                    colour: player.colour,
+                    victory_points: player.get_total_victory_points(),
+                    points,
+                    dice_rolls: tally.rolls,
+                    resources: tally.resources,
+                    dev_cards_bought: tally.dev_cards_bought,
+                    dev_cards_played: tally.dev_cards_played,
+                    activity: tally.activity,
+                    settlements_built: tally.settlements_built,
+                    cities_built: tally.cities_built,
+                    roads_built: tally.roads_built,
+                    knights_played: player.knight_played as u32,
+                    longest_road_length: player.longest_road as u32,
+                }
+            })
+            .collect();
+
+        shared::GameStats {
+            duration_secs: self.stats.duration_secs(now_secs()),
+            turns: turn_manager.turn_seq(),
+            winner: turn_manager.winner(),
+            victory_points_to_win: turn_manager.rules().victory_points_to_win,
+            dice_rolls: self.stats.table_rolls(),
+            resource_draws: self.stats.resource_draws(),
+            players,
+        }
     }
 }
 
@@ -1178,6 +1297,391 @@ mod tests {
             "the incoming player must be able to roll"
         );
         assert!(game.turn_manager.players.get(ids[0]).is_none());
+    }
+
+    // ------------------------------------------------------- statistics
+
+    /// Puts cards in a hand the way the game itself would: the resources and
+    /// the counter that records them move together. That is what lets the
+    /// following tests start from a balanced position and check that every
+    /// handler keeps it balanced.
+    fn grant(
+        game: &mut GameInstance,
+        pid: Uuid,
+        res: crate::game::entities::resources::ResourceType,
+        n: u32,
+    ) {
+        game.turn_manager
+            .players
+            .get_mut(pid)
+            .unwrap()
+            .resources
+            .add(res, n);
+        game.stats
+            .gained(pid, crate::game::entities::statistics::Gain::Setup, n);
+    }
+
+    /// The invariant the whole resource page rests on: what came in, less what
+    /// went out, is what is still in the hand. A hook that forgets to count a
+    /// movement - or counts it twice - breaks this and nothing else.
+    fn assert_books_balance(game: &GameInstance, ids: &[Uuid]) {
+        for id in ids {
+            let Some(player) = game.turn_manager.players.get(*id) else { continue };
+            let held = player.resources.get_cards_total() as i64;
+            let scored = game.stats.player(*id).resources.score();
+            assert_eq!(
+                scored, held,
+                "player {id}: the tally says {scored} cards, the hand holds {held}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_statistics_follow_every_card_that_moves() {
+        use crate::game::entities::resources::ResourceType;
+
+        let (mut game, ids) = seated_game(3);
+        let (a, b) = (ids[0], ids[1]);
+
+        grant(&mut game, a, ResourceType::Wood, 4);
+        grant(&mut game, a, ResourceType::Sheep, 1);
+        grant(&mut game, a, ResourceType::Wheat, 1);
+        grant(&mut game, a, ResourceType::Ore, 1);
+        grant(&mut game, a, ResourceType::Brick, 1);
+        grant(&mut game, b, ResourceType::Ore, 3);
+        assert_books_balance(&game, &ids);
+
+        // Four wood over the counter for one brick.
+        game.handle_bank_trade(a, shared::ResourceType::Wood, shared::ResourceType::Brick)
+            .expect("a 4:1 trade the player can cover");
+        let flow = game.stats.player(a).resources;
+        assert_eq!(flow.lost_by_trading, 4, "the whole stack left the hand, not one card");
+        assert_eq!(flow.gained_by_trading, 1);
+        assert_eq!(game.stats.player(a).activity.trades_completed, 1);
+        assert_books_balance(&game, &ids);
+
+        // A development card: three cards to the bank, one card back.
+        game.handle_buy_dev_card(a).expect("sheep, wheat and ore are in hand");
+        let tally = game.stats.player(a);
+        assert_eq!(tally.dev_cards_bought.total(), 1);
+        assert_eq!(tally.activity.dev_cards_bought, 1);
+        assert_eq!(tally.resources.spent, 3, "a development card is paid for, not traded");
+        assert_books_balance(&game, &ids);
+
+        // A seven, and a card handed back.
+        game.add_pending_action(a, PendingAction::Discard);
+        game.handle_discard_cards(a, shared::Resources { brick: 1, ..Default::default() })
+            .expect("the brick is in hand");
+        assert_eq!(game.stats.player(a).resources.lost_by_seven, 1);
+        assert_books_balance(&game, &ids);
+
+        // Monopoly: every ore at the table changes hands at once.
+        game.add_pending_action(a, PendingAction::Monopoly);
+        game.handle_monopoly_choice(a, shared::ResourceType::Ore)
+            .expect("the call is pending");
+        assert_eq!(game.stats.player(a).resources.gained_by_dev_cards, 3);
+        assert_eq!(
+            game.stats.player(b).resources.lost_by_dev_cards,
+            3,
+            "the victim's loss is counted, not just the caller's gain"
+        );
+        assert_books_balance(&game, &ids);
+    }
+
+    /// Initial placement, played out on a real board through the same
+    /// handlers the clients call. The starting hand is the only source of
+    /// cards at that point, so what the bank dealt and what the players hold
+    /// have to be the same figure - which is exactly what would break if the
+    /// setup payout were counted in one place and not the other.
+    #[test]
+    fn setup_on_a_real_board_agrees_with_what_the_bank_dealt() {
+        let pid = Uuid::from_u128(1);
+        let mut game =
+            GameInstance::new("t".into(), pid, 2, "Solo", shared::PlayerColour::Blue);
+        game.start_game();
+
+        // Round one: a settlement and a road touching it. Nothing is paid out.
+        let first = free_vertex(&game, None);
+        game.handle_build_settlement(pid, first.0, first.1).unwrap();
+        let road = *game
+            .turn_manager
+            .board
+            .vertices
+            .get(&first)
+            .unwrap()
+            .adjacent_edges
+            .iter()
+            .next()
+            .unwrap();
+        game.handle_build_road(pid, road.0, road.1).unwrap();
+
+        assert_eq!(
+            game.stats.resource_draws(),
+            [0; 5],
+            "the first round pays nothing"
+        );
+
+        // Round two: the settlement pays a starting hand off its tiles.
+        game.advance_phase();
+        let second = free_vertex(&game, Some(first));
+        game.handle_build_settlement(pid, second.0, second.1).unwrap();
+        let road = *game
+            .turn_manager
+            .board
+            .vertices
+            .get(&second)
+            .unwrap()
+            .adjacent_edges
+            .iter()
+            .next()
+            .unwrap();
+        game.handle_build_road(pid, road.0, road.1).unwrap();
+
+        let dealt: u32 = game.stats.resource_draws().iter().sum();
+        let held = game
+            .turn_manager
+            .players
+            .get(pid)
+            .unwrap()
+            .resources
+            .get_cards_total();
+
+        assert!(dealt > 0, "a second settlement touches at least one producing tile");
+        assert_eq!(dealt, held, "every card dealt should be in the hand");
+        assert_books_balance(&game, &[pid]);
+
+        let tally = game.stats.player(pid);
+        assert_eq!(tally.settlements_built, 2);
+        assert_eq!(tally.roads_built, 2);
+        assert_eq!(
+            tally.resources.spent, 0,
+            "setup placements are free, so nothing was spent"
+        );
+
+        // And the snapshot reports it all without inventing anything.
+        let snapshot = game.stats_snapshot();
+        assert_eq!(snapshot.resource_draws.iter().sum::<u32>(), dealt);
+        assert_eq!(snapshot.players.len(), 1);
+        assert_eq!(snapshot.players[0].settlements_built, 2);
+    }
+
+    /// Only the bank deals cards. A trade between two players moves cards
+    /// that were drawn once already, and counting them again would make the
+    /// island look twice as productive as it was.
+    #[test]
+    fn only_cards_off_the_bank_count_as_drawn() {
+        use crate::game::entities::resources::ResourceType;
+
+        let (mut game, ids) = seated_game(3);
+        let (a, b) = (ids[0], ids[1]);
+
+        grant(&mut game, a, ResourceType::Wood, 4);
+        grant(&mut game, b, ResourceType::Brick, 1);
+        assert_eq!(
+            game.stats.resource_draws(),
+            [0; 5],
+            "seeding a hand directly is not a draw"
+        );
+
+        // Over the counter: four wood back to the bank, one brick out of it.
+        game.handle_bank_trade(a, shared::ResourceType::Wood, shared::ResourceType::Brick)
+            .expect("a 4:1 trade");
+        assert_eq!(game.stats.draws_of_for_test(shared::ResourceType::Brick), 1);
+        assert_eq!(
+            game.stats.draws_of_for_test(shared::ResourceType::Wood),
+            0,
+            "cards handed back are not drawn"
+        );
+
+        // Year of Plenty takes two more straight off the bank.
+        game.add_pending_action(a, PendingAction::YearOfPlenty);
+        game.handle_year_of_plenty_choice(a, shared::ResourceType::Ore, shared::ResourceType::Ore)
+            .expect("the call is pending");
+        assert_eq!(game.stats.draws_of_for_test(shared::ResourceType::Ore), 2);
+
+        // A player-to-player trade moves cards that already exist.
+        let before = game.stats.resource_draws();
+        let offer = shared::Resources { brick: 1, ..Default::default() };
+        let want = shared::Resources { lumber: 1, ..Default::default() };
+        let offer_id = match game.handle_trade_offer(a, None, offer, want, 0, 0).unwrap() {
+            shared::ServerMessage::TradeProposed { offer_id, .. } => offer_id,
+            other => panic!("{other:?}"),
+        };
+        grant(&mut game, b, ResourceType::Wood, 1);
+        game.handle_trade_response(b, offer_id, true).unwrap();
+        game.handle_confirm_trade(a, offer_id, b).unwrap();
+
+        assert_eq!(
+            game.stats.resource_draws(),
+            before,
+            "a trade between players draws nothing"
+        );
+    }
+
+    /// A steal is one card off one player and onto another. Both halves have
+    /// to be counted, or the table's books stop adding up.
+    #[test]
+    fn a_steal_is_counted_on_both_sides() {
+        use crate::game::entities::building::VertexBuilding;
+        use crate::game::entities::resources::ResourceType;
+
+        let (mut game, ids) = seated_game(3);
+        let (thief, victim) = (ids[0], ids[1]);
+
+        grant(&mut game, victim, ResourceType::Wood, 3);
+
+        let robber_hex = game.turn_manager.get_robber_pos();
+        let corner = crate::game::entities::board::Board::get_adjacent_hexes(robber_hex)[0];
+        game.turn_manager
+            .board
+            .build_vertex(victim, corner, VertexBuilding::Settlement);
+
+        game.add_pending_action(thief, PendingAction::Steal);
+        game.handle_steal_from_player(thief, victim).expect("a legal steal");
+
+        assert_eq!(game.stats.player(thief).resources.gained_by_robbing, 1);
+        assert_eq!(game.stats.player(victim).resources.lost_by_robber, 1);
+        assert_books_balance(&game, &ids);
+    }
+
+    /// Robbing somebody with nothing takes nothing, so it must count nothing.
+    #[test]
+    fn robbing_an_empty_hand_counts_nothing() {
+        use crate::game::entities::building::VertexBuilding;
+
+        let (mut game, ids) = seated_game(3);
+        let (thief, victim) = (ids[0], ids[1]);
+
+        let robber_hex = game.turn_manager.get_robber_pos();
+        let corner = crate::game::entities::board::Board::get_adjacent_hexes(robber_hex)[0];
+        game.turn_manager
+            .board
+            .build_vertex(victim, corner, VertexBuilding::Settlement);
+
+        game.add_pending_action(thief, PendingAction::Steal);
+        game.handle_steal_from_player(thief, victim).expect("a legal attempt");
+
+        assert_eq!(game.stats.player(thief).resources.gained_by_robbing, 0);
+        assert_eq!(game.stats.player(victim).resources.lost_by_robber, 0);
+    }
+
+    /// A trade is a gain and a loss at once, for both players.
+    #[test]
+    fn a_settled_trade_is_counted_in_both_directions() {
+        use crate::game::entities::resources::ResourceType;
+
+        let (mut game, ids) = seated_game(3);
+        let (giver, taker) = (ids[0], ids[1]);
+
+        grant(&mut game, giver, ResourceType::Brick, 2);
+        grant(&mut game, taker, ResourceType::Wood, 1);
+
+        let offer = shared::Resources { brick: 2, ..Default::default() };
+        let want = shared::Resources { lumber: 1, ..Default::default() };
+        let offer_id = match game.handle_trade_offer(giver, None, offer, want, 0, 0).unwrap() {
+            shared::ServerMessage::TradeProposed { offer_id, .. } => offer_id,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(game.stats.player(giver).activity.trades_proposed, 1);
+
+        game.handle_trade_response(taker, offer_id, true).unwrap();
+        game.handle_confirm_trade(giver, offer_id, taker).unwrap();
+
+        let giver_flow = game.stats.player(giver).resources;
+        let taker_flow = game.stats.player(taker).resources;
+        assert_eq!((giver_flow.lost_by_trading, giver_flow.gained_by_trading), (2, 1));
+        assert_eq!((taker_flow.lost_by_trading, taker_flow.gained_by_trading), (1, 2));
+        assert_books_balance(&game, &ids);
+    }
+
+    /// The points breakdown is read off the final position, so it has to add
+    /// up to the score the game itself is using to decide who won.
+    #[test]
+    fn the_points_breakdown_adds_up_to_the_score() {
+        use crate::game::entities::building::VertexBuilding;
+
+        let (mut game, ids) = seated_game(3);
+        let player = ids[0];
+
+        // Two settlements, one of them upgraded, and a hidden point.
+        let mut spots: Vec<(i32, i32)> = game
+            .turn_manager
+            .board
+            .vertices
+            .keys()
+            .copied()
+            .collect();
+        spots.sort();
+        game.turn_manager.board.build_vertex(player, spots[0], VertexBuilding::Settlement);
+        game.turn_manager.players.get_mut(player).unwrap().use_settlement().unwrap();
+        game.turn_manager.board.build_vertex(player, spots[9], VertexBuilding::City);
+        game.turn_manager.players.get_mut(player).unwrap().use_settlement().unwrap();
+        game.turn_manager.players.get_mut(player).unwrap().use_city().unwrap();
+        game.turn_manager.players.get_mut(player).unwrap().add_secret_victory_point();
+
+        let stats = game.stats_snapshot();
+        let them = stats.player(player).expect("in the table");
+
+        assert_eq!(them.points.settlements, 1);
+        assert_eq!(them.points.cities, 2, "a city carries the settlement's point as well");
+        assert_eq!(them.points.dev_cards, 1);
+        assert_eq!(
+            them.points.total(),
+            them.victory_points,
+            "the breakdown must account for every point the game is counting"
+        );
+    }
+
+    /// Everybody at the table appears, in seat order, whether or not they ever
+    /// did anything worth counting.
+    #[test]
+    fn the_snapshot_lists_every_seat_in_order() {
+        for count in 2..=6usize {
+            let (game, ids) = seated_game(count);
+            let stats = game.stats_snapshot();
+
+            assert_eq!(stats.players.len(), count, "a table of {count}");
+            let listed: Vec<Uuid> = stats.players.iter().map(|p| p.player_id).collect();
+            assert_eq!(listed, ids, "seat order must be the same on every page");
+
+            for player in &stats.players {
+                assert!(!player.name.is_empty(), "a player without a name cannot be labelled");
+                assert_eq!(player.resources.gained_total, 0);
+            }
+            assert_eq!(stats.victory_points_to_win, game.rules().victory_points_to_win);
+        }
+    }
+
+    /// The robber is worth counting for what it stops, not just what it takes.
+    #[test]
+    fn the_robber_blocking_a_tile_is_counted() {
+        use crate::game::entities::building::VertexBuilding;
+
+        let (mut game, ids) = seated_game(3);
+        let owner = ids[1];
+
+        // Find a producing tile, park the robber on it, and put a city on one
+        // of its corners.
+        let (coord, number) = game
+            .turn_manager
+            .board
+            .hexes
+            .values()
+            .find(|hex| hex.resource != shared::ResourceType::Desert)
+            .map(|hex| (hex.coord, hex.number))
+            .expect("every board has producing tiles");
+
+        let corner = game.turn_manager.board.hexes.get(&coord).unwrap().adjacent_vertices[0];
+        game.turn_manager.board.build_vertex(owner, corner, VertexBuilding::City);
+        game.turn_manager.move_robber(coord).unwrap();
+
+        let blocked = game.robber_blocked_payout(number);
+        assert_eq!(blocked, vec![(owner, 2)], "a city loses two cards, not one");
+
+        assert!(
+            game.robber_blocked_payout(7).is_empty(),
+            "a seven pays nobody, so it blocks nobody"
+        );
     }
 
     /// Regression: the clock re-armed by comparing whose turn it was. With one

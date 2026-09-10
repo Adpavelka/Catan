@@ -1,5 +1,7 @@
+use crate::game::entities::development_card::DevelopmentCard;
 use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::game_instance::GameInstance;
+use crate::game::entities::statistics::{Gain, Loss};
 use shared::ResourceType::{Brick, Ore, Sheep, Wheat, Wood};
 use shared::{PendingAction, ServerMessage};
 use uuid::Uuid;
@@ -28,6 +30,7 @@ impl GameInstance {
                     self.remove_pending_action(pid, PendingAction::Discard);
 
                     let count = resources.brick + resources.lumber + resources.wool + resources.grain + resources.ore;
+                    self.stats.lost(pid, Loss::Seven, count as u32);
 
                     Ok(ServerMessage::CardsDiscarded {
                         player_id: pid,
@@ -53,9 +56,15 @@ impl GameInstance {
         }
 
         // The card itself is private; only the buyer is told which one it was.
-        self.turn_manager.buy_dev_card(pid)
-            .map(|_| ServerMessage::DevCardBought { player_id: pid })
-            .map_err(|e| e.to_string())
+        let card = self.turn_manager.buy_dev_card(pid).map_err(|e| e.to_string())?;
+
+        // The kind is recorded here, where it is already in hand. It is not
+        // sent anywhere until the game is over, by which point every card is
+        // face up anyway.
+        self.stats.dev_card_bought(pid, &card);
+        self.stats.lost(pid, Loss::Spending, DevelopmentCard::cost().get_cards_total());
+
+        Ok(ServerMessage::DevCardBought { player_id: pid })
     }
 
     pub fn handle_play_dev_card(&mut self, pid: Uuid, card: shared::DevCardType, target: Option<shared::DevCardTarget>) -> Result<ServerMessage, String> {
@@ -69,6 +78,8 @@ impl GameInstance {
 
         self.turn_manager.play_development_card(card.clone(), target)
             .map(|_| {
+                self.stats.dev_card_played(pid, &card);
+
                 match card {
                     shared::DevCardType::Knight => {
                         self.add_pending_action(pid, PendingAction::MoveRobber);
@@ -166,6 +177,12 @@ impl GameInstance {
 
         self.remove_pending_action(pid, PendingAction::Steal);
 
+        // A victim with an empty hand loses nothing, so nothing is counted.
+        if resource.is_some() {
+            self.stats.gained(pid, Gain::Robbery, 1);
+            self.stats.lost(victim_id, Loss::Robber, 1);
+        }
+
         Ok(ServerMessage::PlayerRobbed {
             thief_id: pid,
             victim_id,
@@ -194,6 +211,10 @@ impl GameInstance {
             .map_err(|e| e.to_string())?;
 
         self.remove_pending_action(pid, PendingAction::YearOfPlenty);
+        self.stats.gained(pid, Gain::DevCard, 2);
+        // Both cards come off the bank, so both are draws.
+        self.stats.drew(resource1, 1);
+        self.stats.drew(resource2, 1);
 
         Ok(ServerMessage::YearOfPlentyResourcesReceived {
             player_id: pid,
@@ -211,6 +232,14 @@ impl GameInstance {
             return Err("You don't have a pending Monopoly".to_string());
         }
 
+        // Who is about to lose what. The bank reports only the grand total,
+        // and afterwards the victims' hands no longer say what was taken.
+        let losses: Vec<(Uuid, u32)> = (0..self.turn_manager.players.len())
+            .filter_map(|index| self.turn_manager.players.get_by_index(index))
+            .filter(|player| player.id != pid)
+            .map(|player| (player.id, player.resources.amount_of(resource)))
+            .collect();
+
         let tm = &mut self.turn_manager;
 
         let total_stolen = tm.bank
@@ -218,6 +247,11 @@ impl GameInstance {
             .map_err(|e| e.to_string())?;
 
         self.remove_pending_action(pid, PendingAction::Monopoly);
+
+        self.stats.gained(pid, Gain::DevCard, total_stolen);
+        for (victim, amount) in losses {
+            self.stats.lost(victim, Loss::DevCard, amount);
+        }
 
         Ok(ServerMessage::MonopolyResourcesStolen {
             player_id: pid,

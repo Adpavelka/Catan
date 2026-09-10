@@ -8,6 +8,7 @@ pub mod player;
 pub mod players;
 pub mod robber;
 pub mod resources;
+pub mod statistics;
 pub mod turn_manager;
 pub mod game_instance;
 pub mod pending_trade;

@@ -1,6 +1,7 @@
 use uuid::Uuid;
 use shared::{GamePhase, PendingAction, ServerMessage};
 use crate::game::entities::game_instance::GameInstance;
+use crate::game::entities::statistics::Gain;
 
 impl GameInstance
 {
@@ -13,33 +14,47 @@ impl GameInstance
             return Err("You cannot roll right now.".to_string());
         }
 
-        self.turn_manager.roll_dice()
-            .map(|((d1, d2), _)| {
-                let roll = d1 + d2;
-                let mut discards_count = 0;
+        let ((d1, d2), distributed) = self
+            .turn_manager
+            .roll_dice()
+            .map_err(|e| e.to_string())?;
 
-                if roll == 7 {
-                    self.add_pending_action(pid, PendingAction::MoveRobber);
+        let roll = d1 + d2;
 
-                    for idx in 0..self.turn_manager.players.len() {
-                        let Some(player) = self.turn_manager.players.get_by_index(idx) else { continue };
-                        let total = player.resources.get_cards_total();
+        // Counters, once the roll has actually happened. The payout is the
+        // bank's own record of what it handed out, so the tally cannot claim
+        // cards a depleted bank never paid.
+        self.stats.record_roll(pid, roll);
+        for (player_id, resource, amount) in &distributed {
+            self.stats.gained(*player_id, Gain::Roll, *amount);
+            self.stats.drew(*resource, *amount);
+        }
+        for (player_id, amount) in self.robber_blocked_payout(roll) {
+            self.stats.blocked_by_robber(player_id, amount);
+        }
 
-                        if total > 7 {
-                            self.add_pending_action(player.id, PendingAction::Discard);
-                            discards_count += 1;
-                        }
-                    }
+        let mut discards_count = 0;
+
+        if roll == 7 {
+            self.add_pending_action(pid, PendingAction::MoveRobber);
+
+            for idx in 0..self.turn_manager.players.len() {
+                let Some(player) = self.turn_manager.players.get_by_index(idx) else { continue };
+                let total = player.resources.get_cards_total();
+
+                if total > 7 {
+                    self.add_pending_action(player.id, PendingAction::Discard);
+                    discards_count += 1;
                 }
+            }
+        }
 
-                ServerMessage::DiceRolled {
-                    player_id: pid,
-                    dice_1: d1,
-                    dice_2: d2,
-                    discards_pending: discards_count,
-                }
-            })
-            .map_err(|e| e.to_string())
+        Ok(ServerMessage::DiceRolled {
+            player_id: pid,
+            dice_1: d1,
+            dice_2: d2,
+            discards_pending: discards_count,
+        })
     }
 
 

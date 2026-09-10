@@ -1,4 +1,6 @@
+use crate::game::entities::building::{EdgeBuilding, VertexBuilding};
 use crate::game::entities::game_instance::GameInstance;
+use crate::game::entities::statistics::{Gain, Loss};
 
 use shared::{ServerMessage, StructureType};
 use uuid::Uuid;
@@ -23,13 +25,22 @@ impl GameInstance
 
         self.advance_after_settlement(x, y);
 
+        self.stats.settlement_built(pid);
+        if !is_initial {
+            self.stats.lost(pid, Loss::Spending, VertexBuilding::Settlement.cost().get_cards_total());
+        }
+
         if give_resources {
-            self.turn_manager.bank.give_initial_settlement_resources(
+            let starting_hand = self.turn_manager.bank.give_initial_settlement_resources(
                 &self.turn_manager.board,
                 pid,
                 (x, y),
                 &mut self.turn_manager.players,
             );
+            self.stats.gained(pid, Gain::Setup, starting_hand.get_cards_total());
+            for kind in shared::ResourceType::CARDS {
+                self.stats.drew(kind, starting_hand.amount_of(kind));
+            }
         }
 
         Ok(ServerMessage::Built {
@@ -50,14 +61,16 @@ impl GameInstance
         }
 
         self.turn_manager.build_city(pid, (x, y))
-            .map(|_| {
-                ServerMessage::Built {
-                    player_id: pid,
-                    structure_type: StructureType::City,
-                    coords: (x, y),
-                }
-            })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+
+        self.stats.city_built(pid);
+        self.stats.lost(pid, Loss::Spending, VertexBuilding::City.cost().get_cards_total());
+
+        Ok(ServerMessage::Built {
+            player_id: pid,
+            structure_type: StructureType::City,
+            coords: (x, y),
+        })
     }
 
 
@@ -73,6 +86,13 @@ impl GameInstance
             .map_err(|e| e.to_string())?;
 
         self.advance_after_road();
+
+        self.stats.road_built(pid);
+        // `free` covers both a setup placement and a Road Building card;
+        // neither costs anything, so neither is spending.
+        if !free {
+            self.stats.lost(pid, Loss::Spending, EdgeBuilding::Road.cost().get_cards_total());
+        }
 
         if free {
             self.decrement_road_building(pid);

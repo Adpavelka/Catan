@@ -153,7 +153,12 @@ impl Bank {
     }
 
 
-    pub fn give_initial_settlement_resources(&mut self, board: &Board, player_id: Uuid, settlement_pos: Coordinates, players: &mut Players,) {
+    /// Pays the starting hand for a second-round settlement. Returns what
+    /// actually changed hands, which is not always one card per neighbouring
+    /// tile: the desert pays nothing, and a bank that has run dry pays
+    /// nothing. Callers need the cards themselves, not just how many, to
+    /// record what was drawn.
+    pub fn give_initial_settlement_resources(&mut self, board: &Board, player_id: Uuid, settlement_pos: Coordinates, players: &mut Players,) -> ResourceSet {
         use log::info;
 
         info!(
@@ -161,7 +166,7 @@ impl Bank {
             player_id, settlement_pos
         );
 
-        let mut resources_given = 0;
+        let mut resources_given = ResourceSet::new();
 
         for hex in board.hexes.values() {
             if !hex.adjacent_vertices.contains(&settlement_pos) {
@@ -183,7 +188,7 @@ impl Bank {
                 players,
             ) {
                 Ok(_) => {
-                    resources_given += 1;
+                    resources_given.add(hex.resource, 1);
                     info!("  - Gave 1 {:?} from hex {:?}", hex.resource, hex.coord);
                 }
                 Err(_) => {
@@ -197,8 +202,11 @@ impl Bank {
 
         info!(
             "Player {} received {} resources total from second settlement",
-            player_id, resources_given
+            player_id,
+            resources_given.get_cards_total()
         );
+
+        resources_given
     }
 
 

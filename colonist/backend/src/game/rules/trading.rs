@@ -4,6 +4,7 @@ use shared::ResourceType::{Brick, Ore, Sheep, Wheat, Wood};
 use std::collections::HashSet;
 use crate::game::entities::pending_trade::PendingTrade;
 use crate::game::entities::game_instance::GameInstance;
+use crate::game::entities::statistics::{Gain, Loss};
 
 
 fn is_empty(res: &shared::Resources) -> bool {
@@ -42,35 +43,53 @@ impl GameInstance {
             }
         }
 
-        let tm = &mut self.turn_manager;
-        let player = tm
-            .players
-            .get(pid)
-            .ok_or("Player not found")?;
+        // The best rate this player can get, found by trying the harbour
+        // ratios in order. Kept rather than discarded: the statistics have to
+        // know how many cards actually left the hand, and 2:1 and 4:1 are the
+        // same trade from the outside.
+        let ratio = {
+            let tm = &mut self.turn_manager;
+            let player = tm
+                .players
+                .get(pid)
+                .ok_or("Player not found")?;
 
-        let possible_ratios = [2, 3, 4];
+            let terms = [2u32, 3, 4].into_iter().find_map(|ratio| {
+                let mut gives = crate::game::entities::resources::ResourceSet::new();
+                gives.add(give, ratio);
 
-        for ratio in possible_ratios {
-            let mut gives = crate::game::entities::resources::ResourceSet::new();
-            gives.add(give, ratio);
+                let mut takes = crate::game::entities::resources::ResourceSet::new();
+                takes.add(receive, 1);
 
-            let mut takes = crate::game::entities::resources::ResourceSet::new();
-            takes.add(receive, 1);
-
-            if tm.bank.validate_bank_trade(player, &gives, &takes).is_ok() {
                 tm.bank
-                    .trade_with_bank(pid, gives, takes, &mut tm.players, true)
-                    .map_err(|e| e.to_string())?;
+                    .validate_bank_trade(player, &gives, &takes)
+                    .is_ok()
+                    .then_some((ratio, gives, takes))
+            });
 
-                return Ok(ServerMessage::BankTradeCompleted {
-                    player_id: pid,
-                    gave: give,
-                    received: receive,
-                });
-            }
-        }
+            let Some((ratio, gives, takes)) = terms else {
+                return Err("Invalid bank trade".to_string());
+            };
 
-        Err("Invalid bank trade".to_string())
+            tm.bank
+                .trade_with_bank(pid, gives, takes, &mut tm.players, true)
+                .map_err(|e| e.to_string())?;
+
+            ratio
+        };
+
+        self.stats.lost(pid, Loss::Trade, ratio);
+        self.stats.gained(pid, Gain::Trade, 1);
+        self.stats.trade_completed(pid);
+        // The card taken over the counter comes off the bank, so it is drawn.
+        // The cards handed over go back into the pile and are not.
+        self.stats.drew(receive, 1);
+
+        Ok(ServerMessage::BankTradeCompleted {
+            player_id: pid,
+            gave: give,
+            received: receive,
+        })
     }
 
 
@@ -162,6 +181,7 @@ impl GameInstance {
         };
 
         self.pending_trades.insert(offer_id, pending_trade);
+        self.stats.trade_proposed(pid);
 
         Ok(ServerMessage::TradeProposed {
             offer_id,
@@ -250,6 +270,9 @@ impl GameInstance {
             created_at_secs: crate::game::entities::game_instance::now_secs(),
             counters: Some(offer_id),
         });
+
+        // A counter is terms put to the table, so it counts as an offer made.
+        self.stats.trade_proposed(pid);
 
         Ok(ServerMessage::TradeProposed {
             offer_id: counter_id,
@@ -459,6 +482,20 @@ impl GameInstance {
         tm.bank
             .collect_from_player_to_player(taker, giver, &partner_gives, &mut tm.players)
             .map_err(|e| e.to_string())?;
+
+        // What each side handed over. Both directions are counted for both
+        // players: a trade is a gain and a loss at once, and a page that only
+        // tallied one of them would make every trader look richer than they
+        // finished.
+        let given = proposer_gives.get_cards_total();
+        let taken = partner_gives.get_cards_total();
+
+        self.stats.lost(giver, Loss::Trade, given);
+        self.stats.gained(giver, Gain::Trade, taken);
+        self.stats.lost(taker, Loss::Trade, taken);
+        self.stats.gained(taker, Gain::Trade, given);
+        self.stats.trade_completed(giver);
+        self.stats.trade_completed(taker);
 
         // Settling ends the whole negotiation, including any counters that
         // were answering the same offer.

@@ -177,13 +177,21 @@ impl Lobby {
     }
 
     fn handle_victory_if_needed(&mut self, gid: &str) {
-        let Some(game) = self.games.get(gid) else { return };
-        let Some(winner) = game.turn_manager.winner() else { return };
+        let victory_msg = {
+            let Some(game) = self.games.get_mut(gid) else { return };
+            let Some(winner) = game.turn_manager.winner() else { return };
 
-        let victory_msg = ServerMessage::PlayerWon {
-            player_id: winner,
-            secret_victory_points: game.turn_manager.player_secret_victory_points(winner),
+            // Stop the clock before reading the tally, so the duration is how
+            // long the game took rather than how long it took to be told.
+            game.stats.finish(crate::game::entities::game_instance::now_secs());
+
+            ServerMessage::PlayerWon {
+                player_id: winner,
+                secret_victory_points: game.turn_manager.player_secret_victory_points(winner),
+                stats: game.stats_snapshot(),
+            }
         };
+
         self.broadcast_to_game(gid, victory_msg);
     }
 

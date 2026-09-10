@@ -168,6 +168,10 @@ pub struct GameState {
     // Winner
     pub secret_victory_points:RwSignal<i32>,
     pub winner_player_id: RwSignal<Option<Uuid>>,
+    /// The end-of-game tally, as sent with the victory. `None` until the game
+    /// is over; the statistics screen reads nothing else, so it cannot show a
+    /// figure the server did not count.
+    pub game_stats: RwSignal<Option<shared::GameStats>>,
 }
 
 pub fn card_label(card: &shared::DevCardType) -> &'static str {
@@ -409,6 +413,12 @@ impl GameState {
                 ServerMessage::Joined { game_id, .. } => {
                     self.game_id.set(Some(game_id));
                     self.is_in_game.set(true);
+                    // Sitting down at a new table clears the last one's
+                    // result. Without this, joining after a game you saw the
+                    // end of opens straight onto its statistics.
+                    self.winner_player_id.set(None);
+                    self.game_stats.set(None);
+                    self.secret_victory_points.set(0);
                 }
                 ServerMessage::PlayersUpdate { players: updated_players } => {
                     logging::log!("Players update received");
@@ -1145,7 +1155,8 @@ impl GameState {
                 }
                 ServerMessage::PlayerWon {
                     player_id,
-                    secret_victory_points
+                    secret_victory_points,
+                    stats,
                 } => {
                     logging::log!("Player {} has won the game!", player_id);
 
@@ -1154,6 +1165,10 @@ impl GameState {
                         .find(|p| p.player_id == player_id)
                         .map(|p| p.name.clone())
                         .unwrap_or_else(|| format!("Player {}", player_id));
+                    // The tally first: the statistics screen opens off the
+                    // winner, and would flash an empty table for a frame if
+                    // that arrived before its data did.
+                    self.game_stats.set(Some(stats));
                     self.winner_player_id.set(Some(player_id));
 
                     self.messages.update(|m| m.push(format!(
@@ -1305,6 +1320,7 @@ pub fn provide_game_state() {
         // Winner
         winner_player_id: create_rw_signal(None),
         secret_victory_points: create_rw_signal(0),
+        game_stats: create_rw_signal(None),
     };
 
     let state_clone = state;
