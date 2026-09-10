@@ -1241,6 +1241,28 @@ impl GameState {
     }
 }
 
+/// Where the game socket lives: the same host and port the page came from.
+///
+/// It used to be `ws://127.0.0.1:8080`, which only works when the browser is
+/// on the same machine as the server. Over a remote-development port forward
+/// - or from anywhere else - `127.0.0.1` is the *viewer's* machine, so the
+/// page loaded and then quietly failed to reach any game at all. Deriving it
+/// from the page's own origin means one address to reach, and one port to
+/// forward. `trunk serve` proxies `/ws` to the backend while developing; in
+/// production the backend serves the page and the socket itself.
+fn websocket_url() -> String {
+    let fallback = "ws://127.0.0.1:8080/ws".to_string();
+    let Some(location) = web_sys::window().map(|w| w.location()) else {
+        return fallback;
+    };
+    let (Ok(protocol), Ok(host)) = (location.protocol(), location.host()) else {
+        return fallback;
+    };
+    // A page served over TLS may only open a TLS socket.
+    let scheme = if protocol == "https:" { "wss" } else { "ws" };
+    format!("{scheme}://{host}/ws")
+}
+
 pub fn provide_game_state() {
     // The server decides who we are; all we may do is present a token it
     // issued us earlier. A missing or stale token simply gets a new identity.
@@ -1326,8 +1348,8 @@ pub fn provide_game_state() {
     let state_clone = state;
     spawn_local(async move {
         let ws_url = match saved_token {
-            Some(token) => format!("ws://127.0.0.1:8080/ws?token={}", token),
-            None => "ws://127.0.0.1:8080/ws".to_string(),
+            Some(token) => format!("{}?token={}", websocket_url(), token),
+            None => websocket_url(),
         };
         logging::log!("Connecting to WebSocket at {}", ws_url);
         match WebSocket::open(&ws_url) {
