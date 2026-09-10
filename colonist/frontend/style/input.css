@@ -23,6 +23,13 @@
         --hud-cyan-bottom: #83d3e7;
         --hud-rim: #1d5f86;
         --badge-blue: #285a99;
+
+        /* The dashboard rail down the right. The trade panels are anchored
+           off it, so it lives here rather than being written out at each of
+           the three places that need it - when those drifted apart, an offer
+           ended up a different size on each side of the table. */
+        --rail-w: 460px;
+        --rail-gap: 16px;
     }
 
     body {

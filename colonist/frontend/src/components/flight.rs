@@ -38,30 +38,40 @@ struct Flyer {
     delay: u64,
 }
 
-/// Where a hex sits on screen right now, in viewport coordinates.
-fn hex_centre(q: i32, r: i32) -> Option<(f64, f64)> {
-    let doc = document();
-    let el = doc
-        .query_selector(&format!("[data-hex=\"{q},{r}\"]"))
+/// The centre of the first element matching `selector`, in viewport
+/// coordinates, or None if nothing is on screen for it.
+fn centre_of(selector: &str) -> Option<(f64, f64)> {
+    let b = document()
+        .query_selector(selector)
         .ok()
         .flatten()?
         .dyn_into::<web_sys::Element>()
-        .ok()?;
-    let b = el.get_bounding_client_rect();
+        .ok()?
+        .get_bounding_client_rect();
     Some((b.x() + b.width() / 2.0, b.y() + b.height() / 2.0))
 }
 
-/// Where a player's row sits on screen right now.
-fn player_centre(pid: Uuid) -> Option<(f64, f64)> {
-    let doc = document();
-    let el = doc
-        .query_selector(&format!("[data-player=\"{pid}\"]"))
-        .ok()
-        .flatten()?
-        .dyn_into::<web_sys::Element>()
-        .ok()?;
-    let b = el.get_bounding_client_rect();
-    Some((b.x() + b.width() / 2.0, b.y() + b.height() / 2.0))
+/// Where a hex sits on screen right now.
+fn hex_centre(q: i32, r: i32) -> Option<(f64, f64)> {
+    centre_of(&format!("[data-hex=\"{q},{r}\"]"))
+}
+
+/// Where a player's cards live on screen, from *this* viewer's point of view.
+///
+/// Your own hand is the tray along the bottom; everybody else's is their row
+/// in the rail down the right. A card has to land where you would actually
+/// look for it afterwards, which is a different place for your own income than
+/// for someone else's - so the same payout is drawn to two different corners
+/// depending on who is watching.
+fn hand_centre(pid: Uuid, me: Option<Uuid>) -> Option<(f64, f64)> {
+    if Some(pid) == me {
+        // The tray is always mounted in a game; fall back to the rail row only
+        // if it somehow is not, rather than dropping the card entirely.
+        if let Some(centre) = centre_of("[data-my-tray]") {
+            return Some(centre);
+        }
+    }
+    centre_of(&format!("[data-player=\"{pid}\"]"))
 }
 
 #[component]
@@ -97,6 +107,7 @@ pub fn ResourceFlight() -> impl IntoView {
             return;
         }
         planned.truncate(MAX_CARDS);
+        let me = state.player_id.get_untracked();
 
         // The DOM has to have caught up with this roll before anything can be
         // measured, so the work happens a frame later rather than inline.
@@ -104,7 +115,7 @@ pub fn ResourceFlight() -> impl IntoView {
             move || {
                 let mut batch = Vec::with_capacity(planned.len());
                 for (i, ((q, r), pid, res)) in planned.iter().enumerate() {
-                    let (Some(from), Some(to)) = (hex_centre(*q, *r), player_centre(*pid)) else {
+                    let (Some(from), Some(to)) = (hex_centre(*q, *r), hand_centre(*pid, me)) else {
                         continue;
                     };
                     let id = next_id.get_value();
@@ -130,10 +141,11 @@ pub fn ResourceFlight() -> impl IntoView {
         let Some(steal) = state.last_steal_event.get() else {
             return;
         };
+        let me = state.player_id.get_untracked();
         set_timeout(
             move || {
                 let (Some(from), Some(to)) =
-                    (player_centre(steal.victim), player_centre(steal.thief))
+                    (hand_centre(steal.victim, me), hand_centre(steal.thief, me))
                 else {
                     return;
                 };

@@ -69,7 +69,7 @@ pub fn GamePage() -> impl IntoView {
                 // ---- right: the dashboard
                 <aside
                     class="shrink-0 flex flex-col gap-1.5 p-2 min-h-0 border-l-2 border-[#04547f]"
-                    style="width: 400px; background: linear-gradient(180deg, #066191 0%, #05537f 100%);"
+                    style="width: var(--rail-w); background: linear-gradient(180deg, #066191 0%, #05537f 100%);"
                 >
                     <EventLog />
                     <ChatPanel />
@@ -702,100 +702,143 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
     }
 }
 
+/// One side of a counter: the cards you have put on it, and the five kinds to
+/// put there.
+///
+/// Counting cards, not typing numbers - the same way every other pile in the
+/// game is built. Clicking a kind in the strip lays one down; clicking a card
+/// you have already laid picks it back up.
+#[component]
+fn CounterSide(
+    /// Green down for what would come to you, red up for what would leave you.
+    /// The same two arrows the offer panels use, so a counter reads as the
+    /// same kind of object as the offer it answers.
+    up: bool,
+    bucket: RwSignal<crate::components::bottom::Basket>,
+    /// Whether this side is limited by what you are actually holding.
+    from_hand: bool,
+) -> impl IntoView {
+    use crate::components::bottom::{CardFace, Res};
+    use crate::components::offer_status::Arrow;
+
+    let state = use_context::<GameState>().expect("GameState missing");
+    let empty = move || bucket.get().total() == 0;
+
+    view! {
+        <div class="flex items-start gap-2.5">
+            <div class="pt-1.5"><Arrow up=up /></div>
+
+            <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+                <div class="flex items-center gap-[3px] flex-wrap min-h-[65px]">
+                    {move || bucket.get().spread().into_iter().map(|k| view! {
+                        <button
+                            class="game-card-pick shrink-0"
+                            title=format!("Take this {} back off", k.label())
+                            on:click=move |_| bucket.update(|b| {
+                                let n = b.get(k);
+                                if n > 0 { b.set(k, n - 1); }
+                            })
+                        >
+                            <CardFace art=k.art() alt=k.label() size="w-[55px] h-[65px]" />
+                        </button>
+                    }).collect_view()}
+
+                    <Show when=empty>
+                        <span class="text-[12px] italic text-[#a89e8b] self-center">
+                            "nothing yet"
+                        </span>
+                    </Show>
+                </div>
+
+                <div class="flex items-center gap-1">
+                    {Res::ALL.into_iter().map(|k| {
+                        // You cannot promise a card you do not hold, so the
+                        // giving side runs out where your hand does.
+                        let spent = move || {
+                            from_hand
+                                && bucket.get().get(k) >= k.in_hand(&state.my_resources.get())
+                        };
+                        view! {
+                            <button
+                                class="game-card-pick shrink-0 disabled:opacity-30"
+                                title=move || if spent() {
+                                    format!("No more {} in your hand", k.label())
+                                } else {
+                                    format!("Put a {} on this side", k.label())
+                                }
+                                disabled=spent
+                                on:click=move |_| bucket.update(|b| b.set(k, b.get(k) + 1))
+                            >
+                                <CardFace
+                                    art=k.art()
+                                    alt=k.label()
+                                    size="w-[34px] h-[44px]"
+                                    dimmed=Signal::derive(spent)
+                                />
+                            </button>
+                        }
+                    }).collect_view()}
+                </div>
+            </div>
+        </div>
+    }
+}
+
+/// Answering an offer with terms of your own.
+///
+/// Built as the same object as the offer above it - a cream tray, the two
+/// arrows, cards you count - rather than the row of steppers it used to be.
 #[component]
 fn CounterOfferForm(offer_id: u64, on_done: Callback<()>) -> impl IntoView {
+    use crate::components::bottom::{Basket, Res};
+    use crate::components::offer_status::SmallButton;
+
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let give = create_rw_signal(shared::Resources::default());
-    let want = create_rw_signal(shared::Resources::default());
+    let give = create_rw_signal(Basket::default());
+    let want = create_rw_signal(Basket::default());
 
     let can_afford = move || {
         let (g, mine) = (give.get(), state.my_resources.get());
-        g.brick <= mine.brick && g.lumber <= mine.lumber && g.wool <= mine.wool
-            && g.grain <= mine.grain && g.ore <= mine.ore
+        Res::ALL.into_iter().all(|k| g.get(k) <= k.in_hand(&mine))
     };
-    let non_empty = |r: &shared::Resources| {
-        r.brick + r.lumber + r.wool + r.grain + r.ore > 0
-    };
-    let is_valid = move || non_empty(&give.get()) && non_empty(&want.get()) && can_afford();
+    // A trade needs something on both sides; the server refuses it otherwise.
+    let is_valid = move || give.get().total() > 0 && want.get().total() > 0 && can_afford();
 
-    // (label, colour, read the field, write the field)
-    type Field = (&'static str, &'static str, fn(&shared::Resources) -> u8, fn(&mut shared::Resources, u8));
-    let fields: [Field; 5] = [
-        ("Brick", "text-red-400", |r| r.brick, |r, v| r.brick = v),
-        ("Wood", "text-green-400", |r| r.lumber, |r, v| r.lumber = v),
-        ("Sheep", "text-lime-400", |r| r.wool, |r, v| r.wool = v),
-        ("Wheat", "text-yellow-400", |r| r.grain, |r, v| r.grain = v),
-        ("Ore", "text-slate-300", |r| r.ore, |r, v| r.ore = v),
-    ];
-
-    let row = move |label: &'static str, colour: &'static str,
-                    read: fn(&shared::Resources) -> u8,
-                    write: fn(&mut shared::Resources, u8),
-                    bucket: RwSignal<shared::Resources>,
-                    cap: Option<fn(&shared::Resources) -> u8>| {
-        view! {
-            <div class="flex items-center justify-between text-[10px]">
-                <span class=format!("font-bold {}", colour)>{label}</span>
-                <div class="flex items-center gap-1">
-                    <button
-                        class="w-5 h-5 bg-red-700 hover:bg-red-600 rounded text-white font-bold text-xs disabled:opacity-30"
-                        disabled=move || read(&bucket.get()) == 0
-                        on:click=move |_| bucket.update(|r| {
-                            let v = read(r);
-                            if v > 0 { write(r, v - 1); }
-                        })
-                    >"-"</button>
-                    <span class="w-4 text-center text-white">{move || read(&bucket.get())}</span>
-                    <button
-                        class="w-5 h-5 bg-green-700 hover:bg-green-600 rounded text-white font-bold text-xs disabled:opacity-30"
-                        disabled=move || match cap {
-                            Some(limit) => read(&bucket.get()) >= limit(&state.my_resources.get()),
-                            None => read(&bucket.get()) >= 19,
-                        }
-                        on:click=move |_| bucket.update(|r| {
-                            let v = read(r);
-                            write(r, v + 1);
-                        })
-                    >"+"</button>
-                </div>
-            </div>
-        }
+    let send = move |_| {
+        state.send(ClientRequest::CounterOffer {
+            offer_id,
+            offer: give.get_untracked().to_shared(),
+            request: want.get_untracked().to_shared(),
+        });
+        on_done.call(());
     };
 
     view! {
-        <div class="mt-2 bg-slate-800/60 rounded p-2 space-y-2">
-            <div class="text-[9px] text-amber-400 font-bold">"YOUR COUNTER - YOU GIVE:"</div>
-            <div class="space-y-1">
-                {fields.map(|(l, c, r, w)| row(l, c, r, w, give, Some(r))).to_vec()}
-            </div>
+        <div class="hud-tray px-3 py-2 flex flex-col gap-1.5">
+            <span class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263]">
+                "Your counter"
+            </span>
 
-            <div class="text-[9px] text-amber-400 font-bold">"YOU WANT:"</div>
-            <div class="space-y-1">
-                {fields.map(|(l, c, r, w)| row(l, c, r, w, want, None)).to_vec()}
-            </div>
+            <CounterSide up=false bucket=want from_hand=false />
+            <CounterSide up=true bucket=give from_hand=true />
 
-            <div class="flex gap-1">
-                <button
-                    class="flex-1 py-1 bg-slate-700 hover:bg-slate-600 rounded text-[10px] font-bold"
-                    on:click=move |_| on_done.call(())
+            <div class="flex items-center justify-end gap-1.5">
+                <SmallButton
+                    label="Drop this counter"
+                    enabled=Signal::derive(|| true)
+                    on_click=Callback::new(move |_| on_done.call(()))
                 >
-                    "CANCEL"
-                </button>
-                <button
-                    class="flex-1 py-1 bg-amber-700 hover:bg-amber-600 rounded text-[10px] font-bold disabled:opacity-40"
-                    disabled=move || !is_valid()
-                    on:click=move |_| {
-                        state.send(ClientRequest::CounterOffer {
-                            offer_id,
-                            offer: give.get_untracked(),
-                            request: want.get_untracked(),
-                        });
-                        on_done.call(());
-                    }
+                    <path d="M6 6 18 18"/><path d="M18 6 6 18"/>
+                </SmallButton>
+
+                <SmallButton
+                    label="Send this counter back to them"
+                    enabled=Signal::derive(is_valid)
+                    on_click=Callback::new(send)
                 >
-                    "SEND COUNTER"
-                </button>
+                    <path d="M4 12.5 9.5 18 20 6"/>
+                </SmallButton>
             </div>
         </div>
     }

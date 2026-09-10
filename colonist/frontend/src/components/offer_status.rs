@@ -41,7 +41,7 @@ pub fn OfferStatus() -> impl IntoView {
             // window, and an absolute box would be positioned against
             // whichever ancestor happened to be relative.
             <div class="fixed top-3 z-[60] flex flex-col gap-1.5 items-end"
-                 style="right: 416px; width: 485px;">
+                 style="right: calc(var(--rail-w) + var(--rail-gap)); width: 485px;">
                 <For
                     each=move || state.my_offers.get()
                     key=|o| o.offer_id

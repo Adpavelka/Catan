@@ -446,6 +446,10 @@ fn HandTray() -> impl IntoView {
     view! {
         <div
             node_ref=tray
+            // Where your own income lands. `ResourceFlight` measures this to
+            // fly your cards into your own hand, while everybody else's go to
+            // their row in the rail - see `hand_centre`.
+            data-my-tray=""
             class="hud-tray flex-1 min-w-0 flex items-center px-3.5 overflow-hidden"
             style="height: 119px;"
         >
@@ -927,7 +931,7 @@ fn OfferDock() -> impl IntoView {
             // the side that sent it.
             <div
                 class="fixed z-[59] flex flex-col gap-1.5 items-stretch"
-                style="right: 416px; top: 12px; width: 485px;"
+                style="right: calc(var(--rail-w) + var(--rail-gap)); top: 12px; width: 485px;"
             >
                 <div class="text-[11px] font-black uppercase tracking-[0.15em] text-[#f0e6d2]
                             drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pl-1">
