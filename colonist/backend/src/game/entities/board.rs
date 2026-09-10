@@ -499,6 +499,36 @@ impl Board {
         }
     }
 
+    /// Take a departed player's pieces off the board.
+    ///
+    /// Left standing they belong to nobody: they pay out to no one on a roll,
+    /// they hold vertices against the distance rule so nobody may ever build
+    /// there, and their settlements go on cutting other players' roads in two
+    /// on behalf of someone who is no longer in the game.
+    ///
+    /// Returns how many vertex buildings and how many roads were cleared.
+    pub fn remove_player_pieces(&mut self, player_id: Uuid) -> (usize, usize) {
+        let mut buildings = 0;
+        for vertex in self.vertices.values_mut() {
+            if vertex.owner == Some(player_id) {
+                vertex.building = None;
+                vertex.owner = None;
+                buildings += 1;
+            }
+        }
+
+        let mut roads = 0;
+        for edge in self.edges.values_mut() {
+            if edge.owner == Some(player_id) {
+                edge.building = None;
+                edge.owner = None;
+                roads += 1;
+            }
+        }
+
+        (buildings, roads)
+    }
+
     pub fn calculate_longest_road(&self, player_id: Uuid) -> usize {
         let player_edges: HashSet<_> = self
             .edges

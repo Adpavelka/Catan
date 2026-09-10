@@ -407,6 +407,43 @@ impl Bank {
             .pop()
             .ok_or(GameError::InvalidAction)
     }
+
+    /// Put a departed player's hand back in the supply.
+    ///
+    /// The bank is a fixed stock - it is legal to run it dry, and doing so
+    /// stops everybody being paid. Cards carried off by someone who quit would
+    /// otherwise be out of the game for good.
+    pub fn return_resources(&mut self, hand: &ResourceSet) {
+        self.game_resources.add_set(hand);
+    }
+
+    /// Put a departed player's development cards back in the deck.
+    ///
+    /// Only the ones still in hand: a card they already played is spent, and
+    /// its effect has already happened. Each returning card is rebuilt fresh
+    /// so it carries none of the "bought this turn" state from the hand it
+    /// came from, and the deck is reshuffled so the returned cards are not
+    /// simply the next few drawn.
+    ///
+    /// Returns how many went back.
+    pub fn return_dev_cards(&mut self, cards: &[DevelopmentCard]) -> usize {
+        let mut returned = 0;
+        for card in cards {
+            if card.is_played() {
+                continue;
+            }
+            self.dev_cards.push(DevelopmentCard::new(card.get_type()));
+            returned += 1;
+        }
+
+        if returned > 0 {
+            use rand::seq::SliceRandom;
+            let mut rng = rand::thread_rng();
+            self.dev_cards.shuffle(&mut rng);
+        }
+
+        returned
+    }
 }
 
 

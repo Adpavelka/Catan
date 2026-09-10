@@ -269,6 +269,30 @@ impl TurnManager {
     }
 
 
+    /// Re-measure every remaining player's longest road and re-award both
+    /// bonus cards.
+    ///
+    /// Needed after pieces leave the board rather than arrive on it: a
+    /// departed player's settlement may have been cutting an opponent's road
+    /// in two, so clearing it can *lengthen* someone else's road, and the
+    /// player who held longest road or largest army may no longer be at the
+    /// table to hold it.
+    pub fn recalculate_bonuses(&mut self) {
+        let ids: Vec<Uuid> = (0..self.players.len())
+            .filter_map(|idx| self.players.get_by_index(idx).map(|p| p.id))
+            .collect();
+
+        for id in ids {
+            let length = self.board.calculate_longest_road(id);
+            if let Some(player) = self.players.get_mut(id) {
+                player.longest_road = length;
+            }
+        }
+
+        self.road_bonus.recalculate(&mut self.players);
+        self.army_bonus.recalculate(&mut self.players);
+    }
+
     pub fn buy_dev_card(&mut self, pid: Uuid) -> Result<shared::DevCardType, GameError> {
         let cost = DevelopmentCard::cost();
 

@@ -85,6 +85,23 @@ impl Lobby {
             );
             self.broadcast_players_update(&game_id);
 
+            // Their pieces have just come off the board and their cards have
+            // gone back to the supply, so a roster update is not enough - the
+            // buildings, the roads and the bank all moved. A full sync is the
+            // one message that carries every one of them.
+            let remaining: Vec<Uuid> = self
+                .games
+                .get(&game_id)
+                .map(|game| {
+                    (0..game.turn_manager.players.len())
+                        .filter_map(|i| game.turn_manager.players.get_by_index(i).map(|p| p.id))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for player_id in remaining {
+                self.send_full_sync(player_id, &game_id);
+            }
+
             if was_on_turn {
                 if let Some(next) = self
                     .games

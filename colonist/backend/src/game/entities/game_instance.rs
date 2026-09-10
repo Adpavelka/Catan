@@ -1,7 +1,9 @@
 use crate::game::entities::bonus_points::BonusCard;
 use crate::game::entities::pending_trade::PendingTrade;
+use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::statistics::Statistics;
 use crate::game::entities::turn_manager::TurnManager;
+use log::info;
 use serde::{Deserialize, Serialize};
 use shared::{GamePhase, InitialRound, PendingAction, PlacementStep};
 use std::{collections::HashMap, mem};
@@ -443,7 +445,32 @@ impl GameInstance {
     pub fn remove_player(&mut self, pid: Uuid) -> Result<Vec<u64>, String> {
         let was_on_turn = self.turn_manager.players.get_current_player().id == pid;
 
+        // Everything they are holding, read before the roster drops them.
+        let (hand, dev_cards) = self
+            .turn_manager
+            .players
+            .get(pid)
+            .map(|player| (player.resources.clone(), player.dev_cards.clone()))
+            .unwrap_or_else(|| (ResourceSet::new(), Vec::new()));
+
         self.turn_manager.players.remove_player(pid)?;
+
+        // A player who walks away takes nothing with them: their pieces come
+        // off the board and their cards go back to the supply, so the table
+        // they left behind is one the remaining players can still finish.
+        let (buildings, roads) = self.turn_manager.board.remove_player_pieces(pid);
+        self.turn_manager.bank.return_resources(&hand);
+        let cards_returned = self.turn_manager.bank.return_dev_cards(&dev_cards);
+        self.turn_manager.recalculate_bonuses();
+
+        info!(
+            "Player {} left: cleared {} buildings and {} roads, returned {} cards to the bank and {} to the deck",
+            pid,
+            buildings,
+            roads,
+            hand.get_cards_total(),
+            cards_returned,
+        );
 
         // A pending action belonging to somebody who has gone can never be
         // discharged, and `end_turn` refuses to advance while a discard is
@@ -703,6 +730,93 @@ mod tests {
             .collect();
         coords.sort();
         coords[0]
+    }
+
+    /// A player who quits must not leave their pieces standing on the board,
+    /// nor walk off with cards the rest of the table still needs.
+    #[test]
+    fn leaving_returns_everything_to_the_board_and_the_supply() {
+        use crate::game::entities::building::{EdgeBuilding, VertexBuilding};
+        use crate::game::entities::development_card::DevelopmentCard;
+        use shared::{DevCardType, PlayerColour, ResourceType};
+
+        let quitter = Uuid::from_u128(1);
+        let stayer = Uuid::from_u128(2);
+        let mut game = GameInstance::new("t".into(), quitter, 3, "Quitter", PlayerColour::Blue);
+        game.turn_manager.players.seat(stayer, "Stayer", PlayerColour::Red).unwrap();
+        game.start_game();
+
+        // Give the quitter a settlement, a road, five cards and a dev card.
+        let vertex = free_vertex(&game, None);
+        let edge = *game.turn_manager.board.edges.keys().next().unwrap();
+        game.turn_manager.board.build_vertex(quitter, vertex, VertexBuilding::Settlement);
+        game.turn_manager.board.build_edge(quitter, edge, EdgeBuilding::Road);
+
+        let bank_before = game.turn_manager.bank.to_info();
+        {
+            let player = game.turn_manager.players.get_mut(quitter).unwrap();
+            player.resources.add(ResourceType::Wood, 5);
+            player.dev_cards.push(DevelopmentCard::new(DevCardType::Knight));
+        }
+
+        game.remove_player(quitter).unwrap();
+
+        // Nothing of theirs is left anywhere on the board.
+        assert!(
+            game.turn_manager.board.vertices.values().all(|v| v.owner != Some(quitter)),
+            "a departed player's buildings must not stay on the board",
+        );
+        assert!(
+            game.turn_manager.board.edges.values().all(|e| e.owner != Some(quitter)),
+            "a departed player's roads must not stay on the board",
+        );
+
+        // The cards are back in the supply: five wood on top of what the bank
+        // already held, and the deck one card deeper than before the draw.
+        let bank_after = game.turn_manager.bank.to_info();
+        assert_eq!(
+            bank_after.resources.lumber,
+            bank_before.resources.lumber + 5,
+            "the hand they were holding must go back to the bank",
+        );
+        assert_eq!(
+            bank_after.dev_cards,
+            bank_before.dev_cards + 1,
+            "an unplayed development card must go back to the deck",
+        );
+
+        // And the player who stayed is still playable.
+        assert_eq!(game.turn_manager.players.len(), 1);
+        assert_eq!(game.turn_manager.players.get_current_player().id, stayer);
+    }
+
+    /// A knight that has already been played is spent. Returning it to the
+    /// deck would put a card back that the game has already used up.
+    #[test]
+    fn a_played_card_is_not_returned_to_the_deck() {
+        use crate::game::entities::development_card::DevelopmentCard;
+        use shared::{DevCardType, PlayerColour};
+
+        let quitter = Uuid::from_u128(1);
+        let stayer = Uuid::from_u128(2);
+        let mut game = GameInstance::new("t".into(), quitter, 3, "Quitter", PlayerColour::Blue);
+        game.turn_manager.players.seat(stayer, "Stayer", PlayerColour::Red).unwrap();
+
+        let mut played = DevelopmentCard::new(DevCardType::Knight);
+        match &mut played {
+            DevelopmentCard::Knight(state) => state.played = true,
+            _ => unreachable!(),
+        }
+        game.turn_manager.players.get_mut(quitter).unwrap().dev_cards.push(played);
+
+        let before = game.turn_manager.bank.to_info().dev_cards;
+        game.remove_player(quitter).unwrap();
+
+        assert_eq!(
+            game.turn_manager.bank.to_info().dev_cards,
+            before,
+            "a card that was already played is spent and must not come back",
+        );
     }
 
     /// A client picks the table size, so it has to be pinned to what the game
