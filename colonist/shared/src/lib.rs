@@ -698,7 +698,7 @@ pub enum PendingAction {
 
 
 /// Port types for maritime trading
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PortType {
     /// Generic 3:1 port - trade 3 of any resource for 1 of any other

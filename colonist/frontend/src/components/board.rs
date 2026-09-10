@@ -419,10 +419,19 @@ pub fn Board() -> impl IntoView {
                         />
                     </g>
 
-                    // Render all hexes
+                    // Render all hexes.
+                    //
+                    // The key carries the tile's contents, not just its place.
+                    // `For` is keyed: for a key it has already drawn it keeps
+                    // the existing nodes and never re-runs this child, and
+                    // `HexTile` reads its resource and number once, when built.
+                    // Every board uses the same coordinates, so keying on
+                    // (q, r) alone meant a second game in the same page
+                    // redrew nothing - you sat looking at the previous game's
+                    // land while the server dealt you another.
                     <For
                         each=move || state.hexes.get()
-                        key=|hex| (hex.q, hex.r)
+                        key=|hex| (hex.q, hex.r, hex.resource, hex.number)
                         children=move |hex: HexInfo| {
                             let (px, py) = axial_to_pixel(hex.q, hex.r, 60.0);
                             let (hex_q, hex_r) = (hex.q, hex.r);
@@ -467,7 +476,11 @@ pub fn Board() -> impl IntoView {
                     <g class="ports" style="pointer-events: none;">
                         <For
                             each=move || state.board_ports.get()
-                            key=|port| (port.vertices[0], port.vertices[1])
+                            // The type belongs in the key for the same reason
+                            // it does on the hexes: harbours sit on the same
+                            // coastline every game, only what they trade
+                            // changes.
+                            key=|port| (port.vertices[0], port.vertices[1], port.port_type)
                             children=move |port: PortInfo| {
                                 let (v1x, v1y) = vertex_to_pixel(port.vertices[0].0, port.vertices[0].1, 60.0);
                                 let (v2x, v2y) = vertex_to_pixel(port.vertices[1].0, port.vertices[1].1, 60.0);
