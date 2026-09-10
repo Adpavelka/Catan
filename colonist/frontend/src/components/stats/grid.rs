@@ -42,7 +42,7 @@ pub struct StatColumn {
 /// rest of the UI uses: the roster drops anybody who leaves, and the final
 /// table has to keep listing them.
 #[component]
-pub fn StatsDisc(colour: &'static str, name: String, #[prop(default = 30)] size: u32) -> impl IntoView {
+pub fn StatsDisc(colour: &'static str, name: String, #[prop(default = 38)] size: u32) -> impl IntoView {
     view! {
         <span
             class="stats-disc"
@@ -83,7 +83,7 @@ pub fn StatsGrid(
     // left over, so two matrices stacked on one page start their figures in
     // the same place even when they do not have the same number of columns.
     let template = format!(
-        "minmax(7rem, 17%) repeat({}, minmax(2.4rem, 1fr))",
+        "minmax(9rem, 20%) repeat({}, minmax(3rem, 1fr))",
         columns.len()
     );
 
@@ -127,7 +127,7 @@ pub fn StatsGrid(
                             <div class=format!("{cell} stats-name-cell {}", if win.is_empty() { "" } else { "stats-row-win-lead" })>
                                 <StatsDisc colour=colour name=player.name.clone() />
                                 <span
-                                    class="text-[13px] font-black truncate"
+                                    class="text-[17px] font-black truncate"
                                     style=format!("color: {colour}")
                                     title=player.name.clone()
                                 >

@@ -6,7 +6,7 @@
 //! like the others whether or not anyone remembers to make it.
 
 use leptos::*;
-use shared::{DevCardTally, GameStats, PlayerStats};
+use shared::{DevCardTally, GameStats};
 
 use crate::components::icons::{dev_card_art, resource_art};
 use crate::components::stats::chart::{ChartBar, StatsBarChart};
@@ -18,15 +18,6 @@ const TABLE_CYAN: &str = "#56c6e1";
 /// A seven pays nobody and moves the robber, so it is not the same kind of
 /// result as the other ten and is not drawn as though it were.
 const SEVEN_RED: &str = "#c96a4e";
-
-/// One bar per player, in seat order and in their own colours.
-fn player_bars(stats: &GameStats, read: fn(&PlayerStats) -> i64) -> Vec<ChartBar> {
-    stats
-        .players
-        .iter()
-        .map(|player| ChartBar::new(player.name.clone(), read(player), player.colour.hex()))
-        .collect()
-}
 
 // ---------------------------------------------------------------- overview
 
@@ -72,42 +63,6 @@ const POINT_COLUMNS: [StatColumn; 6] = [
     },
 ];
 
-/// What each player actually put on the board and bought. Counts, not points,
-/// which is why they are kept apart from the block above rather than being
-/// mixed into one row of figures that mean two different things.
-const BUILT_COLUMNS: [StatColumn; 5] = [
-    StatColumn {
-        art: "build-settlement",
-        title: "Settlements built",
-        tile: true,
-        read: |p| p.settlements_built as i64,
-    },
-    StatColumn {
-        art: "build-city",
-        title: "Cities built",
-        tile: true,
-        read: |p| p.cities_built as i64,
-    },
-    StatColumn {
-        art: "stat-road",
-        title: "Roads built",
-        tile: true,
-        read: |p| p.roads_built as i64,
-    },
-    StatColumn {
-        art: "build-dev-card",
-        title: "Development cards bought",
-        tile: true,
-        read: |p| p.dev_cards_bought.total() as i64,
-    },
-    StatColumn {
-        art: "dev-knight",
-        title: "Knights played",
-        tile: true,
-        read: |p| p.knights_played as i64,
-    },
-];
-
 #[component]
 pub fn OverviewStats(stats: GameStats) -> impl IntoView {
     let winner = stats.winner;
@@ -120,12 +75,6 @@ pub fn OverviewStats(stats: GameStats) -> impl IntoView {
                 columns=POINT_COLUMNS.to_vec()
                 highlight=winner
                 lead_first=true
-            />
-            <StatsGrid
-                caption="Pieces and cards"
-                players=stats.players.clone()
-                columns=BUILT_COLUMNS.to_vec()
-                highlight=winner
             />
         </div>
     }
@@ -148,35 +97,14 @@ pub fn DiceStats(stats: GameStats) -> impl IntoView {
         })
         .collect();
 
-    let per_player = player_bars(&stats, |p| p.rolls_made() as i64);
-    let rolls = stats.total_rolls();
-
     view! {
         <div class="flex flex-col gap-5">
             <StatsBarChart
                 title="Every roll at the table"
                 bars=totals
                 empty_note="No dice were rolled."
-                height=176
+                height=240
             />
-
-            <div class="flex flex-wrap gap-6 items-start">
-                <StatsBarChart
-                    title="Rolls made"
-                    bars=per_player
-                    empty_note="Nobody got as far as rolling."
-                    height=110
-                />
-
-                // The one number the chart cannot show: how big a sample the
-                // shape above is drawn from.
-                <div class="shrink-0 self-center text-right">
-                    <div class="stats-caption">"Rolls in the game"</div>
-                    <div class="text-[30px] font-black text-white tabular-nums leading-none">
-                        {rolls}
-                    </div>
-                </div>
-            </div>
         </div>
     }
 }
@@ -304,9 +232,6 @@ pub fn ActivityStats(stats: GameStats) -> impl IntoView {
                 columns=ACTIVITY_COLUMNS.to_vec()
                 highlight=winner
             />
-            <p class="text-[11px] italic text-[#8fb6c9]/55">
-                "Hover an icon to see what its column counts."
-            </p>
         </div>
     }
 }
@@ -401,9 +326,6 @@ pub fn ResourceStats(stats: GameStats) -> impl IntoView {
                 highlight=winner
                 lead_first=true
             />
-            <p class="text-[11px] italic text-[#8fb6c9]/55">
-                "Hover an icon to see what its column counts."
-            </p>
         </div>
     }
 }

@@ -65,7 +65,7 @@ pub fn StatsBarChart(
                 when=move || has_data
                 fallback=move || view! {
                     <div
-                        class="flex items-center justify-center text-[12px] italic text-[#8fb6c9]/70
+                        class="flex items-center justify-center text-[14px] italic text-[#8fb6c9]/70
                                border border-dashed border-[#56c6e1]/25 rounded-lg px-3"
                         style=format!("height: {}px", height + 26)
                     >
@@ -96,7 +96,7 @@ pub fn StatsBarChart(
                                     // sitting in a row of its own, so which
                                     // number belongs to which bar is never a
                                     // question.
-                                    <span class="text-[13px] font-black text-[#eaf6fb] tabular-nums leading-none pb-1">
+                                    <span class="text-[17px] font-black text-[#eaf6fb] tabular-nums leading-none pb-1">
                                         {bar.value}
                                     </span>
                                     <Show when=move || drawn>
@@ -124,11 +124,11 @@ pub fn StatsBarChart(
                                             src=format!("/assets/{art}.svg")
                                             alt=bar.label.clone()
                                             draggable="false"
-                                            class="w-[30px] h-[42px] object-cover rounded-[3px] game-card
+                                            class="w-[40px] h-[56px] object-cover rounded-[4px] game-card
                                                    select-none pointer-events-none"
                                         />
                                     })}
-                                    <span class="text-[11px] font-bold text-[#a9cddd] truncate max-w-full leading-tight">
+                                    <span class="text-[14px] font-bold text-[#a9cddd] truncate max-w-full leading-tight">
                                         {bar.label.clone()}
                                     </span>
                                 </div>
