@@ -457,6 +457,11 @@ pub enum ServerMessage {
     PlayerSecretVictoryPointsUpdated{secret_victory_points: i32},
 
     Left { player_id: Uuid, game_id: String },
+    /// Something the server did on its own account, for the event log. Used
+    /// where there is no player action to report: the turn clock settling what
+    /// somebody who stopped answering was holding up, for instance. Purely
+    /// something to read - it carries no state.
+    SystemNote { text: String },
 }
 
 /// What was just built. An enum rather than a string: the initial-placement

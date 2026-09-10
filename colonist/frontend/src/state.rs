@@ -1150,6 +1150,12 @@ impl GameState {
                     bank,
                 } => {
                     logging::log!("Full state sync received for player {}", player_id);
+                    // A sync is the whole truth about what you owe. Clear the
+                    // prompts first: the server re-sends the ones that still
+                    // stand immediately after this, so anything it has settled
+                    // in the meantime - by the turn clock, say - goes with
+                    // them instead of hanging about unanswerable.
+                    self.clear_pending_prompts();
                     self.player_id.set(Some(player_id));
                     self.players.set(players.clone());
                     self.hexes.set(board.hexes);
@@ -1205,6 +1211,10 @@ impl GameState {
                     {
                         self.secret_victory_points.set(secret_victory_points);
                     }
+                ServerMessage::SystemNote { text } => {
+                    logging::log!("System note: {}", text);
+                    self.messages.update(|m| m.push(text));
+                }
                 ServerMessage::Left {player_id, game_id} => {
                     logging::log!("Player {} has left the game {}", player_id, game_id);
 

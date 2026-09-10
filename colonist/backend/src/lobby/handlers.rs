@@ -340,47 +340,11 @@ impl Lobby {
     }
 
     fn handle_dev_card_side_effects(&mut self, pid: Uuid, gid: &str, msg: &ServerMessage) {
-        if let Some(game) = self.games.get(gid) {
-            if let Some(actions) = game.pending_actions.get(&pid) {
-                for action in actions {
-                    match action {
-                        PendingAction::MoveRobber | PendingAction::PlayKnight => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustMoveRobber { player_id: pid },
-                            );
-                        }
-
-                        PendingAction::RoadBuilding { remaining } => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustPlaceRoads {
-                                    player_id: pid,
-                                    roads_remaining: *remaining,
-                                },
-                            );
-                        }
-
-                        PendingAction::YearOfPlenty => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustChooseYearOfPlentyResources { player_id: pid },
-                            );
-                        }
-
-                        PendingAction::Monopoly => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustChooseMonopolyResource { player_id: pid },
-                            );
-                        }
-
-                        _ => {} // Discard handled elsewhere
-                    }
-                }
-            }
-        }
-
+        // Playing a card is one of the things that can leave a player owing
+        // the game something. `announce_pending_actions` is the single place
+        // that turns those into prompts, shared with the reconnect sync, so
+        // the two cannot disagree about what is being asked for.
+        self.announce_pending_actions(pid, gid);
 
         // The card a player drew is theirs alone to see.
         if let ServerMessage::DevCardBought { player_id } = msg {

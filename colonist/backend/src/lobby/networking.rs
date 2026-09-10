@@ -132,19 +132,50 @@ impl Lobby
             self.send_secret_victory_points_to_player(pid, &game_id.to_string());
         }
 
-        let must_move_robber = game
-            .pending_actions
-            .get(&pid)
-            .map_or(false, |actions| {
-                actions.contains(&PendingAction::MoveRobber)
-                    || actions.contains(&PendingAction::PlayKnight)
-            });
+        // Every prompt they still owe, not just the robber. A sync is the
+        // client's whole truth - it clears its prompts when one arrives - so
+        // anything left out here is a prompt the player silently loses, and
+        // anything stale the server has since settled is one they would
+        // otherwise be left staring at.
+        self.announce_pending_actions(pid, game_id);
+    }
 
-        if must_move_robber {
-            self.send_server_msg(
-                pid,
-                shared::ServerMessage::MustMoveRobber { player_id: pid },
-            );
+    /// Re-send the prompt for each action `pid` still owes.
+    ///
+    /// The one place that turns pending actions into messages, so a sync and a
+    /// fresh dev card cannot disagree about what a player is being asked for.
+    pub(crate) fn announce_pending_actions(&self, pid: Uuid, game_id: &str) {
+        let Some(game) = self.games.get(game_id) else { return };
+        let Some(actions) = game.pending_actions.get(&pid) else { return };
+
+        for action in actions.clone() {
+            let msg = match action {
+                PendingAction::MoveRobber | PendingAction::PlayKnight => {
+                    shared::ServerMessage::MustMoveRobber { player_id: pid }
+                }
+                PendingAction::RoadBuilding { remaining } => {
+                    shared::ServerMessage::MustPlaceRoads { player_id: pid, roads_remaining: remaining }
+                }
+                PendingAction::YearOfPlenty => {
+                    shared::ServerMessage::MustChooseYearOfPlentyResources { player_id: pid }
+                }
+                PendingAction::Monopoly => {
+                    shared::ServerMessage::MustChooseMonopolyResource { player_id: pid }
+                }
+                PendingAction::Discard => {
+                    let count = game
+                        .turn_manager
+                        .players
+                        .get(pid)
+                        .map_or(0, |p| (p.resources.get_cards_total() / 2) as usize);
+                    shared::ServerMessage::MustDiscardCards { player_id: pid, count }
+                }
+                // Choosing a victim is driven by `CanRobPlayers`, which
+                // carries the list of who is standing there; it is not
+                // reconstructible from the action alone.
+                PendingAction::Steal => continue,
+            };
+            self.send_server_msg(pid, msg);
         }
     }
     

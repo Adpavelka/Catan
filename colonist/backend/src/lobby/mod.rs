@@ -136,8 +136,12 @@ impl Lobby {
                 // with a full sync rather than an incremental update.
                 TurnClockAction::ForceResolve => {
                     let settled = game.force_resolve_pending();
-                    for line in &settled {
+                    for line in settled {
                         log::info!("Turn clock in game {}: {}", gid, line);
+                        // The table has to be told, or a robber that never
+                        // moved and a hand that shrank on its own look like
+                        // bugs rather than the clock doing its job.
+                        self.broadcast_to_game(&gid, ServerMsg::SystemNote { text: line });
                     }
                     self.save_game_async(&gid, ctx);
 
