@@ -1,7 +1,7 @@
 use crate::game::entities::bonus_points::BonusCard;
 use crate::game::entities::pending_trade::PendingTrade;
 use crate::game::entities::resources::ResourceSet;
-use crate::game::entities::statistics::Statistics;
+use crate::game::entities::statistics::{Loss, Statistics};
 use crate::game::entities::turn_manager::TurnManager;
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,9 @@ pub struct GameInstance {
 pub enum TurnClockAction {
     Roll,
     EndTurn,
+    /// Settle whatever the table is waiting on, on behalf of whoever has
+    /// stopped answering. See `force_resolve_pending`.
+    ForceResolve,
 }
 
 /// Table sizes we support. The size chosen when the lobby is created fixes the
@@ -311,6 +314,80 @@ impl GameInstance {
     }
 
 
+    /// Settle every outstanding pending action on behalf of players who have
+    /// run out of time, so the turn can move on.
+    ///
+    /// Only reached from the turn clock, once the table has waited out the
+    /// whole turn limit. Everything here is deliberately the *least* generous
+    /// reading: a forfeited card is recoverable, a frozen table is not.
+    ///
+    /// Returns a line per thing settled, for the game log.
+    pub(crate) fn force_resolve_pending(&mut self) -> Vec<String> {
+        let mut done = Vec::new();
+        let owners: Vec<Uuid> = self.pending_actions.keys().copied().collect();
+
+        for pid in owners {
+            let Some(actions) = self.pending_actions.get(&pid).cloned() else { continue };
+            let name = self
+                .turn_manager
+                .players
+                .get(pid)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "A departed player".to_string());
+
+            for action in actions {
+                match action {
+                    // The rules take the cards whether or not you choose them,
+                    // so an unanswered discard is taken at random.
+                    PendingAction::Discard => {
+                        let owed = self
+                            .turn_manager
+                            .players
+                            .get(pid)
+                            .map_or(0, |p| p.resources.get_cards_total() / 2);
+
+                        let mut taken = 0;
+                        for _ in 0..owed {
+                            let Some(player) = self.turn_manager.players.get_mut(pid) else { break };
+                            let Some(res) = player.resources.take_random_card() else { break };
+                            self.turn_manager.bank.return_one(res);
+                            taken += 1;
+                        }
+                        if taken > 0 {
+                            self.stats.lost(pid, Loss::Seven, taken);
+                        }
+                        done.push(format!("{name} ran out of time and discarded {taken} at random"));
+                    }
+
+                    // The robber has to be somewhere legal for play to carry
+                    // on; it is left where it is and nobody is robbed.
+                    PendingAction::MoveRobber | PendingAction::PlayKnight => {
+                        done.push(format!("{name} ran out of time and left the robber where it was"));
+                    }
+
+                    // Everything else is a choice worth something. Left
+                    // unanswered it is simply given up.
+                    PendingAction::Steal => {
+                        done.push(format!("{name} ran out of time and robbed nobody"));
+                    }
+                    PendingAction::RoadBuilding { .. } => {
+                        done.push(format!("{name} ran out of time and gave up their free roads"));
+                    }
+                    PendingAction::YearOfPlenty => {
+                        done.push(format!("{name} ran out of time and took no cards"));
+                    }
+                    PendingAction::Monopoly => {
+                        done.push(format!("{name} ran out of time and named no resource"));
+                    }
+                }
+            }
+
+            self.pending_actions.remove(&pid);
+        }
+
+        done
+    }
+
     pub fn add_pending_action(&mut self, pid: Uuid, action: PendingAction) {
         self.pending_actions.entry(pid).or_default().push(action);
     }
@@ -380,16 +457,23 @@ impl GameInstance {
             return None;
         }
 
-        if self.pending_actions.contains_key(&current)
+        let elapsed = now.saturating_sub(self.clock_started_secs);
+
+        // A pending action pauses the clock, because the table really is
+        // waiting on somebody. But nothing clears one except the player
+        // discharging it or leaving, so a player who simply stops answering -
+        // holding the robber, or a discard, which blocks *everybody's*
+        // end_turn - would freeze the game for good. Past the turn limit the
+        // server settles them itself rather than waiting forever.
+        let blocked = self.pending_actions.contains_key(&current)
             || self
                 .pending_actions
                 .values()
-                .any(|actions| actions.contains(&PendingAction::Discard))
-        {
-            return None;
-        }
+                .any(|actions| actions.contains(&PendingAction::Discard));
 
-        let elapsed = now.saturating_sub(self.clock_started_secs);
+        if blocked {
+            return (elapsed >= shared::TURN_LIMIT_SECS).then_some(TurnClockAction::ForceResolve);
+        }
 
         if !self.turn_manager.dice.was_dice_rolled() {
             (elapsed >= shared::TURN_AUTO_ROLL_SECS).then_some(TurnClockAction::Roll)
@@ -493,9 +577,34 @@ impl GameInstance {
 
         // If they were the one building, hand the slot on rather than leaving
         // a phase that only a departed player can end.
-        if self.phase.special_builder() == Some(pid) && !self.advance_special_building() {
-            self.finish_special_building();
-            self.turn_manager.end_turn();
+        if self.phase.special_builder() == Some(pid) {
+            if self.turn_manager.players.len() == 0 {
+                // The last player at the table has just walked out. There is
+                // nobody to hand the slot to, and `end_turn` on an empty
+                // roster panics inside the actor - taking every other game on
+                // the server with it.
+                self.finish_special_building();
+            } else if !self.advance_special_building() {
+                self.finish_special_building();
+                self.turn_manager.end_turn();
+            }
+        }
+
+        // During setup the phase carries the vertex the next road has to
+        // touch. That settlement belonged to the player who just left and has
+        // gone off the board with the rest of their pieces, so whoever slides
+        // into their slot would be asked for a road against a vertex that is
+        // empty - and a settlement, a road and ending the turn are all refused
+        // from there. Send the new player back to placing their settlement.
+        if was_on_turn {
+            if let GamePhase::InitialPlacement { round, step: PlacementStep::BuildRoad { .. } } =
+                self.phase
+            {
+                self.phase = GamePhase::InitialPlacement {
+                    round,
+                    step: PlacementStep::BuildSettlement,
+                };
+            }
         }
 
         // Removing the player on turn slides the next one into their slot, but
@@ -816,6 +925,213 @@ mod tests {
             game.turn_manager.bank.to_info().dev_cards,
             before,
             "a card that was already played is spent and must not come back",
+        );
+    }
+
+    /// A discard is half the hand, not whatever the player feels like giving
+    /// up. The server used to check only that they could pay what they offered.
+    #[test]
+    fn a_discard_must_be_half_the_hand() {
+        use shared::{PlayerColour, ResourceType};
+
+        let pid = Uuid::from_u128(1);
+        let mut game = GameInstance::new("t".into(), pid, 2, "T", PlayerColour::Blue);
+        game.start_game();
+        game.turn_manager
+            .players
+            .get_mut(pid)
+            .unwrap()
+            .resources
+            .add(ResourceType::Brick, 12);
+        game.add_pending_action(pid, PendingAction::Discard);
+
+        let one = shared::Resources { brick: 1, ..Default::default() };
+        assert!(
+            game.handle_discard_cards(pid, one).is_err(),
+            "handing back one card out of twelve must be refused",
+        );
+        assert!(
+            game.has_pending_action(pid, PendingAction::Discard),
+            "a refused discard must leave the obligation in place",
+        );
+
+        let six = shared::Resources { brick: 6, ..Default::default() };
+        assert!(game.handle_discard_cards(pid, six).is_ok(), "half the hand is the price");
+        assert!(!game.has_pending_action(pid, PendingAction::Discard));
+    }
+
+    /// A player who stops answering must not be able to freeze the table. The
+    /// clock settles what they were holding up.
+    #[test]
+    fn the_clock_settles_what_a_silent_player_holds_up() {
+        use shared::{PlayerColour, ResourceType};
+
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let mut game = GameInstance::new("t".into(), a, 2, "A", PlayerColour::Blue);
+        game.turn_manager.players.seat(b, "B", PlayerColour::Red).unwrap();
+        game.start_game();
+
+        game.turn_manager
+            .players
+            .get_mut(b)
+            .unwrap()
+            .resources
+            .add(ResourceType::Ore, 8);
+        game.add_pending_action(a, PendingAction::MoveRobber);
+        game.add_pending_action(b, PendingAction::Discard);
+
+        let bank_before = game.turn_manager.bank.to_info().resources.ore;
+        let settled = game.force_resolve_pending();
+
+        assert!(settled.len() >= 2, "both obligations should be settled: {settled:?}");
+        assert!(game.pending_actions.is_empty(), "nothing may still be outstanding");
+        assert_eq!(
+            game.turn_manager.players.get(b).unwrap().resources.get_cards_total(),
+            4,
+            "half of eight is discarded at random",
+        );
+        assert_eq!(
+            game.turn_manager.bank.to_info().resources.ore,
+            bank_before + 4,
+            "the discarded cards go back to the bank",
+        );
+    }
+
+    /// Buying the last-but-one card must not charge a player for a card the
+    /// deck cannot hand over.
+    #[test]
+    fn an_empty_deck_costs_nothing() {
+        use shared::PlayerColour;
+
+        let pid = Uuid::from_u128(1);
+        let mut game = GameInstance::new("t".into(), pid, 2, "T", PlayerColour::Blue);
+        game.start_game();
+        game.phase = GamePhase::RegularPlay;
+
+        // Drain the deck, then give them exactly one card's worth of resources.
+        while game.turn_manager.bank.dev_cards_left() > 0 {
+            game.turn_manager.bank.draw_dev_card().unwrap();
+        }
+        {
+            let player = game.turn_manager.players.get_mut(pid).unwrap();
+            player.resources.add(shared::ResourceType::Sheep, 1);
+            player.resources.add(shared::ResourceType::Wheat, 1);
+            player.resources.add(shared::ResourceType::Ore, 1);
+        }
+
+        assert!(game.handle_buy_dev_card(pid).is_err(), "an empty deck sells nothing");
+        assert_eq!(
+            game.turn_manager.players.get(pid).unwrap().resources.get_cards_total(),
+            3,
+            "a refused purchase must not take the money",
+        );
+    }
+
+    /// Leaving mid-setup must not strand the next player against a step that
+    /// points at a settlement which has just been taken off the board.
+    #[test]
+    fn leaving_during_setup_hands_on_a_step_the_next_player_can_take() {
+        use shared::{InitialRound, PlacementStep, PlayerColour};
+
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let mut game = GameInstance::new("t".into(), a, 2, "A", PlayerColour::Blue);
+        game.turn_manager.players.seat(b, "B", PlayerColour::Red).unwrap();
+        game.start_game();
+
+        // A has placed a settlement and owes the road that goes with it.
+        game.phase = GamePhase::InitialPlacement {
+            round: InitialRound::First,
+            step: PlacementStep::BuildRoad { settlement: (0, 0) },
+        };
+
+        game.remove_player(a).unwrap();
+
+        assert_eq!(
+            game.phase,
+            GamePhase::InitialPlacement {
+                round: InitialRound::First,
+                step: PlacementStep::BuildSettlement,
+            },
+            "the incoming player must be asked for a settlement, not a road \
+             against a vertex that is no longer there",
+        );
+    }
+
+    /// A settlement planted in the middle of somebody else's road cuts it in
+    /// two. The longest-road card has to follow: it used to be re-measured
+    /// only for the player who laid a road, so the holder kept the card - and
+    /// its two points - on a chain that no longer existed.
+    #[test]
+    fn a_settlement_cuts_the_road_it_is_planted_in() {
+        use crate::game::entities::building::EdgeBuilding;
+        use shared::PlayerColour;
+
+        let owner = Uuid::from_u128(1);
+        let cutter = Uuid::from_u128(2);
+        let mut game = GameInstance::new("t".into(), owner, 2, "Owner", PlayerColour::Blue);
+        game.turn_manager.players.seat(cutter, "Cutter", PlayerColour::Red).unwrap();
+        game.start_game();
+
+        // Walk a chain of roads out from one vertex, remembering the way.
+        let far_end = |game: &GameInstance, edge: (i32, i32), from: (i32, i32)| {
+            let e = &game.turn_manager.board.edges[&edge];
+            if e.adjacent_vertices.0 == from { e.adjacent_vertices.1 } else { e.adjacent_vertices.0 }
+        };
+
+        let start = *game.turn_manager.board.vertices.keys().min().unwrap();
+        let mut walked = vec![start];
+        let mut here = start;
+        for _ in 0..6 {
+            let next = game.turn_manager.board.vertices[&here]
+                .adjacent_edges
+                .iter()
+                .copied()
+                .find(|e| !walked.contains(&far_end(&game, *e, here)));
+            let Some(edge) = next else { break };
+            let there = far_end(&game, edge, here);
+            game.turn_manager.board.build_edge(owner, edge, EdgeBuilding::Road);
+            walked.push(there);
+            here = there;
+        }
+        assert!(walked.len() >= 6, "need a chain long enough to be worth cutting");
+
+        game.turn_manager.recalculate_bonuses();
+        let before = game.turn_manager.players.get(owner).unwrap().longest_road;
+        assert!(before >= 5, "the chain should measure its full length, got {before}");
+
+        // The cutter plants a settlement in the middle of it.
+        let middle = walked[walked.len() / 2];
+        game.turn_manager
+            .build_settlement(cutter, middle, true)
+            .expect("the middle of a bare road run is a legal spot");
+
+        let after = game.turn_manager.players.get(owner).unwrap().longest_road;
+        assert!(
+            after < before,
+            "the chain was cut, so it must measure shorter: {before} -> {after}",
+        );
+    }
+
+    /// The last player at the table walking out of a special build must not
+    /// take the server with them: `end_turn` on an empty roster panics inside
+    /// the lobby actor, which would kill every other game too.
+    #[test]
+    fn the_last_player_leaving_a_special_build_does_not_panic() {
+        use shared::PlayerColour;
+
+        let only = Uuid::from_u128(1);
+        let mut game = GameInstance::new("t".into(), only, 6, "Only", PlayerColour::Blue);
+        game.start_game();
+        game.phase = GamePhase::SpecialBuilding { builder: only };
+
+        game.remove_player(only).expect("the last player may still leave");
+
+        assert_eq!(game.turn_manager.players.len(), 0);
+        assert!(
+            game.phase.special_builder().is_none(),
+            "the special build must be closed, not left pointing at nobody",
         );
     }
 

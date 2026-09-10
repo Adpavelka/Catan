@@ -108,6 +108,15 @@ impl Lobby {
             .games
             .iter_mut()
             .filter_map(|(gid, game)| {
+                // A won game has no turns left to run. The client-request path
+                // is guarded, but the clock reaches these handlers directly:
+                // without this it ends the winner's turn a minute after they
+                // win, which re-broadcasts `PlayerWon` and reopens everybody's
+                // end screen, then retries a roll every second until the game
+                // is evicted.
+                if game.turn_manager.game_over() {
+                    return None;
+                }
                 let action = game.turn_clock_due()?;
                 Some((gid.clone(), game.active_player(), action))
             })
@@ -119,6 +128,33 @@ impl Lobby {
             let result = match action {
                 TurnClockAction::Roll => game.handle_roll_dice(pid),
                 TurnClockAction::EndTurn => game.handle_end_turn(pid),
+
+                // Nobody is going to answer. Settle what the table is waiting
+                // on and let the next sweep take the turn forward normally.
+                // There is no single `ServerMessage` for "several things were
+                // settled at once", so the table is brought back into line
+                // with a full sync rather than an incremental update.
+                TurnClockAction::ForceResolve => {
+                    let settled = game.force_resolve_pending();
+                    for line in &settled {
+                        log::info!("Turn clock in game {}: {}", gid, line);
+                    }
+                    self.save_game_async(&gid, ctx);
+
+                    let players: Vec<Uuid> = self
+                        .games
+                        .get(&gid)
+                        .map(|g| {
+                            (0..g.turn_manager.players.len())
+                                .filter_map(|i| g.turn_manager.players.get_by_index(i).map(|p| p.id))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    for player_id in players {
+                        self.send_full_sync(player_id, &gid);
+                    }
+                    continue;
+                }
             };
 
             match result {

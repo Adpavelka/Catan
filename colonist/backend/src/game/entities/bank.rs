@@ -408,6 +408,16 @@ impl Bank {
             .ok_or(GameError::InvalidAction)
     }
 
+    /// How many development cards are still in the deck.
+    pub fn dev_cards_left(&self) -> usize {
+        self.dev_cards.len()
+    }
+
+    /// Put a single card back in the supply.
+    pub fn return_one(&mut self, res: ResourceType) {
+        self.game_resources.add(res, 1);
+    }
+
     /// Put a departed player's hand back in the supply.
     ///
     /// The bank is a fixed stock - it is legal to run it dry, and doing so

@@ -45,10 +45,17 @@ impl Handler<Connect> for Lobby {
         if let Some(game_id) = self.player_to_game.get(&pid).cloned() {
             if let Some(game) = self.games.get(&game_id) {
                 if game.turn_manager.game_over() {
-                    error!(
-                        "Player {} attempted to reconnect to game {} which is over",
+                    info!(
+                        "Player {} reconnected to game {}, which is over; sending them to the lobby",
                         pid, game_id
                     );
+                    // Returning outright left them staring at a blank page: no
+                    // `Joined`, no sync and - because the only `LobbyUpdate` a
+                    // fresh connection gets is the broadcast at the end of this
+                    // handler - no lobby list either. Drop the stale mapping
+                    // and fall through so they land on the menu.
+                    self.player_to_game.remove(&pid);
+                    self.broadcast_lobby_status();
                     return;
                 }
 

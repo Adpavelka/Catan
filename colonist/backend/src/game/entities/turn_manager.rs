@@ -187,6 +187,12 @@ impl TurnManager {
         }
 
         self.board.build_vertex(pid, pos, Settlement);
+
+        // A settlement planted in the middle of somebody else's road cuts it
+        // in two, which can take the longest road off them. Only the builder's
+        // own road was ever re-measured, so the holder kept the card and its
+        // two points on a chain that no longer existed.
+        self.recalculate_bonuses();
         self.check_for_winner();
 
         info!("Player {} built a SETTLEMENT at {:?}", pid, pos);
@@ -304,6 +310,13 @@ impl TurnManager {
             if !player.can_pay(&cost) {
                 return Err(GameError::NotEnoughResources);
             }
+        }
+
+        // Check the deck before taking the money. Drawing after paying meant
+        // that when the last card had gone the buyer was charged three
+        // resources and then handed an error.
+        if self.bank.dev_cards_left() == 0 {
+            return Err(GameError::InvalidAction);
         }
 
         self.bank.collect_from_player(pid, cost, &mut self.players)?;

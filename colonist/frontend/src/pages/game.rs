@@ -203,14 +203,23 @@ fn DiscardCardsModal() -> impl IntoView {
             return;
         }
         set_time_left.set(30);
+        // The hand-back fires once. `now` is negative on every tick after the
+        // countdown hits zero, so testing `now > 0` alone let the auto-discard
+        // go out again every second until the server's reply arrived, each
+        // repeat coming back as "You are not required to discard right now".
+        let sent = store_value(false);
         timer.set_value(
             set_interval_with_handle(
                 move || {
                     let now = time_left.get_untracked() - 1;
                     set_time_left.set(now.max(0));
-                    if now > 0 || state.must_discard_count.get_untracked().is_none() {
+                    if now > 0
+                        || sent.get_value()
+                        || state.must_discard_count.get_untracked().is_none()
+                    {
                         return;
                     }
+                    sent.set_value(true);
                     // Out of time: give up cards at random rather than
                     // leaving the table waiting on somebody who has walked
                     // away from the keyboard.

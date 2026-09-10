@@ -22,6 +22,18 @@ impl GameInstance {
 
         match tm.players.get_mut(pid) {
             Some(player) => {
+                // Half the hand, rounded down - the same figure the client was
+                // given in `MustDiscardCards`. Checking only that they can pay
+                // what they offered let a player holding twelve cards hand
+                // back one and keep the rest.
+                let owed = player.resources.get_cards_total() / 2;
+                let offered = discard_set.get_cards_total();
+                if offered != owed {
+                    return Err(format!(
+                        "You must discard exactly {owed} cards, not {offered}."
+                    ));
+                }
+
                 if player.resources.can_pay(&discard_set) {
                     tm.bank
                         .collect_from_player(pid, discard_set, &mut tm.players)

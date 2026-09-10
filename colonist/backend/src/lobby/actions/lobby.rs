@@ -1,5 +1,5 @@
 use actix::{AsyncContext, Context, WrapFuture};
-use log::{info, warn};
+use log::{error, info, warn};
 use uuid::Uuid;
 use shared::{GamePhase, SeatRequest, ServerMessage};
 use crate::lobby::{GameInstance, Lobby};
@@ -220,7 +220,19 @@ impl Lobby {
     }
 
     pub fn handle_create_game(&mut self, pid: Uuid, player_count: usize, seat: SeatRequest, ctx: &mut Context<Lobby>) {
-        let gid = Uuid::new_v4().to_string()[..6].to_string();
+        // Six hex digits is 24 bits, which is short enough to read out to a
+        // friend and short enough to collide. A collision used to replace a
+        // live game outright - its players still pointed at the id by
+        // `player_to_game`, so they woke up in a stranger's game - so keep
+        // drawing until the id is free.
+        let gid = std::iter::repeat_with(|| Uuid::new_v4().to_string()[..6].to_string())
+            .take(16)
+            .find(|candidate| !self.games.contains_key(candidate));
+
+        let Some(gid) = gid else {
+            error!("Could not find a free game id after 16 tries");
+            return self.send_error(pid, "Could not start a game just now. Please try again.");
+        };
         info!("Creating game {} for player {}", gid, pid);
 
         // GameInstance::new seats the creator with the name and colour they chose.

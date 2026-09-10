@@ -344,6 +344,23 @@ impl GameState {
             .unwrap_or_else(|| format!("Player {}", player_id))
     }
 
+    /// Everything the table might be waiting on you for.
+    ///
+    /// Each of these is set by a server prompt and cleared by answering it, so
+    /// none of them survives the game it belongs to. Cleared together when a
+    /// new game's state arrives, or a prompt from the last one would still be
+    /// on screen with nothing behind it.
+    pub fn clear_pending_prompts(&self) {
+        self.must_discard_count.set(None);
+        self.must_move_robber.set(false);
+        self.must_steal_from_players.set(Vec::new());
+        self.waiting_for_discards.set(false);
+        self.year_of_plenty_pending.set(false);
+        self.monopoly_pending.set(false);
+        self.free_roads_remaining.set(0);
+        self.build_mode.set(BuildMode::None);
+    }
+
     /// What a roll of `total` pays out, as one entry per card: the tile it
     /// comes off, who gets it, and what it is.
     ///
@@ -446,6 +463,13 @@ impl GameState {
                     self.robber_pos.set(Some(board.robber_pos));
                     self.board_ports.set(board.ports);
                     self.game_phase.set(game_phase.clone());
+
+                    // Nothing owed carries from one table to the next. Sitting
+                    // down at a new game used to leave whatever the last one
+                    // was waiting on still on screen - most visibly a discard
+                    // dialog over a hand that owes nothing, which cannot be
+                    // dismissed because the server never asked for it.
+                    self.clear_pending_prompts();
 
                     // Find my resources, dev cards, and ports from the players list
                     if let Some(my_player) = players.iter().find(|p| p.player_id == your_player_id) {

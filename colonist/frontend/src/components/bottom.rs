@@ -665,7 +665,11 @@ fn ActionBar() -> impl IntoView {
     let settlements_left = move || MAX_SETTLEMENTS.saturating_sub(mine(state.settlements));
     let cities_left = move || MAX_CITIES.saturating_sub(mine(state.cities));
 
-    let can_build = move |cost: [u8; 5], left: usize| {
+    // `free` marks the road control: Road Building pays for roads, and only
+    // roads. Sharing that escape hatch with the settlement and city controls
+    // lit all three up on an empty hand, and a click armed a build the server
+    // then refused for want of resources.
+    let can_build = move |cost: [u8; 5], left: usize, free: bool| {
         if left == 0 {
             return false;
         }
@@ -675,7 +679,8 @@ fn ActionBar() -> impl IntoView {
         if placing() {
             return false;
         }
-        state.can_build_now() && (affords(cost) || state.free_roads_remaining.get() > 0)
+        let paid_for = affords(cost) || (free && state.free_roads_remaining.get() > 0);
+        state.can_build_now() && paid_for
     };
 
     let can_buy_dev = move || {
@@ -709,7 +714,7 @@ fn ActionBar() -> impl IntoView {
 
             <HudButton
                 label="Build a road"
-                enabled=Signal::derive(move || can_build(ROAD, roads_left()))
+                enabled=Signal::derive(move || can_build(ROAD, roads_left(), true))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::Road)
                 badge=Signal::derive(move || roads_left().to_string())
                 cost=ROAD
@@ -722,7 +727,7 @@ fn ActionBar() -> impl IntoView {
 
             <HudButton
                 label="Build a settlement"
-                enabled=Signal::derive(move || can_build(SETTLEMENT, settlements_left()))
+                enabled=Signal::derive(move || can_build(SETTLEMENT, settlements_left(), false))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::Settlement)
                 badge=Signal::derive(move || settlements_left().to_string())
                 cost=SETTLEMENT
@@ -735,7 +740,7 @@ fn ActionBar() -> impl IntoView {
 
             <HudButton
                 label="Upgrade to a city"
-                enabled=Signal::derive(move || can_build(CITY, cities_left()))
+                enabled=Signal::derive(move || can_build(CITY, cities_left(), false))
                 armed=Signal::derive(move || state.build_mode.get() == BuildMode::City)
                 badge=Signal::derive(move || cities_left().to_string())
                 cost=CITY
