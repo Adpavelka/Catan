@@ -919,19 +919,24 @@ fn OfferDock() -> impl IntoView {
 
     view! {
         <Show when=any>
+            // The same width and the same corner as the proposer's own panel
+            // in `OfferStatus`: one offer should be the same object on both
+            // sides of the table. The cards are not wrapped in a tray of their
+            // own either - a tray inside a tray inset them by its padding and
+            // left the receiving side reading as a smaller, tighter thing than
+            // the side that sent it.
             <div
-                class="fixed z-[59] flex flex-col gap-2 items-stretch"
-                style="right: 416px; top: 12px; width: 340px;"
+                class="fixed z-[59] flex flex-col gap-1.5 items-stretch"
+                style="right: 416px; top: 12px; width: 485px;"
             >
-                <div class="hud-tray px-3 py-2">
-                    <div class="text-[11px] font-black uppercase tracking-[0.15em] text-[#7a7263] mb-1.5">
-                        {move || {
-                            let n = state.incoming_trades.get().len();
-                            if n == 1 { "An offer for you".to_string() } else { format!("{n} offers for you") }
-                        }}
-                    </div>
-                    <crate::pages::game::IncomingTrades />
+                <div class="text-[11px] font-black uppercase tracking-[0.15em] text-[#f0e6d2]
+                            drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pl-1">
+                    {move || {
+                        let n = state.incoming_trades.get().len();
+                        if n == 1 { "An offer for you".to_string() } else { format!("{n} offers for you") }
+                    }}
                 </div>
+                <crate::pages::game::IncomingTrades />
             </div>
         </Show>
     }

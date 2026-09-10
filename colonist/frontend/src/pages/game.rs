@@ -581,8 +581,10 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-1.5">
-            <div class="hud-tray flex items-center gap-2.5 px-3" style="height: 54px;">
-                <PlayerMark who=Signal::derive(move || Some(proposer)) size=38 />
+            // Height and avatar match `OfferCard`'s header, so an offer is the
+            // same size whether you sent it or received it.
+            <div class="hud-tray flex items-center gap-2.5 px-3" style="height: 60px;">
+                <PlayerMark who=Signal::derive(move || Some(proposer)) size=44 />
                 <span class="text-[14px] font-black text-[#413a2c] truncate">
                     {proposer_name}
                     {if is_counter { " counters" } else { " offers" }}
@@ -602,8 +604,10 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
                 </span>
             </div>
 
-            <div class="hud-tray px-3 py-2 flex flex-col gap-1">
-                <div class="flex items-center gap-2.5 min-h-[62px]">
+            <div class="hud-tray px-3 py-2 flex flex-col justify-center gap-1"
+                 style="min-height: 155px;">
+                <div class="flex items-center gap-2.5 min-h-[68px]">
+                    <PlayerMark who=Signal::derive(move || state.player_id.get()) size=44 />
                     <Arrow up=false />
                     <TermCards
                         basket=Signal::derive(move || incoming)
@@ -611,7 +615,8 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
                     />
                 </div>
 
-                <div class="flex items-center gap-2.5 min-h-[62px]">
+                <div class="flex items-center gap-2.5 min-h-[68px]">
+                    <PlayerMark who=Signal::derive(move || state.player_id.get()) size=44 />
                     <Arrow up=true />
                     <TermCards
                         basket=Signal::derive(move || outgoing)
