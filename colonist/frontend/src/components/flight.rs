@@ -18,10 +18,12 @@ use crate::components::icons::resource_art;
 use crate::state::GameState;
 use shared::ResourceType;
 
-/// How long one card is in the air.
-const FLIGHT_MS: u64 = 850;
+/// How long one card is in the air. Slow enough to follow a card from the tile
+/// that produced it to the player it belongs to - the point of the animation is
+/// that you can see where your income came from.
+const FLIGHT_MS: u64 = 1500;
 /// Cards from the same roll leave in quick succession rather than as a clump.
-const STAGGER_MS: u64 = 70;
+const STAGGER_MS: u64 = 100;
 /// Beyond this many cards the animation stops being readable and starts being
 /// a swarm, so the tail is dropped.
 const MAX_CARDS: usize = 18;
@@ -158,14 +160,18 @@ pub fn ResourceFlight() -> impl IntoView {
                 children=move |f: Flyer| {
                     // The card is drawn at the origin and moved by transform,
                     // so the browser animates it on the compositor.
+                    // The negative margins are half the card, so the card rides
+                    // centred on the line from tile to player rather than
+                    // hanging off it by its top-left corner. They have to keep
+                    // pace with the size below.
                     let style = format!(
                         "--x0: {:.1}px; --y0: {:.1}px; --x1: {:.1}px; --y1: {:.1}px; \
-                         --dur: {}ms; --delay: {}ms; margin-left: -19px; margin-top: -26px;",
+                         --dur: {}ms; --delay: {}ms; margin-left: -29px; margin-top: -39px;",
                         f.from.0, f.from.1, f.to.0, f.to.1, FLIGHT_MS, f.delay,
                     );
                     view! {
                         <img
-                            class="flyer w-[38px] h-[52px] rounded-[4px] object-cover
+                            class="flyer w-[58px] h-[78px] rounded-[6px] object-cover
                                    border-2 border-[#2b2418] shadow-[0_3px_6px_rgba(0,0,0,0.45)]"
                             src=format!("/assets/{}.svg", f.art)
                             alt=f.label
