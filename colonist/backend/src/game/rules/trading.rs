@@ -498,11 +498,16 @@ impl GameInstance {
         self.stats.trade_completed(taker);
 
         // Settling ends the whole negotiation, including any counters that
-        // were answering the same offer.
-        self.close_offer_and_counters(offer_id);
+        // were answering the same offer. Every id that goes has to be named,
+        // or the original offer and its sibling counters stay on the other
+        // players' screens as things they can still click.
+        let mut also_closed = self.close_offer_and_counters(offer_id);
         if let Some(original) = trade.counters {
-            self.close_offer_and_counters(original);
+            also_closed.extend(self.close_offer_and_counters(original));
         }
+        also_closed.retain(|id| *id != offer_id);
+        also_closed.sort_unstable();
+        also_closed.dedup();
 
         Ok(ServerMessage::TradeCompleted {
             offer_id,
@@ -510,6 +515,7 @@ impl GameInstance {
             accepter_id: taker,
             proposer_gave: trade.offering,
             accepter_gave: trade.requesting,
+            also_closed,
         })
     }
 
@@ -532,7 +538,7 @@ impl GameInstance {
     /// Whether every player who could still answer this offer has declined it.
     /// Counts only players actually seated, so someone leaving mid-offer
     /// cannot keep it alive forever.
-    fn everyone_has_declined(&self, offer_id: u64) -> bool {
+    pub(crate) fn everyone_has_declined(&self, offer_id: u64) -> bool {
         let Some(trade) = self.pending_trades.get(&offer_id) else {
             return false;
         };
@@ -552,7 +558,17 @@ impl GameInstance {
         match trade {
             None => Err("Trade not found".to_string()),
             Some(trade) => {
-                if trade.proposer_id != pid {
+                // A counter runs between the countering player and the active
+                // player, and the active player is its *target*, not its
+                // proposer. Turning one down is the only answer they have
+                // besides taking it - `TradeResponse` is refused for counters -
+                // so without this a counter could only be accepted or waited
+                // out.
+                let is_counter = trade.counters.is_some();
+                let may_cancel = trade.proposer_id == pid
+                    || (is_counter && trade.target_player_id == Some(pid));
+
+                if !may_cancel {
                     Err("You can only cancel your own trades".to_string())
                 } else {
                     self.close_offer_and_counters(offer_id);
@@ -600,6 +616,58 @@ mod tests {
         }
 
         (game, ids[0], ids[1], ids[2])
+    }
+
+    /// The active player's only answers to a counter were to take it or wait
+    /// it out: `TradeResponse` is refused for counters, and `CancelTrade`
+    /// checked the proposer, which for a counter is the other player.
+    #[test]
+    fn a_counter_can_be_turned_down() {
+        let (mut game, proposer, second, _third) = table();
+        let offer_id = offer_brick_for_lumber(&mut game, proposer);
+
+        let counter_id = match game
+            .handle_counter_offer(second, offer_id, res(0, 2), res(1, 0))
+            .expect("countering is allowed")
+        {
+            ServerMessage::TradeProposed { offer_id, .. } => offer_id,
+            other => panic!("expected TradeProposed, got {other:?}"),
+        };
+
+        game.handle_cancel_trade(proposer, counter_id)
+            .expect("the player a counter is aimed at must be able to refuse it");
+        assert!(
+            !game.pending_trades.contains_key(&counter_id),
+            "a refused counter must leave the table",
+        );
+    }
+
+    /// Settling a counter drops the offer it answered and every sibling
+    /// counter. Those ids have to be named, or they stay on other players'
+    /// screens as offers they can still click.
+    #[test]
+    fn settling_a_counter_names_everything_it_closes() {
+        let (mut game, proposer, second, third) = table();
+        let offer_id = offer_brick_for_lumber(&mut game, proposer);
+
+        let mut counters = Vec::new();
+        for who in [second, third] {
+            match game.handle_counter_offer(who, offer_id, res(0, 2), res(1, 0)).unwrap() {
+                ServerMessage::TradeProposed { offer_id, .. } => counters.push(offer_id),
+                other => panic!("expected TradeProposed, got {other:?}"),
+            }
+        }
+
+        let settled = counters[0];
+        let also = match game.handle_confirm_trade(proposer, settled, second).unwrap() {
+            ServerMessage::TradeCompleted { also_closed, .. } => also_closed,
+            other => panic!("expected TradeCompleted, got {other:?}"),
+        };
+
+        assert!(also.contains(&offer_id), "the original offer died too: {also:?}");
+        assert!(also.contains(&counters[1]), "so did the sibling counter: {also:?}");
+        assert!(!also.contains(&settled), "the settled offer is named on its own");
+        assert!(game.pending_trades.is_empty(), "nothing may be left open");
     }
 
     fn offer_brick_for_lumber(game: &mut GameInstance, proposer: Uuid) -> u64 {

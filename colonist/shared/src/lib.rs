@@ -413,6 +413,12 @@ pub enum ServerMessage {
         proposer_gave: Resources,
         /// What the accepter gave
         accepter_gave: Resources,
+        /// Other offers that died with this one: the offer a counter was
+        /// answering, and every sibling counter on it. The server drops them
+        /// all when a trade settles, so without naming them here they would
+        /// sit on other players' screens until somebody clicked one.
+        #[serde(default)]
+        also_closed: Vec<u64>,
     },
     /// A trade offer is no longer open - withdrawn by the proposer, expired,
     /// or dropped because the proposer can no longer cover it.
@@ -730,6 +736,12 @@ pub struct LobbyGameInfo {
     pub max_players: usize,
     pub available_colours: Vec<PlayerColour>,
     pub victory_points_to_win: u8,
+    /// Whether play has begun. A game can start before its seats are full, so
+    /// "full" is not the same as "closed" - without this the lobby offered a
+    /// live JOIN button on a game already in progress, and clicking it only
+    /// earned you "This game has already started".
+    #[serde(default)]
+    pub started: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

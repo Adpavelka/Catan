@@ -81,9 +81,21 @@ pub struct Basket {
     pub ore: u8,
 }
 
+/// The most of one resource a trade may ask for. No game holds more than the
+/// deepest bank stack, and without a ceiling the ask palette let a single kind
+/// climb to 255 - two of those overflowed `Basket::total`, which panics in a
+/// debug build and silently wraps in a release one.
+pub const MAX_ASK_PER_KIND: u8 = 24;
+
 impl Basket {
     pub fn total(&self) -> u8 {
-        self.wood + self.brick + self.sheep + self.wheat + self.ore
+        // Saturating, not wrapping: a pile this size is already nonsense, and
+        // a wrong-but-large total is far better than a panic mid-trade.
+        self.wood
+            .saturating_add(self.brick)
+            .saturating_add(self.sheep)
+            .saturating_add(self.wheat)
+            .saturating_add(self.ore)
     }
     pub fn get(&self, k: Res) -> u8 {
         match k {
@@ -396,7 +408,11 @@ fn HandTray() -> impl IntoView {
             .into_iter()
             .flat_map(|k| {
                 let n = k.in_hand(&held);
-                let committed = up.get(k);
+                // The draft can outlive the cards it was built from - an
+                // opponent's monopoly, or being robbed, while the window is
+                // open. Clamping first stops `n - committed` saturating to
+                // zero and marking the whole run as already up for trade.
+                let committed = up.get(k).min(n);
                 (0..n).map(move |i| (k, i >= n.saturating_sub(committed)))
             })
             .collect::<Vec<(Res, bool)>>()
@@ -1035,8 +1051,21 @@ fn TradePanel() -> impl IntoView {
             offer_any: draft.offer_any.get_untracked(),
             request_any: draft.receive_any.get_untracked(),
         });
-        draft.clear();
+        // Deliberately not cleared here. The server can still refuse the
+        // offer - the hand may have shrunk since the cards were laid out -
+        // and clearing on send threw away the composed trade instead of
+        // letting the player fix it. The bench empties below, once the offer
+        // has actually reached the table.
     };
+
+    // The offer landed: the roster of my open offers just grew.
+    create_effect(move |previous: Option<usize>| {
+        let open_now = state.my_offers.get().len();
+        if previous.is_some_and(|before| open_now > before) {
+            draft.clear();
+        }
+        open_now
+    });
 
     let close = move |_| {
         draft.clear();
@@ -1060,7 +1089,9 @@ fn TradePanel() -> impl IntoView {
                             <button
                                 class="game-card-pick shrink-0"
                                 title=move || format!("Ask for {}", k.label().to_lowercase())
-                                on:click=move |_| draft.receive.update(|b| b.set(k, b.get(k).saturating_add(1)))
+                                on:click=move |_| draft.receive.update(|b| {
+                                    b.set(k, b.get(k).saturating_add(1).min(MAX_ASK_PER_KIND))
+                                })
                                 on:contextmenu=move |ev| {
                                     ev.prevent_default();
                                     draft.receive.update(|b| b.set(k, b.get(k).saturating_sub(1)));

@@ -48,6 +48,17 @@ pub struct GameInstance {
     /// clock never re-armed and fired its deadline again every single tick.
     #[serde(default)]
     clock_turn_seq: Option<u64>,
+    /// The phase the clock was armed in. Setup advances by phase rather than
+    /// by turn counter, so without this a placement clock armed once would
+    /// never re-arm as the step moved from settlement to road to the next
+    /// player, and would fire its deadline on every tick.
+    #[serde(default)]
+    clock_phase: Option<GamePhase>,
+    /// Offers that have expired but not yet been announced. The rules layer
+    /// expires them as a side effect of ordinary trade calls and has no way to
+    /// broadcast, so the ids wait here for the lobby to drain and announce.
+    #[serde(default, skip)]
+    expired_notices: Vec<u64>,
 
     /// The running tally behind the end-of-game screen. Counters only - see
     /// `statistics`. Defaulted so games saved before it existed still load,
@@ -56,11 +67,21 @@ pub struct GameInstance {
     pub stats: Statistics,
 }
 
+/// What the server puts down for a player who has stalled during setup.
+#[derive(Debug, Clone, Copy)]
+pub enum AutoPlacement {
+    Settlement((i32, i32)),
+    Road((i32, i32)),
+}
+
 /// What the turn clock wants done, once a deadline has passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnClockAction {
     Roll,
     EndTurn,
+    /// Setup cannot be skipped, so the server places for whoever has stopped
+    /// answering. See `auto_placement`.
+    AutoPlace,
     /// Settle whatever the table is waiting on, on behalf of whoever has
     /// stopped answering. See `force_resolve_pending`.
     ForceResolve,
@@ -122,6 +143,8 @@ impl GameInstance {
             clock_player: None,
             clock_started_secs: 0,
             clock_turn_seq: None,
+            clock_phase: None,
+            expired_notices: Vec::new(),
             stats: Statistics::default(),
         }
     }
@@ -407,9 +430,12 @@ impl GameInstance {
     /// Forgets offers nobody answered in time, so they cannot be accepted
     /// hours later against a hand that has completely changed.
     ///
-    /// Returns the offers that were dropped. Callers must tell the table about
-    /// them: an offer that vanishes silently leaves the proposer's client
-    /// believing it is still open, and they can never propose another.
+    /// Returns the offers that were dropped, and queues the same ids for
+    /// `drain_expired_notices`. An offer that vanishes silently leaves the
+    /// proposer's client believing it is still open; the rules layer calls
+    /// this on every trade action and cannot broadcast, so the queue is what
+    /// lets the lobby announce those too rather than only the ones its own
+    /// sweep happens to find.
     pub fn expire_stale_trades(&mut self) -> Vec<u64> {
         let now = now_secs();
 
@@ -424,7 +450,14 @@ impl GameInstance {
             self.pending_trades.remove(id);
         }
 
+        self.expired_notices.extend(expired.iter().copied());
         expired
+    }
+
+    /// Offers that have expired since anybody last asked, for the lobby to
+    /// announce. Draining is what stops the same id going out twice.
+    pub fn drain_expired_notices(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.expired_notices)
     }
 
     /// Drops every open offer. Called when the turn ends: an offer belongs to
@@ -440,19 +473,31 @@ impl GameInstance {
     /// robber move, a resource pick - because those are the player's to make
     /// and skipping them would corrupt the position.
     pub fn turn_clock_due(&mut self) -> Option<TurnClockAction> {
-        if self.phase != GamePhase::RegularPlay {
+        // Nothing to time before the game has begun. Every other phase is
+        // timed: setup and the special build used to be exempt, so a player
+        // who stalled in either froze the table for good - nobody else may
+        // act, so no action ever refreshes the idle timer and the eviction
+        // sweep will not touch a game whose other players are still there.
+        if self.phase == GamePhase::WaitingForPlayers || self.turn_manager.game_over() {
             self.clock_player = None;
             self.clock_turn_seq = None;
+            self.clock_phase = None;
             return None;
         }
 
-        let current = self.turn_manager.players.get_current_player().id;
+        // The special builder, when there is one, is the player being waited
+        // on rather than the player whose turn it is.
+        let current = self.active_player();
         let seq = self.turn_manager.turn_seq();
         let now = now_secs();
 
-        if self.clock_player != Some(current) || self.clock_turn_seq != Some(seq) {
+        if self.clock_player != Some(current)
+            || self.clock_turn_seq != Some(seq)
+            || self.clock_phase != Some(self.phase)
+        {
             self.clock_player = Some(current);
             self.clock_turn_seq = Some(seq);
+            self.clock_phase = Some(self.phase);
             self.clock_started_secs = now;
             return None;
         }
@@ -475,10 +520,62 @@ impl GameInstance {
             return (elapsed >= shared::TURN_LIMIT_SECS).then_some(TurnClockAction::ForceResolve);
         }
 
-        if !self.turn_manager.dice.was_dice_rolled() {
-            (elapsed >= shared::TURN_AUTO_ROLL_SECS).then_some(TurnClockAction::Roll)
-        } else {
-            (elapsed >= shared::TURN_LIMIT_SECS).then_some(TurnClockAction::EndTurn)
+        let out_of_time = elapsed >= shared::TURN_LIMIT_SECS;
+
+        match self.phase {
+            // Setup cannot be skipped - a player with no settlements has no
+            // game - so the server puts a piece down for them instead.
+            GamePhase::InitialPlacement { .. } => out_of_time.then_some(TurnClockAction::AutoPlace),
+
+            // Passing a special build is exactly what ending a turn does in
+            // that phase, so the ordinary action covers it.
+            GamePhase::SpecialBuilding { .. } => out_of_time.then_some(TurnClockAction::EndTurn),
+
+            GamePhase::RegularPlay => {
+                if !self.turn_manager.dice.was_dice_rolled() {
+                    (elapsed >= shared::TURN_AUTO_ROLL_SECS).then_some(TurnClockAction::Roll)
+                } else {
+                    out_of_time.then_some(TurnClockAction::EndTurn)
+                }
+            }
+
+            GamePhase::WaitingForPlayers => None,
+        }
+    }
+
+    /// A legal setup placement for whoever has stopped answering.
+    ///
+    /// Deliberately the plainest choice rather than a good one: the point is
+    /// to keep the game moving, not to play well on somebody's behalf. The
+    /// coordinates are sorted so the pick is deterministic, which keeps the
+    /// behaviour reproducible in a test.
+    pub(crate) fn auto_placement(&self) -> Option<AutoPlacement> {
+        let board = &self.turn_manager.board;
+
+        match self.phase {
+            GamePhase::InitialPlacement { step: PlacementStep::BuildSettlement, .. } => {
+                let mut spots: Vec<_> = board
+                    .vertices
+                    .keys()
+                    .copied()
+                    .filter(|c| board.is_buildable_vertex(*c))
+                    .collect();
+                spots.sort();
+                spots.first().copied().map(AutoPlacement::Settlement)
+            }
+
+            GamePhase::InitialPlacement { step: PlacementStep::BuildRoad { settlement }, .. } => {
+                let mut spots: Vec<_> = board
+                    .vertices
+                    .get(&settlement)
+                    .map(|v| v.adjacent_edges.iter().copied().collect())
+                    .unwrap_or_else(Vec::new);
+                spots.retain(|e| board.edges.get(e).is_some_and(|edge| edge.owner.is_none()));
+                spots.sort();
+                spots.first().copied().map(AutoPlacement::Road)
+            }
+
+            _ => None,
         }
     }
 
@@ -571,6 +668,20 @@ impl GameInstance {
         });
         for trade in self.pending_trades.values_mut() {
             trade.decline(pid);
+        }
+
+        // Recording that decline can be the one that completes the set. If the
+        // leaver was the last player who had not refused, the offer is dead -
+        // leaving it open meant it sat there with nobody able to take it until
+        // it timed out.
+        let dead: Vec<u64> = self
+            .pending_trades
+            .keys()
+            .copied()
+            .filter(|id| self.everyone_has_declined(*id))
+            .collect();
+        for offer_id in dead {
+            closed.extend(self.close_offer_and_counters(offer_id));
         }
 
         self.special_build_queue.retain(|id| *id != pid);
@@ -839,6 +950,28 @@ mod tests {
             .collect();
         coords.sort();
         coords[0]
+    }
+
+    /// A buildable vertex, far enough from `avoid`, that touches at least one
+    /// tile which actually produces. Used where the point of the test is the
+    /// payout, so a desert-only corner would prove nothing.
+    fn producing_vertex(game: &GameInstance, avoid: (i32, i32)) -> (i32, i32) {
+        let board = &game.turn_manager.board;
+        let mut coords: Vec<_> = board
+            .vertices
+            .keys()
+            .copied()
+            .filter(|c| board.is_buildable_vertex(*c))
+            .filter(|c| (c.0 - avoid.0).abs() + (c.1 - avoid.1).abs() > 6)
+            .filter(|c| {
+                board.hexes.values().any(|hex| {
+                    hex.adjacent_vertices.contains(c)
+                        && hex.resource != shared::ResourceType::Desert
+                })
+            })
+            .collect();
+        coords.sort();
+        *coords.first().expect("a board always has a producing corner free")
     }
 
     /// A player who quits must not leave their pieces standing on the board,
@@ -1133,6 +1266,65 @@ mod tests {
             game.phase.special_builder().is_none(),
             "the special build must be closed, not left pointing at nobody",
         );
+    }
+
+    /// Setup used to be exempt from the turn clock, so a player who stopped
+    /// answering during placement froze the table for good.
+    #[test]
+    fn the_clock_runs_during_setup_and_places_for_a_silent_player() {
+        use shared::{InitialRound, PlacementStep, PlayerColour};
+
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let mut game = GameInstance::new("t".into(), a, 2, "A", PlayerColour::Blue);
+        game.turn_manager.players.seat(b, "B", PlayerColour::Red).unwrap();
+        game.start_game();
+
+        // Arm the clock, then wind it back past the deadline.
+        assert!(game.turn_clock_due().is_none(), "the first look only arms it");
+        game.clock_started_secs -= shared::TURN_LIMIT_SECS + 1;
+
+        assert!(
+            matches!(game.turn_clock_due(), Some(TurnClockAction::AutoPlace)),
+            "a stalled setup must be placed for, not waited on forever",
+        );
+
+        let Some(AutoPlacement::Settlement((x, y))) = game.auto_placement() else {
+            panic!("a fresh board has somewhere legal to put a settlement");
+        };
+        game.handle_build_settlement(a, x, y).expect("the chosen spot must be legal");
+
+        assert!(
+            matches!(
+                game.phase,
+                GamePhase::InitialPlacement { step: PlacementStep::BuildRoad { .. }, .. }
+            ),
+            "placing advances the step the ordinary way",
+        );
+        assert_eq!(
+            game.turn_manager.board.vertices[&(x, y)].owner,
+            Some(a),
+            "the settlement belongs to the player who ran out of time",
+        );
+        let _ = InitialRound::First;
+    }
+
+    /// The clock's own moves must not count as the table being alive, or an
+    /// abandoned game auto-plays forever and is never evicted.
+    #[test]
+    fn a_table_nobody_is_playing_goes_idle() {
+        use shared::PlayerColour;
+
+        let pid = Uuid::from_u128(1);
+        let mut game = GameInstance::new("t".into(), pid, 2, "T", PlayerColour::Blue);
+        game.last_activity_secs = now_secs() - 4242;
+
+        let idle_before = game.idle_for_secs();
+        assert!(idle_before > 4000, "the clock should have been running: {idle_before}");
+
+        // Only a real player action refreshes it - see `process_successful_action`.
+        game.touch();
+        assert!(game.idle_for_secs() < 5, "a player's move keeps the table alive");
     }
 
     /// A client picks the table size, so it has to be pinned to what the game
@@ -1852,8 +2044,14 @@ mod tests {
         );
 
         // Round two: the settlement pays a starting hand off its tiles.
+        //
+        // It has to be a spot that actually touches producing land. The board
+        // is shuffled per run, and simply taking the first legal vertex landed
+        // on one whose only neighbour was the desert about once in twenty
+        // runs - the payout was correctly nothing, and the test failed on a
+        // board that was never wrong.
         game.advance_phase();
-        let second = free_vertex(&game, Some(first));
+        let second = producing_vertex(&game, first);
         game.handle_build_settlement(pid, second.0, second.1).unwrap();
         let road = *game
             .turn_manager

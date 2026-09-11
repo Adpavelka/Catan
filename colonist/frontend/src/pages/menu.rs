@@ -216,8 +216,10 @@ fn ColourPicker(
 fn LobbyItem(lobby: LobbyGameInfo, state: GameState) -> impl IntoView {
     let (picking, set_picking) = create_signal(false);
 
-    let LobbyGameInfo { game_id, players, max_players, available_colours, victory_points_to_win } = lobby;
-    let is_full = players >= max_players || available_colours.is_empty();
+    let LobbyGameInfo { game_id, players, max_players, available_colours, victory_points_to_win, started } = lobby;
+    // A game can begin before its seats are full, so a table with room in it
+    // is still closed once play has started - the server refuses the join.
+    let is_full = started || players >= max_players || available_colours.is_empty();
     let gid = game_id.clone();
 
     view! {

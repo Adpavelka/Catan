@@ -63,6 +63,7 @@ impl Lobby
                 max_players: game.max_players,
                 available_colours: game.available_colours(),
                 victory_points_to_win: game.rules().victory_points_to_win,
+                started: game.get_state() != shared::GamePhase::WaitingForPlayers,
             })
             .collect();
 
@@ -170,10 +171,14 @@ impl Lobby
                         .map_or(0, |p| (p.resources.get_cards_total() / 2) as usize);
                     shared::ServerMessage::MustDiscardCards { player_id: pid, count }
                 }
-                // Choosing a victim is driven by `CanRobPlayers`, which
-                // carries the list of who is standing there; it is not
-                // reconstructible from the action alone.
-                PendingAction::Steal => continue,
+                // The victim list is recomputed from where the robber is
+                // standing now. Skipping this left a reconnecting player owing
+                // a steal with no prompt to answer and no way to end their
+                // turn, which `handle_end_turn` refuses while anything is
+                // pending.
+                PendingAction::Steal => shared::ServerMessage::CanRobPlayers {
+                    player_ids: game.turn_manager.robbable_players(pid).into_iter().collect(),
+                },
             };
             self.send_server_msg(pid, msg);
         }

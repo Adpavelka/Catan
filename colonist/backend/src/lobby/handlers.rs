@@ -126,7 +126,7 @@ impl Handler<ClientActorMessage> for Lobby {
 
         match action_result {
             Ok(msg) => {
-                self.process_successful_action(pid, &gid, msg, ctx);
+                self.process_successful_action(pid, &gid, msg, ctx, true);
             }
             Err(e) => self.send_error(pid, &e),
         }
@@ -134,14 +134,40 @@ impl Handler<ClientActorMessage> for Lobby {
 }
 
 impl Lobby {
-    pub(super) fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>) {
-        if let Some(game) = self.games.get_mut(gid) {
-            game.touch();
+    /// `by_player` marks an action a human actually asked for.
+    ///
+    /// Only those count as the table being alive. The turn clock drives roll
+    /// and end-turn through here too, and counting those reset the idle timer
+    /// about once a minute - so a table whose players had all closed their
+    /// tabs played itself forever, auto-rolling every ten seconds and writing
+    /// to Postgres each time, never idle long enough to be evicted.
+    pub(super) fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>, by_player: bool) {
+        if by_player {
+            if let Some(game) = self.games.get_mut(gid) {
+                game.touch();
+            }
         }
-        self.handle_victory_if_needed(gid);
         self.save_game_async(gid, ctx);
         self.deliver_action_result(gid, msg.clone());
         self.handle_post_message_effects(pid, gid, &msg);
+
+        // Trade calls expire stale offers as a side effect. Those ids never
+        // reached the table before: the rules layer cannot broadcast, and the
+        // five-second sweep found nothing left to announce.
+        let expired = self
+            .games
+            .get_mut(gid)
+            .map(|game| game.drain_expired_notices())
+            .unwrap_or_default();
+        for offer_id in expired {
+            self.broadcast_to_game(gid, ServerMessage::TradeCancelled { offer_id });
+        }
+
+        // The win goes out last. Announced first, the statistics sheet opened
+        // over a board still missing the settlement that won the game and a
+        // roster one point short, because the action itself and the trailing
+        // `PlayersUpdate` had not been sent yet.
+        self.handle_victory_if_needed(gid);
     }
 
     /// Most results go to the whole table. A decline is between the two
@@ -411,6 +437,21 @@ impl Lobby {
                         player_ids: robbable_players.into_iter().collect(),
                     },
                 );
+            }
+        }
+
+        // Robbing somebody who owes a discard changes what they owe: the
+        // amount is half their hand, worked out afresh when they submit. Their
+        // dialog still showed the old figure, so every submission came back
+        // refused and they were stuck until the turn clock stepped in.
+        if let ServerMessage::PlayerRobbed { victim_id, stole_a_card: true, .. } = msg {
+            let still_owes = self
+                .games
+                .get(gid)
+                .is_some_and(|game| game.has_pending_action(*victim_id, PendingAction::Discard));
+
+            if still_owes {
+                self.announce_pending_actions(*victim_id, gid);
             }
         }
     }

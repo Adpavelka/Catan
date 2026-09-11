@@ -359,6 +359,16 @@ impl GameState {
         self.monopoly_pending.set(false);
         self.free_roads_remaining.set(0);
         self.build_mode.set(BuildMode::None);
+
+        // Trades belong to the turn they were made in, and certainly to the
+        // game. A win produces no `NextTurn`, so nothing closes the offers
+        // that were open on the winning turn - they were still on screen at
+        // the next game's first frame. Safe on a reconnect too: `restore_trades`
+        // replaces all four wholesale from the sync.
+        self.incoming_trades.set(Vec::new());
+        self.my_offers.set(Vec::new());
+        self.my_accepted_offers.set(Vec::new());
+        self.my_counter_offers.set(Vec::new());
     }
 
     /// What a roll of `total` pays out, as one entry per card: the tile it
@@ -1059,18 +1069,20 @@ impl GameState {
                         });
                     }
                 }
-                ServerMessage::TradeCompleted { offer_id, proposer_id, accepter_id, proposer_gave: _, accepter_gave: _ } => {
+                ServerMessage::TradeCompleted { offer_id, proposer_id, accepter_id, proposer_gave: _, accepter_gave: _, also_closed } => {
                     logging::log!("Trade completed: {} between {} and {}", offer_id, proposer_id, accepter_id);
 
-                    // Remove from incoming trades
-                    self.incoming_trades.update(|trades| {
-                        trades.retain(|t| t.offer_id != offer_id);
-                    });
-                    self.my_accepted_offers.update(|ids| ids.retain(|id| *id != offer_id));
-                    self.forget_counters(offer_id);
-
-                    // If it was mine, it is off the table.
-                    self.my_offers.update(|offers| offers.retain(|o| o.offer_id != offer_id));
+                    // The settled offer, plus everything the server dropped
+                    // along with it: the offer a counter was answering, and
+                    // any sibling counters on it.
+                    for id in std::iter::once(offer_id).chain(also_closed.into_iter()) {
+                        self.incoming_trades.update(|trades| {
+                            trades.retain(|t| t.offer_id != id);
+                        });
+                        self.my_accepted_offers.update(|ids| ids.retain(|x| *x != id));
+                        self.forget_counters(id);
+                        self.my_offers.update(|offers| offers.retain(|o| o.offer_id != id));
+                    }
 
                     // Show message
                     let proposer_name = self.players.get_untracked()

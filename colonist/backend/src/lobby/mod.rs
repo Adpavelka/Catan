@@ -1,4 +1,4 @@
-use crate::game::entities::game_instance::{GameInstance, TurnClockAction};
+use crate::game::entities::game_instance::{AutoPlacement, GameInstance, TurnClockAction};
 use crate::network::message::ServerMessage;
 use crate::repository::game_repository::GameRepository;
 use shared::ServerMessage as ServerMsg;
@@ -86,7 +86,10 @@ impl Lobby {
         let expired: Vec<(String, Vec<u64>)> = self
             .games
             .iter_mut()
-            .map(|(gid, game)| (gid.clone(), game.expire_stale_trades()))
+            .map(|(gid, game)| {
+                game.expire_stale_trades();
+                (gid.clone(), game.drain_expired_notices())
+            })
             .filter(|(_, ids)| !ids.is_empty())
             .collect();
 
@@ -129,6 +132,26 @@ impl Lobby {
                 TurnClockAction::Roll => game.handle_roll_dice(pid),
                 TurnClockAction::EndTurn => game.handle_end_turn(pid),
 
+                // Setup cannot be skipped, so put a piece down for them and
+                // let the placement advance the phase the normal way.
+                TurnClockAction::AutoPlace => match game.auto_placement() {
+                    Some(AutoPlacement::Settlement((x, y))) => {
+                        self.broadcast_to_game(&gid, ServerMsg::SystemNote {
+                            text: "A player ran out of time; the server placed their settlement".into(),
+                        });
+                        let Some(game) = self.games.get_mut(&gid) else { continue };
+                        game.handle_build_settlement(pid, x, y)
+                    }
+                    Some(AutoPlacement::Road((x, y))) => {
+                        self.broadcast_to_game(&gid, ServerMsg::SystemNote {
+                            text: "A player ran out of time; the server placed their road".into(),
+                        });
+                        let Some(game) = self.games.get_mut(&gid) else { continue };
+                        game.handle_build_road(pid, x, y)
+                    }
+                    None => Err("no legal setup placement left".to_string()),
+                },
+
                 // Nobody is going to answer. Settle what the table is waiting
                 // on and let the next sweep take the turn forward normally.
                 // There is no single `ServerMessage` for "several things were
@@ -164,7 +187,8 @@ impl Lobby {
             match result {
                 Ok(msg) => {
                     log::info!("Turn clock: {:?} for player {} in game {}", action, pid, gid);
-                    self.process_successful_action(pid, &gid, msg, ctx);
+                    // The clock, not a player: this must not count as activity.
+                    self.process_successful_action(pid, &gid, msg, ctx, false);
                 }
                 // Losing a race with the player's own click is normal.
                 Err(e) => log::debug!("Turn clock no-op in game {}: {}", gid, e),
