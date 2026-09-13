@@ -14,7 +14,7 @@ use leptos::*;
 use uuid::Uuid;
 use wasm_bindgen::JsCast;
 
-use crate::components::icons::resource_art;
+use crate::components::icons::{asset_url, resource_art};
 use crate::state::GameState;
 use shared::ResourceType;
 
@@ -185,7 +185,7 @@ pub fn ResourceFlight() -> impl IntoView {
                         <img
                             class="flyer w-[58px] h-[78px] rounded-[6px] object-cover
                                    border-2 border-[#2b2418] shadow-[0_3px_6px_rgba(0,0,0,0.45)]"
-                            src=format!("/assets/{}.svg", f.art)
+                            src=asset_url(f.art)
                             alt=f.label
                             style=style
                         />

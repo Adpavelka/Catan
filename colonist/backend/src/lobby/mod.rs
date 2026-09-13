@@ -56,8 +56,9 @@ impl Lobby {
         let mut games = HashMap::new();
         let mut player_to_game = HashMap::new();
 
-        for inst in recovered_games {
+        for mut inst in recovered_games {
             let gid = inst.id.clone();
+            inst.normalize_legacy_robber_asset();
 
             for idx in 0..inst.turn_manager.players.len() {
                 if let Some(player) = inst.turn_manager.players.get_by_index(idx) {

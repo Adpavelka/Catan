@@ -6,7 +6,7 @@ use crate::game::entities::turn_manager::TurnManager;
 use log::info;
 use serde::{Deserialize, Serialize};
 use shared::{GamePhase, InitialRound, PendingAction, PlacementStep};
-use std::{collections::HashMap, mem};
+use std::{collections::HashMap, hash::{Hash, Hasher}, mem};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -115,6 +115,18 @@ pub fn now_secs() -> u64 {
 }
 
 impl GameInstance {
+    pub fn normalize_legacy_robber_asset(&mut self) {
+        let current = self.turn_manager.get_robber_asset();
+        let legacy = matches!(current, "robber" | "robber_claude");
+        if !legacy {
+            return;
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.id.hash(&mut hasher);
+        self.turn_manager.set_robber_asset_for_seed(hasher.finish());
+    }
+
     pub fn new(
         gid: String,
         creator_pid: Uuid,
@@ -125,12 +137,19 @@ impl GameInstance {
         // The requested size comes straight from a client, so pin it to what
         // the game can actually seat.
         let max_players = player_count.clamp(MIN_PLAYERS, MAX_PLAYERS);
+        let robber_seed = rand::random();
 
         Self {
             id: gid,
             max_players,
 
-            turn_manager: TurnManager::new(player_count, creator_pid, creator_name, creator_colour),
+            turn_manager: TurnManager::new_for_game_seed(
+                player_count,
+                creator_pid,
+                creator_name,
+                creator_colour,
+                robber_seed,
+            ),
 
             phase: GamePhase::WaitingForPlayers,
             pending_actions: HashMap::new(),
@@ -1407,6 +1426,19 @@ mod tests {
             let game = GameInstance::new("c".into(), creator, n, "Tester", shared::PlayerColour::Blue);
             assert_eq!(game.max_players, n, "a table of {n} should be honoured");
         }
+    }
+
+    #[test]
+    fn new_games_do_not_all_use_the_same_robber_skin() {
+        let creator = Uuid::from_u128(1);
+        let mut seen = std::collections::HashSet::new();
+
+        for idx in 0..40 {
+            let game = GameInstance::new(format!("g{idx}"), creator, 4, "Tester", shared::PlayerColour::Blue);
+            seen.insert(game.turn_manager.get_robber_asset().to_string());
+        }
+
+        assert!(seen.len() > 1, "new games collapsed to one robber skin: {:?}", seen);
     }
 
     /// Seating must report failure rather than silently dropping the player.

@@ -744,6 +744,8 @@ pub struct LobbyGameInfo {
     pub started: bool,
 }
 
+fn default_robber_asset() -> String { "robber".to_string() }
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct BoardInfo{
     pub hexes: Vec<HexInfo>,
@@ -751,6 +753,8 @@ pub struct BoardInfo{
     pub cities: Vec<BuildingInfo>,
     pub roads: Vec<BuildingInfo>,
     pub robber_pos: (i32, i32),
+    #[serde(default = "default_robber_asset")]
+    pub robber_asset: String,
     pub ports: Vec<PortInfo>
 }
 
@@ -785,6 +789,8 @@ pub struct BoardState {
     pub cities: Vec<BuildingInfo>,
     pub roads: Vec<BuildingInfo>,
     pub robber_pos: (i32, i32),
+    #[serde(default = "default_robber_asset")]
+    pub robber_asset: String,
     /// Ports on the board with their vertex coordinates and types
     pub ports: Vec<PortInfo>,
 }

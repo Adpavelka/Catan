@@ -50,7 +50,7 @@ pub fn StatsDisc(colour: &'static str, name: String, #[prop(default = 38)] size:
             title=name
         >
             <img
-                src="/assets/trade-offerer.svg"
+                src=crate::components::icons::asset_url("trade-offerer")
                 alt=""
                 draggable="false"
                 class="select-none pointer-events-none"

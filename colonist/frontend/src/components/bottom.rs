@@ -12,7 +12,7 @@
 use leptos::*;
 
 use crate::components::board::DiceTray;
-use crate::components::icons::{dev_card_art, resource_art, Art};
+use crate::components::icons::{asset_url, dev_card_art, resource_art, Art};
 use crate::state::{BuildMode, GameState};
 use shared::{ClientRequest, DevCardType, GamePhase, ResourceType};
 
@@ -808,6 +808,8 @@ fn PieceIcon(
             .unwrap_or("#3f4a55")
     };
 
+    let art_url = asset_url(art);
+
     view! {
         <span
             class=format!("hud-icon block {class}")
@@ -815,8 +817,8 @@ fn PieceIcon(
             aria-label=alt
             style=move || format!(
                 "background-color: {c}; \
-                 -webkit-mask: url(/assets/{art}.svg) center / contain no-repeat; \
-                 mask: url(/assets/{art}.svg) center / contain no-repeat; \
+                 -webkit-mask: url({art_url}) center / contain no-repeat; \
+                 mask: url({art_url}) center / contain no-repeat; \
                  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.35));",
                 c = colour(),
             )

@@ -84,13 +84,14 @@ impl Lobby
 
         let players = game.get_all_players_info();
 
-        let info = game.turn_manager.board.to_info(game.turn_manager.get_robber_pos());
+        let info = game.turn_manager.board.to_info(game.turn_manager.get_robber_pos(), game.turn_manager.get_robber_asset());
         let board = shared::BoardState {
             hexes: info.hexes,
             settlements: info.settlements,
             cities: info.cities,
             roads: info.roads,
             robber_pos: info.robber_pos,
+            robber_asset: info.robber_asset,
             ports: info.ports,
         };
 
@@ -117,7 +118,7 @@ impl Lobby
         let sync_msg = shared::ServerMessage::FullStateSync {
             player_id: pid,
             players: game.get_all_players_info(),
-            board: game.turn_manager.board.to_info(game.turn_manager.get_robber_pos()),
+            board: game.turn_manager.board.to_info(game.turn_manager.get_robber_pos(), game.turn_manager.get_robber_asset()),
             game_phase: game.get_state().clone(),
             current_turn_player_id: game.turn_manager.players.get_current_player().id,
             robber_pos: game.turn_manager.get_robber_pos(),

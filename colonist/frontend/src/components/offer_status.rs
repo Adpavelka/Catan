@@ -237,7 +237,7 @@ pub fn PlayerMark(who: Signal<Option<Uuid>>, #[prop(default = 44)] size: u32) ->
             title=name
         >
             <img
-                src="/assets/trade-offerer.svg" alt=""
+                src=crate::components::icons::asset_url("trade-offerer") alt=""
                 style=format!("width: {}px; height: {}px; object-fit: contain",
                               size * 7 / 10, size * 7 / 10)
             />

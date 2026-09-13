@@ -592,7 +592,7 @@ impl Board {
         max_length
     }
 
-    pub fn to_info(&self, robber_pos: (i32, i32)) -> BoardInfo {
+    pub fn to_info(&self, robber_pos: (i32, i32), robber_asset: &str) -> BoardInfo {
         let hexes = self.hexes.iter()
             .map(|(coords, hex)| HexInfo {
                 q: coords.0,
@@ -648,6 +648,7 @@ impl Board {
             cities,
             roads,
             robber_pos,
+            robber_asset: robber_asset.to_string(),
             ports,
         }
     }

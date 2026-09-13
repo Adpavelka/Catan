@@ -46,9 +46,19 @@ fn default_rules() -> GameRules {
 
 impl TurnManager {
     pub fn new(player_count: usize, first_player_id: Uuid, name: &str, colour: PlayerColour) -> TurnManager {
+        Self::new_for_game_seed(player_count, first_player_id, name, colour, rand::random())
+    }
+
+    pub fn new_for_game_seed(
+        player_count: usize,
+        first_player_id: Uuid,
+        name: &str,
+        colour: PlayerColour,
+        game_seed: u64,
+    ) -> TurnManager {
         let rules = GameRules::for_player_count(player_count);
         let board = Board::new_for_layout(rules.board, rules.port_count);
-        let robber = Robber::new(&board);
+        let robber = Robber::new_for_seed(&board, game_seed);
 
         // The creator is seated exactly like everyone else, with the name and
         // colour they picked. An empty roster cannot clash, so this cannot fail.
@@ -465,6 +475,14 @@ impl TurnManager {
 
     pub fn get_robber_pos(&self) -> Coordinates {
         self.robber.get_pos()
+    }
+
+    pub fn get_robber_asset(&self) -> &str {
+        self.robber.get_asset_name()
+    }
+
+    pub fn set_robber_asset_for_seed(&mut self, seed: u64) {
+        self.robber = Robber::new_for_seed(&self.board, seed);
     }
 
     /// Everyone except `thief_id` with a settlement or city on a corner of the

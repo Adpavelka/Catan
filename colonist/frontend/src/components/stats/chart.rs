@@ -121,7 +121,7 @@ pub fn StatsBarChart(
                                 <div class="flex-1 min-w-0 flex flex-col items-center gap-1">
                                     {bar.art.map(|art| view! {
                                         <img
-                                            src=format!("/assets/{art}.svg")
+                                            src=crate::components::icons::asset_url(art)
                                             alt=bar.label.clone()
                                             draggable="false"
                                             class="w-[40px] h-[56px] object-cover rounded-[4px] game-card

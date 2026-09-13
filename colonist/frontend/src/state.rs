@@ -96,6 +96,7 @@ pub struct GameState {
     pub cities: RwSignal<Vec<BuildingInfo>>,
     pub roads: RwSignal<Vec<BuildingInfo>>,
     pub robber_pos: RwSignal<Option<(i32, i32)>>,
+    pub robber_asset: RwSignal<String>,
     pub board_ports: RwSignal<Vec<PortInfo>>,
 
     // UI state
@@ -471,6 +472,7 @@ impl GameState {
                     self.cities.set(board.cities);
                     self.roads.set(board.roads);
                     self.robber_pos.set(Some(board.robber_pos));
+                    self.robber_asset.set(board.robber_asset.clone());
                     self.board_ports.set(board.ports);
                     self.game_phase.set(game_phase.clone());
 
@@ -1175,6 +1177,7 @@ impl GameState {
                     self.cities.set(board.cities);
                     self.roads.set(board.roads);
                     self.robber_pos.set(Some(robber_pos));
+                    self.robber_asset.set(board.robber_asset.clone());
                     self.board_ports.set(board.ports);
                     self.game_phase.set(game_phase.clone());
                     self.current_turn_player.set(current_turn_player_id);
@@ -1352,6 +1355,7 @@ pub fn provide_game_state() {
         cities: create_rw_signal(Vec::new()),
         roads: create_rw_signal(Vec::new()),
         robber_pos: create_rw_signal(None),
+        robber_asset: create_rw_signal("robber".to_string()),
         board_ports: create_rw_signal(Vec::new()),
 
         // UI state

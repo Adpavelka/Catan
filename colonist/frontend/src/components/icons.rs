@@ -184,7 +184,11 @@ pub fn asset_url(name: &str) -> String {
         return format!("/assets/statistics/resources/{name}.svg");
     }
 
-    if name == "robber" || name.starts_with("robber_") {
+    if name == "robber" {
+        return "/assets/robber/robber.svg".to_string();
+    }
+
+    if name.starts_with("robber_") {
         return format!("/assets/robber/{name}.svg");
     }
 

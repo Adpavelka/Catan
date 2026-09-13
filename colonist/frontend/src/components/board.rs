@@ -1,6 +1,6 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
-use crate::components::icons::{port_art, DieFace};
+use crate::components::icons::{asset_url, port_art, DieFace};
 use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PortInfo};
 use uuid::Uuid;
 
@@ -545,7 +545,7 @@ pub fn Board() -> impl IntoView {
                                             // straight on the water; a disc
                                             // behind it only boxed it in.
                                             <image
-                                                href=format!("/assets/{}.svg", port_art(&port.port_type))
+                                                href=asset_url(port_art(&port.port_type))
                                                 x="-24" y="-26" width="48" height="48"
                                                 style="filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.45));"
                                             />
@@ -559,6 +559,7 @@ pub fn Board() -> impl IntoView {
                     // Render robber
                     {move || {
                         if let Some((robber_q, robber_r)) = state.robber_pos.get() {
+                            let robber_asset = state.robber_asset.get();
                             let (px, py) = axial_to_pixel(robber_q, robber_r, 60.0);
                             view! {
                                 <g transform=format!("translate({}, {})", px, py)>
@@ -569,7 +570,7 @@ pub fn Board() -> impl IntoView {
                                     // playing piece. A shadow keeps it legible
                                     // against the pale desert instead.
                                     <image
-                                        href="/assets/robber.svg"
+                                        href=asset_url(&robber_asset)
                                         x="-19" y="-19" width="38" height="38"
                                         class="pointer-events-none"
                                         style="filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.55));"
@@ -1091,7 +1092,7 @@ fn PlacedRoad(from: (f32, f32), to: (f32, f32), colour: &'static str) -> impl In
     view! {
         <g transform=transform>
             <image
-                href="/assets/build-road.svg"
+                href=asset_url("build-road")
                 x=-thick / 2.0
                 y=-long / 2.0
                 width=thick
@@ -1115,7 +1116,7 @@ fn Pier(from: (f32, f32), to: (f32, f32)) -> impl IntoView {
     view! {
         <g transform=transform>
             <image
-                href="/assets/pier.svg"
+                href=asset_url("pier")
                 x="-7"
                 y=-length / 2.0
                 width="14"
@@ -1152,7 +1153,7 @@ fn Piece(
             // One chain, not a `filter` attribute plus a CSS `filter`: the
             // CSS property wins outright and would drop the tint.
             <image
-                href=format!("/assets/{art}.svg")
+                href=asset_url(art)
                 x=-half y=-half width=size height=size
                 style=format!(
                     "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.5)); \
