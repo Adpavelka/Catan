@@ -235,6 +235,20 @@ fn PlayerPanel(player_id: Uuid) -> impl IntoView {
                 let p = info.get().expect("checked");
                 let colour = colour_hex(p.colour);
                 let active = is_active();
+                let road_active = p.has_longest_road;
+                let army_active = p.has_largest_army;
+                let road_filter = if road_active {
+                    "filter: brightness(0) saturate(120%) invert(68%) sepia(92%) saturate(1260%) hue-rotate(18deg) brightness(128%) contrast(118%);"
+                } else {
+                    ""
+                };
+                let army_filter = if army_active {
+                    "filter: brightness(0) saturate(120%) invert(68%) sepia(92%) saturate(1260%) hue-rotate(18deg) brightness(128%) contrast(118%);"
+                } else {
+                    ""
+                };
+                let road_color = if road_active { "#f5b93f" } else { "#2e3e46" };
+                let army_color = if army_active { "#f5b93f" } else { "#2e3e46" };
 
                 view! {
                     <div
@@ -290,43 +304,43 @@ fn PlayerPanel(player_id: Uuid) -> impl IntoView {
                                 </div>
 
                                 // Their public holdings. Counts only - a hand
-                                // is never shown to anybody else.
-                                <div class="flex items-center gap-2.5 mt-0.5 text-[12px] font-bold text-[#4a4335]">
-                                    // A face-down card, not a brick: the count
-                                    // is of cards whose kinds nobody else may
-                                    // see, so naming one of them is a lie.
-                                    <span class="flex items-center gap-1" title="Resource cards">
-                                        <Art name="any-card" class="w-3 h-4 object-contain" />
-                                        {p.resource_count}
-                                    </span>
-                                    <span class="flex items-center gap-1" title="Development cards">
-                                        <Art name="stat-devcards" class="w-3 h-4 object-contain" />
-                                        {p.dev_card_count}
-                                    </span>
-                                    <span class="flex items-center gap-1" title="Knights played">
-                                        <Art name="stat-knights" class="w-4 h-4 object-contain" />
-                                        {p.knights_played}
-                                    </span>
-                                    <span class="flex items-center gap-1" title="Longest road">
-                                        <Art name="stat-road" class="w-4 h-4 object-contain" />
-                                        {p.roads_count}
-                                    </span>
-                                </div>
-                            </div>
-
-                            <div class="flex flex-col gap-1 shrink-0">
-                                <Show when=move || p.has_longest_road>
-                                    <span
-                                        class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-[#b98624] text-white border border-black/30"
+                                // is never shown to anybody else. The mockup keeps the
+                                // avatar left, the name above, and the four values in a
+                                // compact icon-and-number strip beneath it.
+                                <div class="mt-1 ml-auto mr-1 flex items-end justify-end gap-2">
+                                    <div
+                                        class="flex min-w-[4.5rem] flex-col items-center justify-center rounded-[8px] bg-transparent text-[#2e3e46]"
+                                        title="Resource cards"
+                                    >
+                                        <Art name="any-card" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                        <span class="mt-0.5 text-[12px] font-black tabular-nums">{p.resource_count}</span>
+                                    </div>
+                                    <div
+                                        class="flex min-w-[4.5rem] flex-col items-center justify-center rounded-[8px] bg-transparent text-[#2e3e46]"
+                                        title="Development cards"
+                                    >
+                                        <Art name="stat-devcards" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                        <span class="mt-0.5 text-[12px] font-black tabular-nums">{p.dev_card_count}</span>
+                                    </div>
+                                    <div
+                                        class="flex min-w-[4.5rem] flex-col items-center justify-center rounded-[8px] bg-transparent"
+                                        title="Knights played"
+                                    >
+                                        <div style=army_filter>
+                                            <Art name="stat-knights" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                        </div>
+                                        <span class="mt-0.5 text-[12px] font-black tabular-nums" style=format!("color: {}", army_color)>{p.knights_played}</span>
+                                    </div>
+                                    <div
+                                        class="flex min-w-[4.5rem] flex-col items-center justify-center rounded-[8px] bg-transparent"
                                         title="Longest road"
-                                    >"Road"</span>
-                                </Show>
-                                <Show when=move || p.has_largest_army>
-                                    <span
-                                        class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-[#c0392b] text-white border border-black/30"
-                                        title="Largest army"
-                                    >"Army"</span>
-                                </Show>
+                                    >
+                                        <div style=road_filter>
+                                            <Art name="stat-road" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                        </div>
+                                        <span class="mt-0.5 text-[12px] font-black tabular-nums" style=format!("color: {}", road_color)>{p.roads_count}</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
