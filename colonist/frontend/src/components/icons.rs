@@ -134,11 +134,71 @@ pub fn DieFace(
 }
 
 /// Artwork from `frontend/assets`, copied into the bundle by Trunk and served
-/// at `/assets/<name>`.
+/// at `/assets/<category>/<name>.svg`.
 ///
 /// These are full-colour illustrations, so unlike `Icon` they cannot inherit
 /// `currentColor`. Where the UI needs a disabled look it applies a `grayscale`
 /// filter, which does work on an `<img>`.
+pub fn asset_url(name: &str) -> String {
+    let name = name.trim();
+
+    if matches!(name, "brick" | "wood" | "sheep" | "wheat" | "ore" | "any-card") {
+        return format!("/assets/resources/{name}.svg");
+    }
+
+    if matches!(
+        name,
+        "build-city" | "build-dev-card" | "build-road" | "build-settlement"
+    ) {
+        return format!("/assets/buildable/{name}.svg");
+    }
+
+    if matches!(name, "pier") {
+        return format!("/assets/ports/{name}.svg");
+    }
+
+    if matches!(
+        name,
+        "dev-knight" | "dev-monopoly" | "dev-plenty" | "dev-road" | "dev-victory"
+    ) {
+        return format!("/assets/dev_cards/{name}.svg");
+    }
+
+    if name.starts_with("points-from-") {
+        return format!("/assets/points/{name}.svg");
+    }
+
+    if name.starts_with("port-") {
+        return format!("/assets/ports/{name}.svg");
+    }
+
+    if name == "stat-devcards" || name == "stat-knights" || name == "stat-road" || name == "stats-points" {
+        return format!("/assets/statistics/{name}.svg");
+    }
+
+    if name.starts_with("stats-activity-") || name.starts_with("stat-") {
+        return format!("/assets/statistics/activity/{name}.svg");
+    }
+
+    if name.starts_with("stats-") {
+        return format!("/assets/statistics/resources/{name}.svg");
+    }
+
+    if name == "robber" || name.starts_with("robber_") {
+        return format!("/assets/robber/{name}.svg");
+    }
+
+    if matches!(name, "bank") {
+        return format!("/assets/trades/{name}.svg");
+    }
+
+    if name.starts_with("trade-") || name == "trading" {
+        return format!("/assets/trades/{name}.svg");
+    }
+
+    format!("/assets/{name}.svg")
+}
+
 #[component]
 pub fn Art(
     /// File name inside `assets`, without the extension.
@@ -148,7 +208,7 @@ pub fn Art(
 ) -> impl IntoView {
     view! {
         <img
-            src=format!("/assets/{name}.svg")
+            src=asset_url(name)
             alt=alt
             draggable="false"
             class=format!("select-none pointer-events-none {class}")
