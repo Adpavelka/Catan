@@ -205,6 +205,37 @@ impl Lobby {
                 );
             }
 
+            ServerMessage::MonopolyResourcesStolen { player_id, resource, total_stolen, victims } => {
+                let summary = ServerMessage::MonopolyResourcesStolen {
+                    player_id,
+                    resource,
+                    total_stolen,
+                    victims: victims.clone(),
+                };
+                self.broadcast_to_game(gid, summary);
+
+                for victim_id in victims {
+                    let msg = ServerMessage::PlayerRobbed {
+                        thief_id: player_id,
+                        victim_id,
+                        resource: Some(resource),
+                        stole_a_card: true,
+                    };
+                    self.send_server_msg(player_id, msg.clone());
+                    self.send_server_msg(victim_id, msg.clone());
+                    self.broadcast_except(
+                        gid,
+                        &[player_id, victim_id],
+                        ServerMessage::PlayerRobbed {
+                            thief_id: player_id,
+                            victim_id,
+                            resource: None,
+                            stole_a_card: true,
+                        },
+                    );
+                }
+            }
+
             other => self.broadcast_to_game(gid, other),
         }
     }

@@ -254,6 +254,7 @@ impl GameInstance {
 
         let tm = &mut self.turn_manager;
 
+        let victims: Vec<Uuid> = losses.iter().map(|(victim, _)| *victim).collect();
         let total_stolen = tm.bank
             .collect_resource_from_all_to_player(pid, resource, &mut tm.players)
             .map_err(|e| e.to_string())?;
@@ -269,6 +270,7 @@ impl GameInstance {
             player_id: pid,
             resource,
             total_stolen,
+            victims,
         })
     }
 }

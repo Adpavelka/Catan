@@ -360,6 +360,7 @@ pub enum ServerMessage {
         player_id: Uuid,
         resource: ResourceType,
         total_stolen: u32,
+        victims: Vec<Uuid>,
     },
     CanRobPlayers {
         player_ids: Vec<Uuid>,

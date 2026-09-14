@@ -892,7 +892,7 @@ impl GameState {
                         self.messages.update(|m| m.push("Choose a resource type to steal from all players!".to_string()));
                     }
                 }
-                ServerMessage::MonopolyResourcesStolen { player_id, resource, total_stolen } => {
+                ServerMessage::MonopolyResourcesStolen { player_id, resource, total_stolen, .. } => {
                     logging::log!("Player {} stole {} {:?} via Monopoly", player_id, total_stolen, resource);
 
                     // If it's me, close the modal
