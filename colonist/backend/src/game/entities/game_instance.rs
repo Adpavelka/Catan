@@ -12,6 +12,8 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GameInstance {
     pub id: String,
+    #[serde(default = "default_game_name")]
+    pub game_name: String,
 
     pub max_players: usize,
     pub turn_manager: TurnManager,
@@ -105,6 +107,10 @@ fn first_trade_id() -> u64 {
     1
 }
 
+fn default_game_name() -> String {
+    "New Colonist Game".to_string()
+}
+
 /// Seconds since the Unix epoch. Saturates rather than panicking if the clock
 /// is somehow before the epoch.
 pub fn now_secs() -> u64 {
@@ -134,13 +140,31 @@ impl GameInstance {
         creator_name: &str,
         creator_colour: shared::PlayerColour,
     ) -> Self {
+        Self::new_named(gid, creator_pid, player_count, "New Colonist Game", creator_name, creator_colour)
+    }
+
+    pub fn new_named(
+        gid: String,
+        creator_pid: Uuid,
+        player_count: usize,
+        game_name: &str,
+        creator_name: &str,
+        creator_colour: shared::PlayerColour,
+    ) -> Self {
         // The requested size comes straight from a client, so pin it to what
         // the game can actually seat.
         let max_players = player_count.clamp(MIN_PLAYERS, MAX_PLAYERS);
         let robber_seed = rand::random();
+        let trimmed_name = game_name.trim();
+        let game_name = if trimmed_name.is_empty() {
+            default_game_name()
+        } else {
+            trimmed_name.chars().take(40).collect()
+        };
 
         Self {
             id: gid,
+            game_name,
             max_players,
 
             turn_manager: TurnManager::new_for_game_seed(

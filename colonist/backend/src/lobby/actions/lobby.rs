@@ -219,7 +219,7 @@ impl Lobby {
         }
     }
 
-    pub fn handle_create_game(&mut self, pid: Uuid, player_count: usize, seat: SeatRequest, ctx: &mut Context<Lobby>) {
+    pub fn handle_create_game(&mut self, pid: Uuid, player_count: usize, game_name: String, seat: SeatRequest, ctx: &mut Context<Lobby>) {
         // Six hex digits is 24 bits, which is short enough to read out to a
         // friend and short enough to collide. A collision used to replace a
         // live game outright - its players still pointed at the id by
@@ -236,7 +236,7 @@ impl Lobby {
         info!("Creating game {} for player {}", gid, pid);
 
         // GameInstance::new seats the creator with the name and colour they chose.
-        let game = GameInstance::new(gid.clone(), pid, player_count, &seat.name, seat.colour);
+        let game = GameInstance::new_named(gid.clone(), pid, player_count, &game_name, &seat.name, seat.colour);
 
         self.games.insert(gid.clone(), game);
         self.player_to_game.insert(pid, gid.clone());

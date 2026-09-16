@@ -12,8 +12,8 @@ pub fn handle_lobby_action(
     ctx: &mut Context<Lobby>,
 ) {
     match req {
-        ClientRequest::CreateGame { player_count, seat } => {
-            lobby.handle_create_game(pid, player_count, seat, ctx);
+        ClientRequest::CreateGame { player_count, game_name, seat } => {
+            lobby.handle_create_game(pid, player_count, game_name, seat, ctx);
         }
 
         ClientRequest::JoinGame { game_id, seat } => {

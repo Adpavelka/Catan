@@ -59,6 +59,7 @@ impl Lobby
         let mut games_data: Vec<shared::LobbyGameInfo> = self.games.iter()
             .map(|(gid, game)| shared::LobbyGameInfo {
                 game_id: gid.clone(),
+                game_name: game.game_name.clone(),
                 players: game.turn_manager.players.len(),
                 max_players: game.max_players,
                 available_colours: game.available_colours(),
@@ -72,7 +73,7 @@ impl Lobby
         // around under the cursor, and somebody aiming at their friend's game
         // clicks JOIN on whatever slid into that row instead. Sorting by id
         // gives every client the same stable list.
-        games_data.sort_by(|a, b| a.game_id.cmp(&b.game_id));
+        games_data.sort_by(|a, b| a.game_name.cmp(&b.game_name).then(a.game_id.cmp(&b.game_id)));
 
         let lobby_update = shared::ServerMessage::LobbyUpdate { games: games_data };
         for pid in self.sessions.keys() {

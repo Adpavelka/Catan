@@ -88,15 +88,15 @@ pub struct GameRules {
 
 impl GameRules {
     pub const MIN_PLAYERS: usize = 2;
-    pub const MAX_PLAYERS: usize = 6;
+    pub const MAX_PLAYERS: usize = 8;
 
     /// Every table size we support, for building a lobby-size picker.
-    pub const SUPPORTED_PLAYER_COUNTS: [usize; 5] = [2, 3, 4, 5, 6];
+    pub const SUPPORTED_PLAYER_COUNTS: [usize; 7] = [2, 3, 4, 5, 6, 7, 8];
 
     pub fn for_player_count(player_count: usize) -> Self {
         let player_count = player_count.clamp(Self::MIN_PLAYERS, Self::MAX_PLAYERS);
 
-        // Five and six players need the extension: more land, more cards.
+        // Five or more players need the extension: more land, more cards.
         let extended = player_count >= 5;
 
         Self {
@@ -114,7 +114,7 @@ impl GameRules {
         }
     }
 
-    /// The 5-6 player game inserts a special building phase between turns, so
+    /// The 5-8 player game inserts a special building phase between turns, so
     /// a bigger table does not mean an unbearable wait between builds.
     pub fn uses_special_building(&self) -> bool {
         self.player_count >= 5
@@ -136,6 +136,9 @@ pub enum ClientRequest {
     CreateGame {
         #[serde(default = "default_player_count")]
         player_count: usize,
+        /// Display name for the lobby table. Blank names use the server default.
+        #[serde(default)]
+        game_name: String,
         /// Displayed to the other players. Trimmed and length-capped by the
         /// server, which substitutes a default if it comes through blank.
         seat: SeatRequest,
@@ -738,6 +741,8 @@ pub struct PortInfo {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct LobbyGameInfo {
     pub game_id: String,
+    #[serde(default = "default_game_name")]
+    pub game_name: String,
     pub players: usize,
     pub max_players: usize,
     pub available_colours: Vec<PlayerColour>,
@@ -749,6 +754,8 @@ pub struct LobbyGameInfo {
     #[serde(default)]
     pub started: bool,
 }
+
+fn default_game_name() -> String { "New Colonist Game".to_string() }
 
 fn default_robber_asset() -> String { "robber".to_string() }
 
