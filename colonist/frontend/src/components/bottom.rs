@@ -783,12 +783,7 @@ fn ActionBar() -> impl IntoView {
     }
 }
 
-/// A build piece's artwork in a player's colour.
-///
-/// The assets are flat silhouettes, so a CSS mask is the honest way to colour
-/// them: the shape comes from the file and the colour from the player. An
-/// `<img>` cannot inherit `currentColor`, and a hue rotation would give a
-/// different answer for every source colour.
+/// A build piece's artwork in a player's colour, retaining the source linework.
 #[component]
 fn PieceIcon(
     art: &'static str,
@@ -809,20 +804,35 @@ fn PieceIcon(
     };
 
     let art_url = asset_url(art);
+    let filter_id = format!("hud-tint-{}", art);
 
     view! {
-        <span
-            class=format!("hud-icon block {class}")
-            role="img"
-            aria-label=alt
+        <svg class="absolute w-0 h-0" aria-hidden="true" focusable="false">
+            <defs>
+                <filter id=filter_id.clone() color-interpolation-filters="sRGB">
+                    <feFlood flood-color=move || colour() result="flat" />
+                    <feComposite in="flat" in2="SourceAlpha" operator="in" result="solid" />
+                    <feColorMatrix in="SourceGraphic" type="saturate" values="0" result="grey" />
+                    <feComponentTransfer in="grey" result="soft">
+                        <feFuncR type="linear" slope="0.42" intercept="0.58" />
+                        <feFuncG type="linear" slope="0.42" intercept="0.58" />
+                        <feFuncB type="linear" slope="0.42" intercept="0.58" />
+                    </feComponentTransfer>
+                    <feBlend in="soft" in2="solid" mode="multiply" result="shaded" />
+                    <feComposite in="shaded" in2="SourceAlpha" operator="in" />
+                </filter>
+            </defs>
+        </svg>
+        <img
+            src=art_url
+            alt=alt
+            draggable="false"
+            class=format!("hud-icon select-none pointer-events-none {class}")
             style=move || format!(
-                "background-color: {c}; \
-                 -webkit-mask: url({art_url}) center / contain no-repeat; \
-                 mask: url({art_url}) center / contain no-repeat; \
-                 filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.35));",
-                c = colour(),
+                "filter: url(#{}) drop-shadow(0 1px 1px rgb(0 0 0 / 0.35));",
+                filter_id
             )
-        ></span>
+        />
     }
 }
 
