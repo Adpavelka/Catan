@@ -10,8 +10,7 @@ use crate::game::entities::robber::Robber;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use uuid::Uuid;
-use shared::ResourceType;
-const RESOURCES: u32 = 19;
+use shared::{GameRules, ResourceType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceEndpoint {
@@ -27,28 +26,34 @@ pub struct Bank {
 }
 
 impl Bank {
-    pub fn new() -> Self {
+    /// The bank is stocked according to the table size: the 5-6 player game
+    /// uses a deeper resource supply and a larger development deck.
+    pub fn new(rules: &GameRules) -> Self {
         let mut resources = ResourceSet::new();
-        resources.add(ResourceType::Brick, RESOURCES);
-        resources.add(ResourceType::Ore, RESOURCES);
-        resources.add(ResourceType::Sheep, RESOURCES);
-        resources.add(ResourceType::Wheat, RESOURCES);
-        resources.add(ResourceType::Wood, RESOURCES);
+        for res in [
+            ResourceType::Brick,
+            ResourceType::Ore,
+            ResourceType::Sheep,
+            ResourceType::Wheat,
+            ResourceType::Wood,
+        ] {
+            resources.add(res, rules.bank_per_resource);
+        }
 
         let mut dev_cards: Vec<DevelopmentCard> = Vec::new();
-        for _ in 0..14 {
+        for _ in 0..rules.knight_cards {
             dev_cards.push(Knight(DevCardState::new()));
         }
-        for _ in 0..5 {
+        for _ in 0..rules.victory_point_cards {
             dev_cards.push(DevelopmentCard::VictoryPoint(DevCardState::new()));
         }
-        for _ in 0..2 {
+        for _ in 0..rules.road_building_cards {
             dev_cards.push(DevelopmentCard::RoadBuilder(DevCardState::new()));
         }
-        for _ in 0..2 {
+        for _ in 0..rules.monopoly_cards {
             dev_cards.push(DevelopmentCard::Monopoly(DevCardState::new()));
         }
-        for _ in 0..2 {
+        for _ in 0..rules.year_of_plenty_cards {
             dev_cards.push(DevelopmentCard::YearOfPlenty(DevCardState::new()));
         }
 
@@ -82,34 +87,53 @@ impl Bank {
             }
         }
 
-        let can_distribute: HashSet<ResourceType> = totals
-            .iter()
-            .filter(|(res, needed)| {
-                let available = self.game_resources.amount_of(**res);
-                if available < **needed {
-                    log::warn!(
-                        "Bank does not have enough {:?}: needed {}, available {}",
-                        res,
-                        needed,
-                        available
-                    );
-                    false
-                } else {
-                    true
-                }
-            })
-            .map(|(res, _)| *res)
-            .collect();
+        let mut claimants: HashMap<ResourceType, HashSet<Uuid>> = HashMap::new();
+        for (player_id, res, _) in &pending {
+            claimants.entry(*res).or_default().insert(*player_id);
+        }
+
+        // When the bank cannot cover a resource, the rules distinguish two
+        // cases: a single claimant receives whatever is left, but if several
+        // players are owed it then nobody receives any of it.
+        let mut budget: HashMap<ResourceType, u32> = HashMap::new();
+        for (res, needed) in &totals {
+            let available = self.game_resources.amount_of(*res);
+
+            let payable = if available >= *needed {
+                *needed
+            } else if claimants.get(res).map_or(0, |ids| ids.len()) == 1 {
+                log::warn!(
+                    "Bank low on {:?}: paying sole claimant {} of {}",
+                    res,
+                    available,
+                    needed
+                );
+                available
+            } else {
+                log::warn!(
+                    "Bank does not have enough {:?} for {} claimants: needed {}, available {}",
+                    res,
+                    claimants.get(res).map_or(0, |ids| ids.len()),
+                    needed,
+                    available
+                );
+                0
+            };
+
+            budget.insert(*res, payable);
+        }
 
         let mut distributed = Vec::new();
 
         for (player_id, res, amount) in pending {
-            if !can_distribute.contains(&res) {
+            let remaining = budget.entry(res).or_insert(0);
+            let payout = amount.min(*remaining);
+            if payout == 0 {
                 continue;
             }
 
             let mut cost = ResourceSet::new();
-            cost.add(res, amount);
+            cost.add(res, payout);
 
             if self
                 .collect_from_to(
@@ -120,7 +144,8 @@ impl Bank {
                 )
                 .is_ok()
             {
-                distributed.push((player_id, res, amount));
+                *budget.get_mut(&res).expect("budget entry exists") -= payout;
+                distributed.push((player_id, res, payout));
             }
         }
 
@@ -128,7 +153,12 @@ impl Bank {
     }
 
 
-    pub fn give_initial_settlement_resources(&mut self, board: &Board, player_id: Uuid, settlement_pos: Coordinates, players: &mut Players,) {
+    /// Pays the starting hand for a second-round settlement. Returns what
+    /// actually changed hands, which is not always one card per neighbouring
+    /// tile: the desert pays nothing, and a bank that has run dry pays
+    /// nothing. Callers need the cards themselves, not just how many, to
+    /// record what was drawn.
+    pub fn give_initial_settlement_resources(&mut self, board: &Board, player_id: Uuid, settlement_pos: Coordinates, players: &mut Players,) -> ResourceSet {
         use log::info;
 
         info!(
@@ -136,7 +166,7 @@ impl Bank {
             player_id, settlement_pos
         );
 
-        let mut resources_given = 0;
+        let mut resources_given = ResourceSet::new();
 
         for hex in board.hexes.values() {
             if !hex.adjacent_vertices.contains(&settlement_pos) {
@@ -158,7 +188,7 @@ impl Bank {
                 players,
             ) {
                 Ok(_) => {
-                    resources_given += 1;
+                    resources_given.add(hex.resource, 1);
                     info!("  - Gave 1 {:?} from hex {:?}", hex.resource, hex.coord);
                 }
                 Err(_) => {
@@ -172,8 +202,11 @@ impl Bank {
 
         info!(
             "Player {} received {} resources total from second settlement",
-            player_id, resources_given
+            player_id,
+            resources_given.get_cards_total()
         );
+
+        resources_given
     }
 
 
@@ -360,10 +393,66 @@ impl Bank {
         Ok(())
     }
 
+    /// What is left, for the clients. Card identities stay hidden; only the
+    /// size of the deck travels.
+    pub fn to_info(&self) -> shared::BankInfo {
+        shared::BankInfo {
+            resources: (&self.game_resources).into(),
+            dev_cards: self.dev_cards.len(),
+        }
+    }
+
     pub fn draw_dev_card(&mut self) -> Result<DevelopmentCard, GameError> {
         self.dev_cards
             .pop()
             .ok_or(GameError::InvalidAction)
+    }
+
+    /// How many development cards are still in the deck.
+    pub fn dev_cards_left(&self) -> usize {
+        self.dev_cards.len()
+    }
+
+    /// Put a single card back in the supply.
+    pub fn return_one(&mut self, res: ResourceType) {
+        self.game_resources.add(res, 1);
+    }
+
+    /// Put a departed player's hand back in the supply.
+    ///
+    /// The bank is a fixed stock - it is legal to run it dry, and doing so
+    /// stops everybody being paid. Cards carried off by someone who quit would
+    /// otherwise be out of the game for good.
+    pub fn return_resources(&mut self, hand: &ResourceSet) {
+        self.game_resources.add_set(hand);
+    }
+
+    /// Put a departed player's development cards back in the deck.
+    ///
+    /// Only the ones still in hand: a card they already played is spent, and
+    /// its effect has already happened. Each returning card is rebuilt fresh
+    /// so it carries none of the "bought this turn" state from the hand it
+    /// came from, and the deck is reshuffled so the returned cards are not
+    /// simply the next few drawn.
+    ///
+    /// Returns how many went back.
+    pub fn return_dev_cards(&mut self, cards: &[DevelopmentCard]) -> usize {
+        let mut returned = 0;
+        for card in cards {
+            if card.is_played() {
+                continue;
+            }
+            self.dev_cards.push(DevelopmentCard::new(card.get_type()));
+            returned += 1;
+        }
+
+        if returned > 0 {
+            use rand::seq::SliceRandom;
+            let mut rng = rand::thread_rng();
+            self.dev_cards.shuffle(&mut rng);
+        }
+
+        returned
     }
 }
 
@@ -389,6 +478,14 @@ impl Bank {
 
 #[cfg(test)]
 mod tests {
+    use shared::GameRules;
+
+    /// The base-game setup, which most of these tests assume.
+    fn base_rules() -> GameRules {
+        GameRules::for_player_count(4)
+    }
+
+    use shared::PlayerColour;
     use super::*;
     use crate::game::entities::board::Board;
     use crate::game::entities::building::VertexBuilding;
@@ -405,9 +502,103 @@ mod tests {
         Players::new(ps)
     }
 
+    /// Builds a board where exactly `settlers` players own a settlement on a
+    /// corner of one chosen hex, and returns that hex's number and resource.
+    fn board_with_settlements_on_one_hex(
+        settlers: &[Uuid],
+    ) -> (Board, Robber, Coordinates, u8, ResourceType) {
+        let mut board = Board::new();
+
+        let (coord, number, resource, corners) = board
+            .hexes
+            .values()
+            .find(|h| h.resource != ResourceType::Desert)
+            .map(|h| (h.coord, h.number, h.resource, h.adjacent_vertices))
+            .unwrap();
+
+        // Any other hex sharing this number would pay out too, which would
+        // muddy the accounting, so silence them.
+        let others: Vec<_> = board
+            .hexes
+            .values()
+            .filter(|h| h.coord != coord && h.number == number)
+            .map(|h| h.coord)
+            .collect();
+        for other in others {
+            board.hexes.get_mut(&other).unwrap().number = 0;
+        }
+
+        for (i, owner) in settlers.iter().enumerate() {
+            let v = board.vertices.get_mut(&corners[i * 2]).unwrap();
+            v.owner = Some(*owner);
+            v.building = Some(VertexBuilding::Settlement);
+        }
+
+        let robber = Robber::new(&board);
+        (board, robber, coord, number, resource)
+    }
+
+    /// A lone claimant takes whatever the bank has left, even if it is short.
+    #[test]
+    fn bank_shortfall_pays_a_sole_claimant_the_remainder() {
+        let only = pid(1);
+        let (mut board, robber, _, number, resource) =
+            board_with_settlements_on_one_hex(&[only]);
+
+        // Upgrade to a city so the player is owed 2 but the bank holds only 1.
+        let corner = *board
+            .vertices
+            .iter()
+            .find(|(_, v)| v.owner == Some(only))
+            .map(|(c, _)| c)
+            .unwrap();
+        board.vertices.get_mut(&corner).unwrap().building = Some(VertexBuilding::City);
+
+        let mut bank = Bank::new(&base_rules());
+        let mut players = players(vec![Player::new(only, "A", PlayerColour::Blue)]);
+
+        bank.game_resources = ResourceSet::new();
+        bank.game_resources.add(resource, 1);
+
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
+
+        assert_eq!(
+            distributed,
+            vec![(only, resource, 1)],
+            "the sole claimant should receive the bank's last card"
+        );
+        assert_eq!(players.get(only).unwrap().resources.amount_of(resource), 1);
+        assert_eq!(bank.game_resources.amount_of(resource), 0);
+    }
+
+    /// If two players are owed a resource the bank cannot cover, neither gets any.
+    #[test]
+    fn bank_shortfall_pays_nobody_when_several_players_claim() {
+        let a = pid(1);
+        let b = pid(2);
+        let (board, robber, _, number, resource) = board_with_settlements_on_one_hex(&[a, b]);
+
+        let mut bank = Bank::new(&base_rules());
+        let mut players = players(vec![Player::new(a, "A", PlayerColour::Red), Player::new(b, "B", PlayerColour::Green)]);
+
+        // One card left, two players each owed one.
+        bank.game_resources = ResourceSet::new();
+        bank.game_resources.add(resource, 1);
+
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
+
+        assert!(
+            distributed.is_empty(),
+            "with two claimants and one card, nobody is paid"
+        );
+        assert_eq!(players.get(a).unwrap().resources.amount_of(resource), 0);
+        assert_eq!(players.get(b).unwrap().resources.amount_of(resource), 0);
+        assert_eq!(bank.game_resources.amount_of(resource), 1, "card stays in the bank");
+    }
+
     #[test]
     fn bank_new_initializes_resources_and_dev_cards() {
-        let bank = Bank::new();
+        let bank = Bank::new(&base_rules());
 
         for r in [
             ResourceType::Brick,
@@ -416,96 +607,49 @@ mod tests {
             ResourceType::Wheat,
             ResourceType::Wood,
         ] {
-            assert_eq!(bank.game_resources.amount_of(r), 19);
+            assert_eq!(bank.game_resources.amount_of(r), base_rules().bank_per_resource);
         }
 
-        assert_eq!(bank.dev_cards.len(), 25);
+        assert_eq!(bank.dev_cards.len(), base_rules().dev_card_total());
 
         let knights = bank.dev_cards.iter().filter(|c| matches!(c, DevelopmentCard::Knight(_))).count();
-        assert_eq!(knights, 14);
+        assert_eq!(knights, base_rules().knight_cards);
     }
 
     #[test]
     fn give_resources_for_roll_pays_settlement() {
-        let mut bank = Bank::new();
-        let mut board = Board::new();
-
         let player_id = pid(1);
-        let mut players = players(vec![
-            Player::new(player_id, "A", 'A')
-        ]);
+        let (board, robber, _, number, resource) =
+            board_with_settlements_on_one_hex(&[player_id]);
 
-        let (_, dice, res, vertex) = {
-            let hex = board.hexes.values()
-                .find(|h| h.resource != ResourceType::Desert)
-                .unwrap();
-            (hex.coord, hex.number, hex.resource, hex.adjacent_vertices[0])
-        };
+        let mut bank = Bank::new(&base_rules());
+        let mut players = players(vec![Player::new(player_id, "A", PlayerColour::Yellow)]);
 
-        let v = board.vertices.get_mut(&vertex).unwrap();
-        v.owner = Some(player_id);
-        v.building = Some(VertexBuilding::Settlement);
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
 
-        let robber = Robber::new(&board);
-
-        let before = players
-            .get(player_id)
-            .unwrap()
-            .resources
-            .amount_of(res);
-
-        let distributed = bank.give_resources_for_roll(
-            &board,
-            dice,
-            &robber,
-            &mut players,
+        assert_eq!(distributed, vec![(player_id, resource, 1)]);
+        assert_eq!(
+            players.get(player_id).unwrap().resources.amount_of(resource),
+            1
         );
-
-        let after = players
-            .get(player_id)
-            .unwrap()
-            .resources
-            .amount_of(res);
-
-        assert_eq!(after - before, 1);
-        assert_eq!(distributed, vec![(player_id, res, 1)]);
     }
-
 
     #[test]
     fn give_resources_for_roll_blocked_by_robber() {
-        let mut bank = Bank::new();
-        let mut board = Board::new();
-
         let player_id = pid(1);
-        let mut players = players(vec![
-            Player::new(player_id, "A", 'A')
-        ]);
+        let (board, mut robber, hex_coord, number, resource) =
+            board_with_settlements_on_one_hex(&[player_id]);
 
-        let (hex_coord, dice, res, vertex) = {
-            let hex = board.hexes.values()
-                .find(|h| h.resource != ResourceType::Desert)
-                .unwrap();
-            (hex.coord, hex.number, hex.resource, hex.adjacent_vertices[0])
-        };
+        let mut bank = Bank::new(&base_rules());
+        let mut players = players(vec![Player::new(player_id, "A", PlayerColour::Blue)]);
 
-        let v = board.vertices.get_mut(&vertex).unwrap();
-        v.owner = Some(player_id);
-        v.building = Some(VertexBuilding::Settlement);
-
-        let mut robber = Robber::new(&board);
         robber.move_to(hex_coord).unwrap();
 
-        let distributed = bank.give_resources_for_roll(
-            &board,
-            dice,
-            &robber,
-            &mut players,
-        );
+        let distributed = bank.give_resources_for_roll(&board, number, &robber, &mut players);
 
-        assert!(distributed.is_empty());
+        assert!(distributed.is_empty(), "the robber blocks this hex");
         assert_eq!(
-            players.get(player_id).unwrap().resources.amount_of(res),
+            players.get(player_id).unwrap().resources.amount_of(resource),
             0
         );
     }
@@ -514,15 +658,15 @@ mod tests {
 
     #[test]
     fn collect_from_player_to_player_transfers_resources() {
-        let mut bank = Bank::new();
+        let mut bank = Bank::new(&base_rules());
 
         let from = pid(1);
         let to = pid(2);
 
-        let mut p1 = Player::new(from, "From", 'A');
+        let mut p1 = Player::new(from, "From", PlayerColour::Red);
         p1.resources.add(ResourceType::Wood, 3);
 
-        let p2 = Player::new(to, "To", 'B');
+        let p2 = Player::new(to, "To", PlayerColour::Green);
 
         let mut players = players(vec![p1, p2]);
 
@@ -549,14 +693,14 @@ mod tests {
 
     #[test]
     fn collect_resource_from_all_to_player_collects_everything() {
-        let mut bank = Bank::new();
+        let mut bank = Bank::new(&base_rules());
 
         let target = pid(0);
 
-        let mut ps = vec![Player::new(target, "T", 'T')];
+        let mut ps = vec![Player::new(target, "T", PlayerColour::Yellow)];
 
         for i in 1..=3 {
-            let mut p = Player::new(pid(i), "P", 'A');
+            let mut p = Player::new(pid(i), "P", PlayerColour::Blue);
             p.resources.add(ResourceType::Ore, i as u32);
             ps.push(p);
         }
@@ -581,12 +725,12 @@ mod tests {
 
     #[test]
     fn collect_from_player_to_player_returns_err_when_target_missing_and_source_is_restored() {
-        let mut bank = Bank::new();
+        let mut bank = Bank::new(&base_rules());
 
         let pid1 = Uuid::from_u128(1);
         let pid2 = Uuid::from_u128(2); // nebude existovat
 
-        let mut from = Player::new(pid1, "From", 'A');
+        let mut from = Player::new(pid1, "From", PlayerColour::Blue);
         from.resources.add(ResourceType::Brick, 2);
 
         let mut players = Players::new(vec![from]);

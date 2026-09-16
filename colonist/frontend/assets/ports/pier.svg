@@ -1,0 +1,31 @@
+<svg width="26" height="120" viewBox="0 0 26 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- A plank walkway running from a harbour out to the shore. Drawn along
+       the vertical axis so it can be rotated onto any edge, the same way the
+       road piece is. Swap this file to change every pier on the board. -->
+  <defs>
+    <linearGradient id="pierWood" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#8a5a2b"/>
+      <stop offset="45%" stop-color="#b07a3f"/>
+      <stop offset="100%" stop-color="#6f4520"/>
+    </linearGradient>
+  </defs>
+
+  <!-- The two runner beams the planks sit on. -->
+  <rect x="3.5" y="0" width="19" height="120" rx="2.5" fill="url(#pierWood)"
+        stroke="#4a2c12" stroke-width="2"/>
+
+  <!-- Cross planks. Evenly spaced so a stretched pier still reads as timber. -->
+  <g stroke="#5b3618" stroke-width="1.6" stroke-linecap="round" opacity="0.85">
+    <line x1="4.5" y1="9" x2="21.5" y2="9"/>
+    <line x1="4.5" y1="24" x2="21.5" y2="24"/>
+    <line x1="4.5" y1="39" x2="21.5" y2="39"/>
+    <line x1="4.5" y1="54" x2="21.5" y2="54"/>
+    <line x1="4.5" y1="69" x2="21.5" y2="69"/>
+    <line x1="4.5" y1="84" x2="21.5" y2="84"/>
+    <line x1="4.5" y1="99" x2="21.5" y2="99"/>
+    <line x1="4.5" y1="111" x2="21.5" y2="111"/>
+  </g>
+
+  <!-- A highlight down one edge so the boards catch the light. -->
+  <rect x="5.5" y="2" width="3" height="116" rx="1.5" fill="#d8a76a" opacity="0.5"/>
+</svg>

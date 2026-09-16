@@ -4,3 +4,13 @@ target = "index.html"
 [serve]
 port = 3000
 open = true
+
+# The game socket, served from the same origin as the page. Without this the
+# browser would need a second forwarded port to reach the backend, which is
+# exactly what breaks remote development.
+[[proxy]]
+backend = "ws://127.0.0.1:8080/ws"
+# A `ws://` backend is not enough on its own: without this trunk proxies the
+# route as plain HTTP, so the upgrade handshake never happens and `/ws` falls
+# through to the SPA fallback - the page answers its own socket with itself.
+ws = true

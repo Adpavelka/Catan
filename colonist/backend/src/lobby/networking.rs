@@ -4,8 +4,6 @@ use shared::PendingAction;
 use uuid::Uuid;
 use crate::lobby::Lobby;
 use crate::network::message::ServerMessage;
-use crate::game::entities::bonus_points::BonusCard;
-use crate::game::entities::building::VertexBuilding;
 use crate::game::entities::game_instance::GameInstance;
 
 impl Lobby
@@ -29,7 +27,8 @@ impl Lobby
             if let Ok(json_string) = serde_json::to_string(&msg) {
                 let actix_msg = ServerMessage(json_string);
                 for idx in 0..game.turn_manager.players.len() {
-                    if let Some(addr) = self.sessions.get(&game.turn_manager.players.get_by_index(idx).unwrap().id) {
+                    let Some(player) = game.turn_manager.players.get_by_index(idx) else { continue };
+                    if let Some(addr) = self.sessions.get(&player.id) {
                         let _ = addr.do_send(actix_msg.clone());
                     }
                 }
@@ -37,11 +36,44 @@ impl Lobby
         }
     }
 
+    /// Broadcast to everyone in the game except `skip`. Used where the same
+    /// event carries more detail for the players involved than for onlookers.
+    pub fn broadcast_except(&self, game_id: &str, skip: &[Uuid], msg: shared::ServerMessage) {
+        let Some(game) = self.games.get(game_id) else { return };
+        let Ok(json_string) = serde_json::to_string(&msg) else { return };
+
+        let actix_msg = ServerMessage(json_string);
+        for idx in 0..game.turn_manager.players.len() {
+            let Some(player) = game.turn_manager.players.get_by_index(idx) else { continue };
+            if skip.contains(&player.id) {
+                continue;
+            }
+            if let Some(addr) = self.sessions.get(&player.id) {
+                let _ = addr.do_send(actix_msg.clone());
+            }
+        }
+    }
+
     pub fn broadcast_lobby_status(&self) {
         info!("Broadcasting lobby status to all players");
-        let games_data: Vec<(String, usize, usize)> = self.games.iter()
-            .map(|(gid, game)| (gid.clone(), game.turn_manager.players.len(), game.max_players))
+        let mut games_data: Vec<shared::LobbyGameInfo> = self.games.iter()
+            .map(|(gid, game)| shared::LobbyGameInfo {
+                game_id: gid.clone(),
+                game_name: game.game_name.clone(),
+                players: game.turn_manager.players.len(),
+                max_players: game.max_players,
+                available_colours: game.available_colours(),
+                victory_points_to_win: game.rules().victory_points_to_win,
+                started: game.get_state() != shared::GamePhase::WaitingForPlayers,
+            })
             .collect();
+
+        // `games` is a HashMap, so its iteration order changes whenever a game
+        // is created or evicted. Sending it unsorted makes the lobby list jump
+        // around under the cursor, and somebody aiming at their friend's game
+        // clicks JOIN on whatever slid into that row instead. Sorting by id
+        // gives every client the same stable list.
+        games_data.sort_by(|a, b| a.game_name.cmp(&b.game_name).then(a.game_id.cmp(&b.game_id)));
 
         let lobby_update = shared::ServerMessage::LobbyUpdate { games: games_data };
         for pid in self.sessions.keys() {
@@ -51,30 +83,28 @@ impl Lobby
     fn send_game_started(&self, pid: Uuid, game_id: &str) {
         let Some(game) = self.games.get(game_id) else { return };
 
-        let players: Vec<shared::PlayerInfo> = (0..game.turn_manager.players.len())
-            .filter_map(|i| game.turn_manager.players.get_by_index(i))
-            .map(|p| p.into())
-            .collect();
+        let players = game.get_all_players_info();
 
-
+        let info = game.turn_manager.board.to_info(game.turn_manager.get_robber_pos(), game.turn_manager.get_robber_asset());
         let board = shared::BoardState {
-            hexes: game.turn_manager.board.hexes.iter().map(|(c, h)| shared::HexInfo {
-                q: c.0, r: c.1, resource: h.resource, number: h.number
-            }).collect(),
-            settlements: self.get_buildings(&game, true),
-            cities: self.get_buildings(&game, false),
-            roads: game.turn_manager.board.edges.iter()
-                .filter_map(|(c, e)| e.owner.map(|owner| shared::BuildingInfo { player_id: owner, x: c.0, y: c.1 }))
-                .collect(),
-            robber_pos: game.turn_manager.get_robber_pos(),
-            ports: game.turn_manager.board.unique_ports().iter().map(|p| p.into()).collect(),
+            hexes: info.hexes,
+            settlements: info.settlements,
+            cities: info.cities,
+            roads: info.roads,
+            robber_pos: info.robber_pos,
+            robber_asset: info.robber_asset,
+            ports: info.ports,
         };
+
+        let (your_resources, your_dev_cards) = Self::private_hand(game, pid);
 
         let msg = shared::ServerMessage::GameStarted {
             your_player_id: pid,
             players,
             board,
             game_phase: game.get_state().clone(),
+            your_resources,
+            your_dev_cards,
         };
 
         self.send_server_msg(pid, msg);
@@ -83,16 +113,21 @@ impl Lobby
     pub(crate) fn send_full_sync(&mut self, pid: Uuid, game_id: &str) {
         let Some(game) = self.games.get(game_id) else { return };
 
-        let last_roll = game.turn_manager.dice.values();
+        let last_dice_roll = game.turn_manager.dice.last_roll();
+        let (your_resources, your_dev_cards) = Self::private_hand(game, pid);
 
         let sync_msg = shared::ServerMessage::FullStateSync {
             player_id: pid,
             players: game.get_all_players_info(),
-            board: game.turn_manager.board.to_info(game.turn_manager.get_robber_pos()),
+            board: game.turn_manager.board.to_info(game.turn_manager.get_robber_pos(), game.turn_manager.get_robber_asset()),
             game_phase: game.get_state().clone(),
             current_turn_player_id: game.turn_manager.players.get_current_player().id,
             robber_pos: game.turn_manager.get_robber_pos(),
-            last_dice_roll: Some(last_roll),
+            last_dice_roll,
+            your_resources,
+            your_dev_cards,
+            pending_trades: game.trade_snapshots_for(pid),
+            bank: game.turn_manager.bank.to_info(),
         };
 
         self.send_server_msg(pid, sync_msg);
@@ -100,19 +135,64 @@ impl Lobby
             self.send_secret_victory_points_to_player(pid, &game_id.to_string());
         }
 
-        let must_move_robber = game
-            .pending_actions
-            .get(&pid)
-            .map_or(false, |actions| {
-                actions.contains(&PendingAction::MoveRobber)
-                    || actions.contains(&PendingAction::PlayKnight)
-            });
+        // Every prompt they still owe, not just the robber. A sync is the
+        // client's whole truth - it clears its prompts when one arrives - so
+        // anything left out here is a prompt the player silently loses, and
+        // anything stale the server has since settled is one they would
+        // otherwise be left staring at.
+        self.announce_pending_actions(pid, game_id);
+    }
 
-        if must_move_robber {
-            self.send_server_msg(
-                pid,
-                shared::ServerMessage::MustMoveRobber { player_id: pid },
-            );
+    /// Re-send the prompt for each action `pid` still owes.
+    ///
+    /// The one place that turns pending actions into messages, so a sync and a
+    /// fresh dev card cannot disagree about what a player is being asked for.
+    pub(crate) fn announce_pending_actions(&self, pid: Uuid, game_id: &str) {
+        let Some(game) = self.games.get(game_id) else { return };
+        let Some(actions) = game.pending_actions.get(&pid) else { return };
+
+        // A discard is a blocking prompt: the player must finish it before any
+        // follow-up robber or steal prompt can be shown. Otherwise a single 7
+        // can open both a discard modal and a robber modal for the same
+        // player, which makes the post-discard flow reopen the wrong prompt.
+        let has_discard = actions.contains(&PendingAction::Discard);
+
+        for action in actions.clone() {
+            if has_discard && !matches!(action, PendingAction::Discard) {
+                continue;
+            }
+
+            let msg = match action {
+                PendingAction::MoveRobber | PendingAction::PlayKnight => {
+                    shared::ServerMessage::MustMoveRobber { player_id: pid }
+                }
+                PendingAction::RoadBuilding { remaining } => {
+                    shared::ServerMessage::MustPlaceRoads { player_id: pid, roads_remaining: remaining }
+                }
+                PendingAction::YearOfPlenty => {
+                    shared::ServerMessage::MustChooseYearOfPlentyResources { player_id: pid }
+                }
+                PendingAction::Monopoly => {
+                    shared::ServerMessage::MustChooseMonopolyResource { player_id: pid }
+                }
+                PendingAction::Discard => {
+                    let count = game
+                        .turn_manager
+                        .players
+                        .get(pid)
+                        .map_or(0, |p| (p.resources.get_cards_total() / 2) as usize);
+                    shared::ServerMessage::MustDiscardCards { player_id: pid, count }
+                }
+                // The victim list is recomputed from where the robber is
+                // standing now. Skipping this left a reconnecting player owing
+                // a steal with no prompt to answer and no way to end their
+                // turn, which `handle_end_turn` refuses while anything is
+                // pending.
+                PendingAction::Steal => shared::ServerMessage::CanRobPlayers {
+                    player_ids: game.turn_manager.robbable_players(pid).into_iter().collect(),
+                },
+            };
+            self.send_server_msg(pid, msg);
         }
     }
     
@@ -139,19 +219,13 @@ impl Lobby
 
     pub(crate) fn broadcast_players_update(&self, gid: &str) {
         if let Some(game) = self.games.get(gid) {
-            let players: Vec<shared::PlayerInfo> = (0..game.turn_manager.players.len())
-                .filter_map(|i| game.turn_manager.players.get_by_index(i).map(|p| (p.id, p)))
-                .map(|(pid, p)| {
-                    let mut info = shared::PlayerInfo::from(p);
-                    info.has_longest_road = game.turn_manager.road_bonus.holder() == Some(pid);
-                    info.has_largest_army = game.turn_manager.army_bonus.holder() == Some(pid);
-                    info
-                })
-                .collect();
-            let msg = shared::ServerMessage::PlayersUpdate { players };
+            let msg = shared::ServerMessage::PlayersUpdate {
+                players: game.get_all_players_info(),
+            };
             self.broadcast_to_game(gid, msg);
         }
     }
+
     pub fn send_secret_victory_points_to_player(&self, pid: Uuid, gid: &str) {
         if let Some(game) = self.games.get(gid) {
             let points = game.turn_manager.player_secret_victory_points(pid);
@@ -184,23 +258,18 @@ impl Lobby
             self.send_game_started(pid, gid);
         }
     }
-    fn get_buildings(&self, game: &GameInstance, get_settlements: bool) -> Vec<shared::BuildingInfo> {
-        game.turn_manager.board.vertices.iter()
-            .filter_map(|(coord, vertex)| {
-                let building = vertex.building.as_ref()?;
-                let owner = vertex.owner?;
-                let is_city = matches!(building, VertexBuilding::City);
-                if get_settlements != is_city {
-                    Some(shared::BuildingInfo {
-                        player_id: owner,
-                        x: coord.0,
-                        y: coord.1,
-                    })
-                } else {
-                    None
-                }
+    /// A player's own hand. Only ever sent to that player.
+    fn private_hand(game: &GameInstance, pid: Uuid) -> (shared::Resources, Vec<shared::DevCardType>) {
+        game.turn_manager
+            .players
+            .get(pid)
+            .map(|player| {
+                (
+                    (&player.resources).into(),
+                    player.dev_cards.iter().map(|card| card.get_type()).collect(),
+                )
             })
-            .collect()
+            .unwrap_or_default()
     }
 
 }

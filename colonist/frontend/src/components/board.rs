@@ -1,6 +1,7 @@
 use leptos::*;
 use crate::state::{GameState, BuildMode};
-use shared::{ClientRequest, ResourceType, HexInfo, PortType, PortInfo};
+use crate::components::icons::{asset_url, port_art, DieFace};
+use shared::{BuildingInfo, ClientRequest, ResourceType, HexInfo, PortInfo};
 use uuid::Uuid;
 
 // Convert axial coordinates (q, r) to pixel coordinates for SVG
@@ -10,108 +11,28 @@ fn axial_to_pixel(q: i32, r: i32, size: f32) -> (f32, f32) {
     (x, y)
 }
 
-// ===== Port rendering helpers (using shared::PortType from server) =====
-
-fn port_label(port_type: &PortType) -> &'static str {
-    match port_type {
-        PortType::ThreeToOne => "3:1",
-        PortType::TwoToOne(_) => "2:1",
-    }
-}
-
-fn port_resource_label(port_type: &PortType) -> Option<&'static str> {
-    match port_type {
-        PortType::ThreeToOne => None,
-        PortType::TwoToOne(res) => Some(match res {
-            ResourceType::Brick => "BRICK",
-            ResourceType::Wood => "WOOD",
-            ResourceType::Sheep => "SHEEP",
-            ResourceType::Wheat => "WHEAT",
-            ResourceType::Ore => "ORE",
-            ResourceType::Desert => "?",
-        }),
-    }
-}
-
-fn port_color(port_type: &PortType) -> &'static str {
-    match port_type {
-        PortType::ThreeToOne => "#ffffff",
-        PortType::TwoToOne(res) => match res {
-            ResourceType::Brick => "#fb923c",   // orange-400
-            ResourceType::Wood => "#059669",    // emerald-600
-            ResourceType::Sheep => "#84cc16",   // lime-500
-            ResourceType::Wheat => "#eab308",   // yellow-500
-            ResourceType::Ore => "#64748b",     // slate-500
-            ResourceType::Desert => "#ffffff",
-        },
-    }
-}
-
-fn port_bg_color(port_type: &PortType) -> &'static str {
-    match port_type {
-        PortType::ThreeToOne => "#1e293b", // slate-800
-        PortType::TwoToOne(res) => match res {
-            ResourceType::Brick => "#431407",   // orange-950
-            ResourceType::Wood => "#022c22",    // emerald-950
-            ResourceType::Sheep => "#1a2e05",   // lime-950
-            ResourceType::Wheat => "#422006",   // yellow-950
-            ResourceType::Ore => "#020617",     // slate-950
-            ResourceType::Desert => "#1e293b",
-        },
-    }
-}
-
-// Get color for a resource type
-fn resource_color(resource: &ResourceType) -> &'static str {
+fn hex_asset(resource: &ResourceType) -> &'static str {
     match resource {
-        ResourceType::Wood => "fill-emerald-600",
-        ResourceType::Brick => "fill-orange-400",
-        ResourceType::Sheep => "fill-lime-500",
-        ResourceType::Wheat => "fill-yellow-500",
-        ResourceType::Ore => "fill-slate-500",
-        ResourceType::Desert => "fill-amber-200",
+        ResourceType::Wood => "/assets/hexes/wood.PNG?v=2",
+        ResourceType::Brick => "/assets/hexes/brick.PNG?v=2",
+        ResourceType::Sheep => "/assets/hexes/sheep.PNG?v=2",
+        ResourceType::Wheat => "/assets/hexes/wheat.PNG?v=2",
+        ResourceType::Ore => "/assets/hexes/ore.PNG?v=2",
+        ResourceType::Desert => "/assets/hexes/dessert.PNG?v=2",
     }
 }
 
-// Get label for a resource type
-fn resource_label(resource: &ResourceType) -> &'static str {
-    match resource {
-        ResourceType::Wood => "WOOD",
-        ResourceType::Brick => "BRICK",
-        ResourceType::Sheep => "SHEEP",
-        ResourceType::Wheat => "WHEAT",
-        ResourceType::Ore => "ORE",
-        ResourceType::Desert => "DESERT",
-    }
-}
-
-pub(crate) fn player_color_hex(color_char: &str) -> &'static str {
-    match color_char.chars().next() {
-        Some('b') => "#3b82f6", // blue-500
-        Some('r') => "#ef4444", // red-500
-        Some('g') => "#22c55e", // green-500
-        Some('w') | Some('y') => "#eab308", // yellow-500
-        _ => "#a855f7", // purple-500
-    }
-}
 
 // Get player color (for rendering buildings)
-fn player_color(player_id: Uuid, state: &GameState) -> String {
-    // Look up the player's actual color from the players list
+/// The player's colour as a literal hex, applied via the SVG `fill` attribute.
+/// Deliberately not a Tailwind class: those only exist if Tailwind happens to
+/// scan the file the string literal lives in.
+fn player_color(player_id: Uuid, state: &GameState) -> &'static str {
     state.players.get_untracked()
         .iter()
         .find(|p| p.player_id == player_id)
-        .map(|p| {
-            // Convert backend color char to Tailwind class
-            match p.color.chars().next() {
-                Some('b') => "fill-blue-500".to_string(),
-                Some('r') => "fill-red-500".to_string(),
-                Some('g') => "fill-green-500".to_string(),
-                Some('w') | Some('y') => "fill-yellow-500".to_string(),
-                _ => "fill-purple-500".to_string(),
-            }
-        })
-        .unwrap_or_else(|| "fill-purple-500".to_string())
+        .map(|p| p.colour.hex())
+        .unwrap_or("#a855f7")
 }
 
 // Calculate vertex positions for a hex (matches backend logic)
@@ -144,6 +65,97 @@ fn vertex_to_pixel(vx: i32, vy: i32, hex_size: f32) -> (f32, f32) {
 }
 
 
+
+/// Vertices where `me` may put a settlement.
+///
+/// Mirrors the server: the space must be empty, no neighbouring vertex may be
+/// built on, and outside initial placement it has to touch one of your roads.
+/// Offering anything else just invites a click that comes back as an error.
+fn legal_settlements(
+    hexes: &[HexInfo],
+    settlements: &[BuildingInfo],
+    cities: &[BuildingInfo],
+    roads: &[BuildingInfo],
+    me: Uuid,
+    initial: bool,
+) -> Vec<(i32, i32)> {
+    use std::collections::HashSet;
+
+    let taken: HashSet<(i32, i32)> = settlements
+        .iter()
+        .chain(cities.iter())
+        .map(|b| (b.x, b.y))
+        .collect();
+
+    let edges = calculate_all_edges(hexes);
+    let my_edges: HashSet<(i32, i32)> = roads
+        .iter()
+        .filter(|r| r.player_id == me)
+        .map(|r| (r.x, r.y))
+        .collect();
+
+    // Vertices touched by one of my roads.
+    let mine_reach: HashSet<(i32, i32)> = edges
+        .iter()
+        .filter(|(_, _, e)| my_edges.contains(e))
+        .flat_map(|(a, b, _)| [*a, *b])
+        .collect();
+
+    calculate_all_vertices(hexes)
+        .into_iter()
+        .filter(|v| !taken.contains(v))
+        .filter(|v| {
+            // Distance rule: no neighbour along a shared edge may be occupied.
+            !edges.iter().any(|(a, b, _)| {
+                (a == v && taken.contains(b)) || (b == v && taken.contains(a))
+            })
+        })
+        .filter(|v| initial || mine_reach.contains(v))
+        .collect()
+}
+
+/// Edges where `me` may put a road: empty, and touching something of theirs.
+/// During initial placement it must touch the settlement just placed.
+fn legal_roads(
+    hexes: &[HexInfo],
+    settlements: &[BuildingInfo],
+    cities: &[BuildingInfo],
+    roads: &[BuildingInfo],
+    me: Uuid,
+    must_touch: Option<(i32, i32)>,
+) -> Vec<(i32, i32)> {
+    use std::collections::HashSet;
+
+    let occupied: HashSet<(i32, i32)> = roads.iter().map(|r| (r.x, r.y)).collect();
+    let my_buildings: HashSet<(i32, i32)> = settlements
+        .iter()
+        .chain(cities.iter())
+        .filter(|b| b.player_id == me)
+        .map(|b| (b.x, b.y))
+        .collect();
+
+    let edges = calculate_all_edges(hexes);
+    let my_road_ends: HashSet<(i32, i32)> = edges
+        .iter()
+        .filter(|(_, _, e)| roads.iter().any(|r| r.player_id == me && (r.x, r.y) == *e))
+        .flat_map(|(a, b, _)| [*a, *b])
+        .collect();
+
+    edges
+        .into_iter()
+        .filter(|(_, _, e)| !occupied.contains(e))
+        .filter(|(a, b, _)| match must_touch {
+            Some(v) => *a == v || *b == v,
+            None => {
+                my_buildings.contains(a)
+                    || my_buildings.contains(b)
+                    || my_road_ends.contains(a)
+                    || my_road_ends.contains(b)
+            }
+        })
+        .map(|(_, _, e)| e)
+        .collect()
+}
 
 // Calculate all unique vertices from hexes
 fn calculate_all_vertices(hexes: &[HexInfo]) -> Vec<(i32, i32)> {
@@ -202,10 +214,6 @@ fn calculate_all_edges(hexes: &[HexInfo]) -> Vec<((i32, i32), (i32, i32), (i32, 
 pub fn Board() -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
 
-    let state_roll = state.clone();
-    let state_build_settlement = state.clone();
-    let state_build_city = state.clone();
-    let state_build_road = state.clone();
 
     // Check if it's my turn
     let is_my_turn = move || {
@@ -216,24 +224,204 @@ pub fn Board() -> impl IntoView {
         }
     };
 
-    // Check if dice has been rolled this turn
-    let has_rolled = move || state.last_dice_roll.get().is_some();
+
+    // During setup there is exactly one thing you may do at any moment, and
+    // the phase already says which. Making the player arm a build mode for it
+    // is a click that can only be made one way, so the board arms itself and
+    // moves on to the road the moment the settlement lands.
+    create_effect(move |_| {
+        let phase = state.game_phase.get();
+        let mine = state.player_id.get() == Some(state.current_turn_player.get());
+
+        let wanted = match (phase, mine) {
+            (shared::GamePhase::InitialPlacement { step, .. }, true) => match step {
+                shared::PlacementStep::BuildSettlement => BuildMode::Settlement,
+                shared::PlacementStep::BuildRoad { .. } => BuildMode::Road,
+            },
+            // Somebody else's placement, or setup is over: leave whatever the
+            // player has armed alone once we are in regular play.
+            (shared::GamePhase::InitialPlacement { .. }, false) => BuildMode::None,
+            _ => return,
+        };
+
+        if state.build_mode.get_untracked() != wanted {
+            state.build_mode.set(wanted);
+        }
+    });
+
+    // View transform on top of the fit-to-viewport one. Kept here rather than
+    // in GameState because nothing outside the board cares about it.
+    let (zoom, set_zoom) = create_signal(1.0f64);
+    let (pan, set_pan) = create_signal((0.0f64, 0.0f64));
+    let (dragging, set_dragging) = create_signal(Option::<(f64, f64)>::None);
+
+    const MIN_ZOOM: f64 = 0.6;
+    const MAX_ZOOM: f64 = 3.0;
+    let clamp_zoom = |z: f64| z.clamp(MIN_ZOOM, MAX_ZOOM);
+
+    let reset_view = move || {
+        set_zoom.set(1.0);
+        set_pan.set((0.0, 0.0));
+    };
 
     view! {
-        <div class="relative w-full h-full flex flex-col items-center justify-start pt-2 overflow-y-auto min-h-0">
+        <div class="relative w-full h-full flex flex-col min-h-0 min-w-0 gap-2">
+            // The board takes every pixel the column can spare; the control
+            // bar below is the only fixed-height part.
             <svg
                 viewBox="0 0 1000 800"
-                class="w-full h-auto max-h-[70vh] drop-shadow-2xl relative z-0"
+                class=move || format!(
+                    "w-full flex-1 min-h-0 drop-shadow-2xl relative z-0 {}",
+                    if dragging.get().is_some() { "cursor-grabbing" } else { "cursor-grab" }
+                )
                 preserveAspectRatio="xMidYMid meet"
+                on:wheel=move |ev| {
+                    ev.prevent_default();
+                    let factor = if ev.delta_y() < 0.0 { 1.12 } else { 1.0 / 1.12 };
+                    set_zoom.update(|z| *z = clamp_zoom(*z * factor));
+                }
+                on:pointerdown=move |ev| set_dragging.set(Some((ev.client_x() as f64, ev.client_y() as f64)))
+                on:pointermove=move |ev| {
+                    let Some((lx, ly)) = dragging.get() else { return };
+                    let (x, y) = (ev.client_x() as f64, ev.client_y() as f64);
+                    // Undo the zoom so a drag moves the board with the cursor
+                    // rather than racing ahead of it when zoomed in.
+                    let z = zoom.get().max(0.01);
+                    set_pan.update(|(px, py)| {
+                        *px += (x - lx) / z;
+                        *py += (y - ly) / z;
+                    });
+                    set_dragging.set(Some((x, y)));
+                }
+                on:pointerup=move |_| set_dragging.set(None)
+                on:pointerleave=move |_| set_dragging.set(None)
             >
+
+                // One tint per player colour. The pieces are drawn from
+                // the same artwork as the buy buttons, so a filter is what
+                // makes a settlement *yours*: flood the shape with your
+                // colour, then multiply the artwork's own shading back over
+                // it so it keeps its modelling instead of going flat.
+                <defs>
+                    {shared::PlayerColour::ALL.map(|c| {
+                        let hex = c.hex();
+                        view! {
+                            <filter id=tint_id(hex) color-interpolation-filters="sRGB">
+                                <feFlood flood-color=hex result="flat" />
+                                <feComposite in="flat" in2="SourceAlpha" operator="in" result="solid" />
+                                <feColorMatrix in="SourceGraphic" type="saturate" values="0" result="grey" />
+                                <feComponentTransfer in="grey" result="soft">
+                                    <feFuncR type="linear" slope="0.42" intercept="0.58" />
+                                    <feFuncG type="linear" slope="0.42" intercept="0.58" />
+                                    <feFuncB type="linear" slope="0.42" intercept="0.58" />
+                                </feComponentTransfer>
+                                <feBlend in="soft" in2="solid" mode="multiply" result="shaded" />
+                                <feComposite in="shaded" in2="SourceAlpha" operator="in" />
+                            </filter>
+                        }
+                    }).to_vec()}
+                </defs>
+
                 // Center the board horizontally, move up vertically
-                <g transform="translate(500, 320)">
-                    // Render all hexes
+                // The board is drawn at a fixed hex size and then scaled as a
+                // whole, so the 30-hex extension board fits the same viewport
+                // as the 19-hex one without touching every coordinate.
+                <g transform=move || {
+                    let (px, py) = pan.get();
+                    format!("translate(500, 400) scale({:.4}) translate({:.2}, {:.2}) translate(-500, -400)",
+                            zoom.get(), px, py)
+                }>
+                <g transform=move || {
+                    let hexes = state.hexes.get();
+                    if hexes.is_empty() {
+                        return "translate(500, 320)".to_string();
+                    }
+
+                    let points: Vec<(f32, f32)> = hexes
+                        .iter()
+                        .map(|h| axial_to_pixel(h.q, h.r, 60.0))
+                        .collect();
+
+                    // Room for the hex itself plus the harbour markers outside it.
+                    let margin = 115.0;
+                    let min_x = points.iter().map(|p| p.0).fold(f32::INFINITY, f32::min) - margin;
+                    let max_x = points.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max) + margin;
+                    let min_y = points.iter().map(|p| p.1).fold(f32::INFINITY, f32::min) - margin;
+                    let max_y = points.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max) + margin;
+
+                    // No upper clamp: a 19-hex board is smaller than the
+                    // viewport, and capping at 1.0 left it marooned in the
+                    // middle of a mostly empty column.
+                    let scale = (980.0 / (max_x - min_x))
+                        .min(780.0 / (max_y - min_y));
+
+                    format!(
+                        "translate(500, 400) scale({:.4}) translate({:.1}, {:.1})",
+                        scale,
+                        -(min_x + max_x) / 2.0,
+                        -(min_y + max_y) / 2.0,
+                    )
+                }>
+                    // The island itself. Drawn as one layer of oversized
+                    // hexes before any tile, so the gaps between tiles read as
+                    // ground rather than sea showing through. It has to be its
+                    // own pass: done inside each tile, a later tile's ground
+                    // would paint over the previous tile's face.
+                    // Hex centres are 60*sqrt(3) apart but the tiles are only
+                    // drawn at radius 50, so they never touch. These fill the
+                    // grid cell and then some: at radius 62 neighbouring
+                    // ground hexes overlap, so the island is one continuous
+                    // mass with no sea showing through the joins.
+                    <g class="pointer-events-none">
+                        <For
+                            each=move || state.hexes.get()
+                            key=|hex| (hex.q, hex.r)
+                            children=move |hex: HexInfo| {
+                                let (px, py) = axial_to_pixel(hex.q, hex.r, 60.0);
+                                view! {
+                                    <polygon
+                                        points="0,-62 53.7,-31 53.7,31 0,62 -53.7,31 -53.7,-31"
+                                        transform=format!("translate({}, {})", px, py)
+                                        fill="#5f5433"
+                                    />
+                                }
+                            }
+                        />
+                        // A lighter wash inside it, so the ground has some
+                        // depth and the tile joins read as furrows rather than
+                        // as a flat brown mat.
+                        <For
+                            each=move || state.hexes.get()
+                            key=|hex| (hex.q, hex.r)
+                            children=move |hex: HexInfo| {
+                                let (px, py) = axial_to_pixel(hex.q, hex.r, 60.0);
+                                view! {
+                                    <polygon
+                                        points="0,-59 51,-29.5 51,29.5 0,59 -51,29.5 -51,-29.5"
+                                        transform=format!("translate({}, {})", px, py)
+                                        fill="#7a6d44"
+                                    />
+                                }
+                            }
+                        />
+                    </g>
+
+                    // Render all hexes.
+                    //
+                    // The key carries the tile's contents, not just its place.
+                    // `For` is keyed: for a key it has already drawn it keeps
+                    // the existing nodes and never re-runs this child, and
+                    // `HexTile` reads its resource and number once, when built.
+                    // Every board uses the same coordinates, so keying on
+                    // (q, r) alone meant a second game in the same page
+                    // redrew nothing - you sat looking at the previous game's
+                    // land while the server dealt you another.
                     <For
                         each=move || state.hexes.get()
-                        key=|hex| (hex.q, hex.r)
+                        key=|hex| (hex.q, hex.r, hex.resource, hex.number)
                         children=move |hex: HexInfo| {
                             let (px, py) = axial_to_pixel(hex.q, hex.r, 60.0);
+                            let (hex_q, hex_r) = (hex.q, hex.r);
                             let hex_clone = hex.clone();
                             let state_click = state.clone();
 
@@ -244,12 +432,19 @@ pub fn Board() -> impl IntoView {
                                         y=py
                                         hex=hex
                                     />
-                                    // Overlay for robber movement
-                                    <Show when=move || state_click.must_move_robber.get()>
+                                    // Robber placement targets. Only the hexes
+                                    // that are actually legal light up: the one
+                                    // the robber already sits on is not a move,
+                                    // and filling every hex turned the whole
+                                    // board red instead of pointing anywhere.
+                                    <Show when=move || {
+                                        state_click.must_move_robber.get()
+                                            && state_click.robber_pos.get() != Some((hex_q, hex_r))
+                                    }>
                                         <polygon
                                             points="0,-50 43,-25 43,25 0,50 -43,25 -43,-25"
                                             transform=format!("translate({}, {})", px, py)
-                                            class="fill-red-500/20 hover:fill-red-500/40 stroke-red-500 stroke-2 cursor-pointer transition-all"
+                                            class="fill-transparent hover:fill-red-500/30 stroke-red-400/70 hover:stroke-red-400 [stroke-width:3] [stroke-dasharray:6_5] hover:[stroke-dasharray:none] cursor-pointer transition-all"
                                             on:click=move |_| {
                                                 state_click.send(ClientRequest::MoveRobber {
                                                     q: hex_clone.q,
@@ -268,7 +463,11 @@ pub fn Board() -> impl IntoView {
                     <g class="ports" style="pointer-events: none;">
                         <For
                             each=move || state.board_ports.get()
-                            key=|port| (port.vertices[0], port.vertices[1])
+                            // The type belongs in the key for the same reason
+                            // it does on the hexes: harbours sit on the same
+                            // coastline every game, only what they trade
+                            // changes.
+                            key=|port| (port.vertices[0], port.vertices[1], port.port_type)
                             children=move |port: PortInfo| {
                                 let (v1x, v1y) = vertex_to_pixel(port.vertices[0].0, port.vertices[0].1, 60.0);
                                 let (v2x, v2y) = vertex_to_pixel(port.vertices[1].0, port.vertices[1].1, 60.0);
@@ -286,90 +485,58 @@ pub fn Board() -> impl IntoView {
                                 let nx = -edge_dy / edge_len;
                                 let ny = edge_dx / edge_len;
 
-                                // Determine which direction is "outward" (away from island center at 0,0)
-                                let test_x = mid_x + nx * 10.0;
-                                let test_y = mid_y + ny * 10.0;
-                                let dist_out = test_x * test_x + test_y * test_y;
-                                let dist_in = (mid_x - nx * 10.0).powi(2) + (mid_y - ny * 10.0).powi(2);
+                                // "Outward" is away from the hex this harbour sits on, not away
+                                // from the board's centre: on a coastline with any concavity -
+                                // as the extension board has - those are not the same direction,
+                                // and the marker ends up drawn on top of the land.
+                                let (hx, hy) = state.hexes.get_untracked()
+                                    .iter()
+                                    .map(|h| axial_to_pixel(h.q, h.r, 60.0))
+                                    .min_by(|a, b| {
+                                        let da = (a.0 - mid_x).powi(2) + (a.1 - mid_y).powi(2);
+                                        let db = (b.0 - mid_x).powi(2) + (b.1 - mid_y).powi(2);
+                                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                                    .unwrap_or((0.0, 0.0));
 
-                                let (out_nx, out_ny) = if dist_out > dist_in {
-                                    (nx, ny)
-                                } else {
-                                    (-nx, -ny)
-                                };
+                                let away = (mid_x - hx) * nx + (mid_y - hy) * ny;
+                                let (out_nx, out_ny) = if away >= 0.0 { (nx, ny) } else { (-nx, -ny) };
 
                                 // Push port marker outward from the edge
-                                let port_x = mid_x + out_nx * 45.0;
-                                let port_y = mid_y + out_ny * 45.0;
+                                let port_x = mid_x + out_nx * 62.0;
+                                let port_y = mid_y + out_ny * 62.0;
 
-                                // Get port display properties from server-sent port type
-                                let label = port_label(&port.port_type);
-                                let resource = port_resource_label(&port.port_type);
-                                let color = port_color(&port.port_type);
-                                let bg_color = port_bg_color(&port.port_type);
+                                // The walkways meet the underside of the
+                                // hull. The boat is drawn upright whatever
+                                // direction the harbour faces, so "under" is
+                                // straight down the screen from its centre -
+                                // aiming at the centre instead buried the
+                                // planks in the middle of the boat.
+                                let dock_x = port_x;
+                                let dock_y = port_y + 19.0;
 
                                 view! {
-                                    <g transform=format!("translate({}, {})", port_x, port_y)>
-                                        // Dock line pointing toward the island
-                                        <line
-                                            x1="0"
-                                            y1="0"
-                                            x2={format!("{}", -out_nx * 30.0)}
-                                            y2={format!("{}", -out_ny * 30.0)}
-                                            stroke=color
-                                            stroke-width="3"
-                                            stroke-linecap="round"
-                                        />
-                                        // Small circles at vertex connection points
-                                        <circle
-                                            cx={format!("{}", v1x - port_x)}
-                                            cy={format!("{}", v1y - port_y)}
-                                            r="4"
-                                            fill=color
-                                        />
-                                        <circle
-                                            cx={format!("{}", v2x - port_x)}
-                                            cy={format!("{}", v2y - port_y)}
-                                            r="4"
-                                            fill=color
-                                        />
-                                        // Port background
-                                        <rect
-                                            x="-22"
-                                            y="-14"
-                                            width="44"
-                                            height={if resource.is_some() { "32" } else { "22" }}
-                                            rx="4"
-                                            fill=bg_color
-                                            stroke=color
-                                            stroke-width="2"
-                                        />
-                                        // Ratio text
-                                        <text
-                                            x="0"
-                                            y={if resource.is_some() { "-2" } else { "4" }}
-                                            text-anchor="middle"
-                                            fill=color
-                                            font-size="14"
-                                            font-weight="bold"
-                                            style="text-shadow: 1px 1px 2px rgba(0,0,0,0.8)"
-                                        >
-                                            {label}
-                                        </text>
-                                        // Resource name (for 2:1 ports)
-                                        {resource.map(|res| view! {
-                                            <text
-                                                x="0"
-                                                y="12"
-                                                text-anchor="middle"
-                                                fill=color
-                                                font-size="8"
-                                                font-weight="bold"
-                                                style="text-shadow: 1px 1px 2px rgba(0,0,0,0.8)"
-                                            >
-                                                {res}
-                                            </text>
-                                        })}
+                                    <g>
+                                        // A plank walkway out to each of the
+                                        // two corners this harbour serves.
+                                        <Pier from=(v1x, v1y) to=(dock_x, dock_y) />
+                                        <Pier from=(v2x, v2y) to=(dock_x, dock_y) />
+
+                                        <g transform=format!("translate({}, {})", port_x, port_y)>
+                                            // The harbour badge and nothing
+                                            // else. The sail already carries
+                                            // both halves of the deal - which
+                                            // resource, at what rate - so a
+                                            // caption under it said the same
+                                            // thing twice. The artwork sits
+                                            // straight on the water; a disc
+                                            // behind it only boxed it in.
+                                            <image
+                                                href=asset_url(port_art(&port.port_type))
+                                                x="-24" y="-26" width="48" height="48"
+                                                style="filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.45));"
+                                            />
+                                        </g>
                                     </g>
                                 }
                             }
@@ -379,25 +546,22 @@ pub fn Board() -> impl IntoView {
                     // Render robber
                     {move || {
                         if let Some((robber_q, robber_r)) = state.robber_pos.get() {
+                            let robber_asset = state.robber_asset.get();
                             let (px, py) = axial_to_pixel(robber_q, robber_r, 60.0);
                             view! {
                                 <g transform=format!("translate({}, {})", px, py)>
-                                    // Semi-transparent dark circle background
-                                    <circle
-                                        cx="0"
-                                        cy="0"
-                                        r="20"
-                                        class="fill-black/40 stroke-red-600 stroke-2"
+                                    // Just the piece, standing on the tile the
+                                    // way it stands on a real board. It used to
+                                    // sit in a dark disc with a red ring, which
+                                    // read as a warning badge rather than as a
+                                    // playing piece. A shadow keeps it legible
+                                    // against the pale desert instead.
+                                    <image
+                                        href=asset_url(&robber_asset)
+                                        x="-19" y="-19" width="38" height="38"
+                                        class="pointer-events-none"
+                                        style="filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.55));"
                                     />
-                                    // Robber emoji
-                                    <text
-                                        y="6"
-                                        text-anchor="middle"
-                                        class="fill-red-500 text-[16px] font-black pointer-events-none"
-                                        style="text-shadow: 1px 1px 2px rgba(0,0,0,0.9)"
-                                    >
-                                        "🦹"
-                                    </text>
                                 </g>
                             }.into_view()
                         } else {
@@ -412,8 +576,29 @@ pub fn Board() -> impl IntoView {
                     }>
                         <For
                             each=move || {
+                                let me = state.player_id.get().unwrap_or_else(Uuid::nil);
                                 let hexes = state.hexes.get();
-                                calculate_all_vertices(&hexes)
+                                let settlements = state.settlements.get();
+                                let cities = state.cities.get();
+
+                                // Upgrading shows your own settlements; placing
+                                // shows only the spots the server will accept.
+                                if state.build_mode.get() == BuildMode::City {
+                                    settlements
+                                        .iter()
+                                        .filter(|b| b.player_id == me)
+                                        .map(|b| (b.x, b.y))
+                                        .collect::<Vec<_>>()
+                                } else {
+                                    legal_settlements(
+                                        &hexes,
+                                        &settlements,
+                                        &cities,
+                                        &state.roads.get(),
+                                        me,
+                                        state.game_phase.get().is_initial_phase(),
+                                    )
+                                }
                             }
                             key=|v| *v
                             children=move |vertex| {
@@ -428,19 +613,27 @@ pub fn Board() -> impl IntoView {
                                     )
                                 };
 
+                                let upgrading = move || {
+                                    state_click.build_mode.get() == BuildMode::City
+                                        && has_my_settlement()
+                                };
+
                                 view! {
+                                    // A ring when upgrading, so it reads as a
+                                    // halo around the settlement it replaces;
+                                    // a dot when placing, where there is
+                                    // nothing on the spot yet.
                                     <circle
                                         cx=vx
                                         cy=vy
-                                        r="10"
-                                        class=move || {
-                                            let mode = state_click.build_mode.get();
-                                            let base = "cursor-pointer stroke-black stroke-1 transition-all ";
-                                            if mode == BuildMode::City && has_my_settlement() {
-                                                format!("{} fill-orange-500 animate-pulse", base)
-                                            } else {
-                                                format!("{} fill-white/30 hover:fill-white/80", base)
-                                            }
+                                        r=move || if upgrading() { "21" } else { "10" }
+                                        stroke-width=move || if upgrading() { "5" } else { "1" }
+                                        class=move || if upgrading() {
+                                            "cursor-pointer fill-transparent stroke-[#ffb718] \
+                                             hover:stroke-[#ffd76b] animate-pulse transition-all"
+                                        } else {
+                                            "cursor-pointer stroke-black fill-white/30 \
+                                             hover:fill-white/80 transition-all"
                                         }
                                         on:click=move |_| {
                                             match state_click.build_mode.get() {
@@ -465,15 +658,30 @@ pub fn Board() -> impl IntoView {
                         {move || {
                             let hexes = state.hexes.get();
                             let roads = state.roads.get();
+                            let me = state.player_id.get().unwrap_or_else(Uuid::nil);
 
-                            // Calculate all edges from hexes (proper backend formula)
+                            // In initial placement the road has to touch the
+                            // settlement just placed, and the phase carries
+                            // which one that was.
+                            let must_touch = match state.game_phase.get() {
+                                shared::GamePhase::InitialPlacement {
+                                    step: shared::PlacementStep::BuildRoad { settlement }, ..
+                                } => Some(settlement),
+                                _ => None,
+                            };
+
+                            let legal = legal_roads(
+                                &hexes,
+                                &state.settlements.get(),
+                                &state.cities.get(),
+                                &roads,
+                                me,
+                                must_touch,
+                            );
+
                             let all_edges = calculate_all_edges(&hexes);
-
-                            // Filter out edges that already have roads
                             let available_edges: Vec<_> = all_edges.into_iter()
-                                .filter(|(_, _, edge_coord)| {
-                                    !roads.iter().any(|r| (r.x, r.y) == *edge_coord)
-                                })
+                                .filter(|(_, _, edge_coord)| legal.contains(edge_coord))
                                 .collect();
 
                             view! {
@@ -504,6 +712,33 @@ pub fn Board() -> impl IntoView {
                             }
                         }}
                     </Show>
+
+                    // Roads, drawn before the buildings on purpose: a
+                    // road ends at a vertex somebody has built on, and drawn
+                    // afterwards it would cover their piece.
+                    <For
+                        each=move || state.roads.get()
+                        key=|r| (r.x, r.y, r.player_id)
+                        children=move |road| {
+                            let hexes = state.hexes.get();
+                            let Some((v1, v2)) = find_vertices_for_edge((road.x, road.y), &hexes)
+                            else {
+                                return view! { <g></g> }.into_view();
+                            };
+
+                            let (v1x, v1y) = vertex_to_pixel(v1.0, v1.1, 60.0);
+                            let (v2x, v2y) = vertex_to_pixel(v2.0, v2.1, 60.0);
+                            let colour = player_color(road.player_id, &state);
+
+                            view! {
+                                <PlacedRoad
+                                    from=(v1x, v1y)
+                                    to=(v2x, v2y)
+                                    colour=colour
+                                />
+                            }.into_view()
+                        }
+                    />
 
                     // Render settlements
                     <For
@@ -537,333 +772,391 @@ pub fn Board() -> impl IntoView {
                         }
                     />
 
-                    // Render roads (as lines between vertices)
-                    <For
-                        each=move || state.roads.get()
-                        key=|r| (r.x, r.y, r.player_id)
-                        children=move |road| {
-                            let hexes = state.hexes.get();
-                            // Find the two vertices this edge connects
-                            if let Some((v1, v2)) = find_vertices_for_edge((road.x, road.y), &hexes) {
-                                let (v1x, v1y) = vertex_to_pixel(v1.0, v1.1, 60.0);
-                                let (v2x, v2y) = vertex_to_pixel(v2.0, v2.1, 60.0);
-
-                                // Get stroke color based on player (look up from player list)
-                                let stroke_color = state.players.get()
-                                    .iter()
-                                    .find(|p| p.player_id == road.player_id)
-                                    .map(|p| {
-                                        match p.color.chars().next() {
-                                            Some('b') => "#3b82f6", // blue-500
-                                            Some('r') => "#ef4444", // red-500
-                                            Some('g') => "#22c55e", // green-500
-                                            Some('w') | Some('y') => "#eab308", // yellow-500
-                                            _ => "#a855f7", // purple-500
-                                        }
-                                    })
-                                    .unwrap_or("#a855f7");
-
-                                view! {
-                                    <line
-                                        x1=v1x
-                                        y1=v1y
-                                        x2=v2x
-                                        y2=v2y
-                                        stroke=stroke_color
-                                        stroke-width="5"
-                                        stroke-linecap="round"
-                                    />
-                                }.into_view()
-                            } else {
-                                view! { <g></g> }.into_view()
-                            }
-                        }
-                    />
+                </g>
                 </g>
             </svg>
 
-            // Control panel
-            <div class="mt-4 w-full flex justify-center">
-                <div class="flex flex-col gap-3 bg-gray-900/80 backdrop-blur-md p-4 rounded-2xl border border-white/10 shadow-2xl">
+            // Zoom controls, floated over the top-right of the water. The dice
+            // are not here: they belong to the bottom HUD, stacked above the
+            // turn panel, so the whole right-hand column reads top to bottom.
+
+
+            <div class="absolute top-2 right-2 z-10 flex flex-col gap-1">
+                <button
+                    class="game-btn game-btn-cream w-8 h-8 font-black leading-none"
+                    title="Zoom in"
+                    on:click=move |_| set_zoom.update(|z| *z = clamp_zoom(*z * 1.25))
+                >"+"</button>
+                <button
+                    class="game-btn game-btn-cream w-8 h-8 font-black leading-none"
+                    title="Zoom out"
+                    on:click=move |_| set_zoom.update(|z| *z = clamp_zoom(*z / 1.25))
+                >"\u{2212}"</button>
+                <button
+                    class="game-btn game-btn-cream w-8 h-8 text-[9px] font-black"
+                    title="Reset the view"
+                    on:click=move |_| reset_view()
+                >"FIT"</button>
+            </div>
+
+            // Status banner, floated over the foot of the board. Only rendered
+            // when it has something to say - the dice and build buttons moved
+            // out from under here, and an always-on container left an empty
+            // pill sitting on the water.
+            <Show when=move || {
+                let phase = state.game_phase.get();
+                (phase.is_initial_phase() && !is_my_turn()) || phase.special_builder().is_some()
+            }>
+            <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex justify-center">
+                <div class="panel flex flex-wrap items-center justify-center gap-3 px-4 py-2.5">
                 // Show initial placement instructions
+                // On your own setup turn the board arms itself and lights up
+                // the legal spots, so there is nothing to say. It is only worth
+                // a line when you are waiting on somebody else.
                 {move || {
-                    let phase = move || state.game_phase.get();
-
-
-                    if phase().is_initial_phase() {
-                        if is_my_turn() {
-                            view! {
-                                <div class="text-orange-400 font-bold text-sm bg-orange-900/30 px-4 py-2 rounded-lg border border-orange-700/50">
-                                    "Place 1 settlement, then 1 road"
-                                </div>
-                            }.into_view()
-                        } else {
-                            view! {
-                                <div class="text-slate-400 text-sm px-4 py-2">
-                                    "Waiting for other players..."
-                                </div>
-                            }.into_view()
-                        }
+                    if state.game_phase.get().is_initial_phase() && !is_my_turn() {
+                        view! {
+                            <div class="text-[#6b6354] text-sm font-bold px-4 py-2">
+                                "Waiting for other players..."
+                            </div>
+                        }.into_view()
                     } else {
                         view! { <div></div> }.into_view()
                     }
                 }}
 
-                // Dice roll section (only in regular play)
-                <Show when=move || state.game_phase.get() == shared::GamePhase::RegularPlay>
-                    <div class="flex gap-3 items-center">
-                        <Show when=move || is_my_turn() && !has_rolled()>
-                            <button
-                                class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold transition-all"
-                                on:click=move |_| state_roll.send(ClientRequest::RollDice)
-                            >
-                                "ROLL DICE"
-                            </button>
-                        </Show>
-
-                        <Show when=move || has_rolled()>
-                            <div class="flex gap-2 items-center text-white font-bold">
-                                {move || {
-                                    if let Some((d1, d2)) = state.last_dice_roll.get() {
-                                        format!("🎲 {} + {} = {}", d1, d2, d1 + d2)
-                                    } else {
-                                        String::new()
-                                    }
-                                }}
-                            </div>
-                        </Show>
+                // Special building phase banner (5-6 player games)
+                <Show when=move || state.game_phase.get().special_builder().is_some()>
+                    <div class=move || if state.is_my_special_build() {
+                        "px-4 py-2 rounded-xl border-2 border-emerald-500 bg-emerald-600/15 text-emerald-300 font-bold text-sm"
+                    } else {
+                        "px-4 py-2 rounded-xl border border-slate-700 bg-slate-900/70 text-slate-400 font-bold text-sm"
+                    }>
+                        {move || {
+                            if state.is_my_special_build() {
+                                "SPECIAL BUILD - build or buy, then pass".to_string()
+                            } else {
+                                let who = state
+                                    .game_phase
+                                    .get()
+                                    .special_builder()
+                                    .and_then(|id| {
+                                        state.players.get().iter()
+                                            .find(|p| p.player_id == id)
+                                            .map(|p| p.name.clone())
+                                    })
+                                    .unwrap_or_else(|| "Someone".to_string());
+                                format!("SPECIAL BUILD - waiting for {who}")
+                            }
+                        }}
                     </div>
                 </Show>
 
-                // Build buttons during initial placement (show if it's your turn)
-                <Show when=move || {
-                    let phase = move || state.game_phase.get();
-                    is_my_turn() && phase().is_initial_phase()
-                }>
-                    <div class="flex gap-2">
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Settlement {
-                                    format!("{} bg-orange-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_settlement.build_mode.get();
-                                if current == BuildMode::Settlement {
-                                    state_build_settlement.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_settlement.build_mode.set(BuildMode::Settlement);
-                                }
-                            }
-                        >
-                            "Settlement"
-                        </button>
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Road {
-                                    format!("{} bg-green-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_road.build_mode.get();
-                                if current == BuildMode::Road {
-                                    state_build_road.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_road.build_mode.set(BuildMode::Road);
-                                }
-                            }
-                        >
-                            "Road"
-                        </button>
-                    </div>
-                </Show>
 
-                // Build buttons during regular play (only show after rolling)
-                <Show when=move || {
-                    let phase = move || state.game_phase.get() ;
-                    is_my_turn() && has_rolled() && phase() == shared::GamePhase::RegularPlay
-                }>
-                    <div class="flex gap-2">
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Settlement {
-                                    format!("{} bg-orange-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_settlement.build_mode.get();
-                                if current == BuildMode::Settlement {
-                                    state_build_settlement.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_settlement.build_mode.set(BuildMode::Settlement);
-                                }
-                            }
-                        >
-                            "Settlement"
-                        </button>
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::City {
-                                    format!("{} bg-purple-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_city.build_mode.get();
-                                if current == BuildMode::City {
-                                    state_build_city.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_city.build_mode.set(BuildMode::City);
-                                }
-                            }
-                        >
-                            "City"
-                        </button>
-                        <button
-                            class=move || {
-                                let base = "px-4 py-2 rounded-xl font-bold transition-all";
-                                if state.build_mode.get() == BuildMode::Road {
-                                    format!("{} bg-green-600 text-white", base)
-                                } else {
-                                    format!("{} bg-white/10 hover:bg-white/20 text-white", base)
-                                }
-                            }
-                            on:click=move |_| {
-                                let current = state_build_road.build_mode.get();
-                                if current == BuildMode::Road {
-                                    state_build_road.build_mode.set(BuildMode::None);
-                                } else {
-                                    state_build_road.build_mode.set(BuildMode::Road);
-                                }
-                            }
-                        >
-                            "Road"
-                        </button>
-                    </div>
-                </Show>
                 </div>
             </div>
+            </Show>
         </div>
+    }
+}
+
+/// The dice. Always on screen, showing whatever was last rolled - by anybody -
+/// so the table never has to go hunting in the log for it. On your own turn,
+/// before you have rolled, they are also the roll button, and they tumble for
+/// a moment rather than snapping straight to the answer.
+///
+/// They sit loose on the water rather than in a panel.
+#[component]
+pub fn DiceTray() -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+
+    let (tumbling, set_tumbling) = create_signal(false);
+    let (shown, set_shown) = create_signal((1u8, 1u8));
+
+    let is_my_turn = move || state.player_id.get() == Some(state.current_turn_player.get());
+    let can_roll = move || {
+        is_my_turn()
+            && state.last_dice_roll.get().is_none()
+            && state.game_phase.get() == shared::GamePhase::RegularPlay
+            && !tumbling.get()
+    };
+
+    // While tumbling, show nonsense; the effect below settles on the real
+    // numbers the moment the server's answer lands.
+    create_effect(move |prev: Option<Option<leptos_dom::helpers::IntervalHandle>>| {
+        if let Some(Some(h)) = prev {
+            h.clear();
+        }
+        if !tumbling.get() {
+            return None;
+        }
+        set_interval_with_handle(
+            move || {
+                let t = js_sys::Date::now() as u64;
+                set_shown.set(((t % 6) as u8 + 1, ((t / 7) % 6) as u8 + 1));
+            },
+            std::time::Duration::from_millis(70),
+        )
+        .ok()
+    });
+
+    create_effect(move |_| {
+        if let Some((a, b)) = state.table_last_roll.get() {
+            set_tumbling.set(false);
+            set_shown.set((a, b));
+        }
+    });
+
+    let roll = move |_| {
+        if !can_roll() {
+            return;
+        }
+        set_tumbling.set(true);
+        state.send(ClientRequest::RollDice);
+        // A floor on the animation, so a fast reply still reads as a roll.
+        set_timeout(move || set_tumbling.set(false), std::time::Duration::from_millis(550));
+    };
+
+    view! {
+        <button
+            class=move || format!(
+                "flex items-center gap-3 rounded-2xl transition-transform {}",
+                if can_roll() { "hover:scale-[1.04] cursor-pointer" } else { "cursor-default" }
+            )
+            disabled=move || !can_roll()
+            title=move || if can_roll() {
+                "Roll the dice".to_string()
+            } else {
+                let (a, b) = shown.get();
+                format!("The last roll: {}", a + b)
+            }
+            on:click=roll
+        >
+            {move || {
+                let (a, b) = shown.get();
+                // Waiting to be thrown: a slow breath. Mid-throw: a tumble.
+                // Otherwise still, because they are just showing a result.
+                let motion = if tumbling.get() {
+                    "animate-bounce"
+                } else if can_roll() {
+                    "dice-waiting"
+                } else {
+                    ""
+                };
+                view! {
+                    <div class=format!("drop-shadow-[0_3px_5px_rgba(0,0,0,0.3)] {motion}")>
+                        <DieFace value=a size="w-[136px] h-[136px]" />
+                    </div>
+                    <div class=format!("drop-shadow-[0_3px_5px_rgba(0,0,0,0.3)] {motion}")>
+                        <DieFace value=b size="w-[136px] h-[136px]" />
+                    </div>
+                }
+            }}
+        </button>
     }
 }
 
 #[component]
 fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
     let points = "0,-50 43,-25 43,25 0,50 -43,25 -43,-25";
-    let color = resource_color(&hex.resource);
-    let label = resource_label(&hex.resource);
+
+    // How many of the 36 dice combinations make this number: 6 and 8 are the
+    // richest, 2 and 12 the poorest. Shown as pips, the way the real tokens do.
+    let pips = if hex.number == 0 { 0 } else { 6u8.saturating_sub((7i8 - hex.number as i8).unsigned_abs()) };
+    let hot = hex.number == 6 || hex.number == 8;
+
+    // Did the table just roll this tile's number? At a real table you look at
+    // the dice and then scan the board; this does the scanning for you.
+    let (q, r) = (hex.q, hex.r);
+    let struck = move || {
+        state.last_roll_event.get().is_some_and(|(total, _)| total == hex.number)
+    };
+    // The robber stops a tile producing, so a tile under it does not light up.
+    let blocked = move || state.robber_pos.get() == Some((q, r));
+    let producing = move || struck() && !blocked();
 
     view! {
-        <g transform=format!("translate({}, {})", x, y) class="group">
-            <polygon
-                points=points
-                class=format!("{} stroke-black/20 stroke-2", color)
+        <g
+            transform=format!("translate({}, {})", x, y)
+            class="group"
+            data-hex=format!("{q},{r}")
+        >
+            <image
+                href=hex_asset(&hex.resource)
+                x="-60"
+                y="-60"
+                width="120"
+                height="120"
+                preserveAspectRatio="xMidYMid meet"
+                class="pointer-events-none"
             />
 
-            // Background circle for text contrast
-            <circle
-                cx="0"
-                cy="8"
-                r="28"
-                class="fill-black/40"
-            />
-
-            <text
-                y="0"
-                text-anchor="middle"
-                class="fill-white text-[14px] font-black pointer-events-none uppercase tracking-wide"
-                style="text-shadow: 2px 2px 4px rgba(0,0,0,0.8), -1px -1px 2px rgba(0,0,0,0.8)"
-            >
-                {label}
-            </text>
-            <Show when=move || hex.number != 0 && hex.number != 7>
-                <text
-                    y="22"
-                    text-anchor="middle"
-                    class=move || {
-                        let base = "text-[18px] font-black pointer-events-none";
-                        if hex.number == 6 || hex.number == 8 {
-                            format!("{} fill-red-400", base)
-                        } else {
-                            format!("{} fill-white", base)
-                        }
-                    }
-                    style="text-shadow: 2px 2px 4px rgba(0,0,0,0.9), -1px -1px 2px rgba(0,0,0,0.9)"
-                >
-                    {hex.number}
-                </text>
+            // The flash: a bright rim that fades, plus a steady glow while the
+            // roll stands, so a tile that paid out stays findable afterwards.
+            <Show when=producing>
+                <g class="pointer-events-none">
+                    <polygon points=points class="fill-white/25 hex-flash" />
+                    <polygon
+                        points=points fill="none"
+                        stroke="#ffe066" stroke-width="5" stroke-linejoin="round"
+                        style="filter: drop-shadow(0 0 6px #ffd21e);"
+                    />
+                </g>
             </Show>
+            // A little inner shading so the tiles read as solid, not flat.
+            <polygon points=points class="fill-none stroke-white/10" stroke-width="1"
+                     transform="scale(0.93)" />
+
+            // The number token, centred in the hex like the cardboard chit it
+            // stands in for - it used to be an off-centre dark blob shared
+            // with the resource label.
+            <Show when=move || hex.number != 0 && hex.number != 7>
+                <g transform="translate(0, 8)" class="pointer-events-none">
+                    <circle r="21" class="fill-black/25" cy="2" />
+                    <circle
+                        r="20" fill="#f4ecd8"
+                        stroke=move || if producing() { "#e8a300" } else { "#0f172a" }
+                        stroke-opacity=move || if producing() { "1" } else { "0.35" }
+                        stroke-width=move || if producing() { "3" } else { "1.5" }
+                    />
+                    <text
+                        y="-1"
+                        text-anchor="middle"
+                        dominant-baseline="central"
+                        class=move || if hot {
+                            "text-[21px] font-black fill-red-600"
+                        } else {
+                            "text-[21px] font-black fill-slate-900"
+                        }
+                    >
+                        {hex.number}
+                    </text>
+                    {(0..pips).map(|i| {
+                        let spread = 4.5;
+                        let cx = (i as f32 - (pips as f32 - 1.0) / 2.0) * spread;
+                        view! {
+                            <circle
+                                cx=cx cy="12.5" r="1.5"
+                                class=move || if hot { "fill-red-600" } else { "fill-slate-900" }
+                            />
+                        }
+                    }).collect_view()}
+                </g>
+            </Show>
+        </g>
+    }
+}
+
+/// Lay a piece of artwork along the line from `from` to `to`.
+///
+/// The road and pier assets are both drawn standing up, so putting one on an
+/// edge is: move to the middle, turn to face along the edge, then draw it
+/// centred. Returns the SVG transform for that.
+fn along(from: (f32, f32), to: (f32, f32)) -> (String, f32) {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = (dx * dx + dy * dy).sqrt();
+    // The artwork's long axis points down the +y axis, which is 90 degrees,
+    // so the turn needed is the edge's bearing less that.
+    let angle = dy.atan2(dx).to_degrees() - 90.0;
+    let (mx, my) = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
+    (format!("translate({mx:.2}, {my:.2}) rotate({angle:.2})"), length)
+}
+
+/// A road on the board: the same artwork the buy button shows, tinted to its
+/// owner and laid along the edge.
+#[component]
+fn PlacedRoad(from: (f32, f32), to: (f32, f32), colour: &'static str) -> impl IntoView {
+    let (transform, length) = along(from, to);
+    // Short of the full edge, so two roads meeting at a vertex leave the
+    // piece standing there room to breathe.
+    let long = length * 0.84;
+    let thick = 15.0_f32;
+
+    view! {
+        <g transform=transform>
+            <image
+                href=asset_url("build-road")
+                x=-thick / 2.0
+                y=-long / 2.0
+                width=thick
+                height=long
+                preserveAspectRatio="none"
+                style=format!(
+                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.45)); \
+                     pointer-events: none;",
+                    tint_id(colour)
+                )
+            />
+        </g>
+    }
+}
+
+/// A plank walkway from a shore vertex out to a harbour.
+#[component]
+fn Pier(from: (f32, f32), to: (f32, f32)) -> impl IntoView {
+    let (transform, length) = along(from, to);
+
+    view! {
+        <g transform=transform>
+            <image
+                href=asset_url("pier")
+                x="-7"
+                y=-length / 2.0
+                width="14"
+                height=length
+                preserveAspectRatio="none"
+                style="filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.4)); pointer-events: none;"
+            />
+        </g>
+    }
+}
+
+/// A CSS-safe id for a colour's tint filter.
+fn tint_id(hex: &str) -> String {
+    format!("tint{}", hex.trim_start_matches('#'))
+}
+
+/// The artwork for a piece, tinted to its owner. Shared by the settlement and
+/// the city so they cannot drift apart.
+#[component]
+fn Piece(
+    x: f32,
+    y: f32,
+    player_id: Uuid,
+    art: &'static str,
+    size: f32,
+    alt: &'static str,
+) -> impl IntoView {
+    let state = use_context::<GameState>().expect("GameState missing");
+    let colour = player_color(player_id, &state);
+    let half = size / 2.0;
+
+    view! {
+        <g transform=format!("translate({}, {})", x, y)>
+            // One chain, not a `filter` attribute plus a CSS `filter`: the
+            // CSS property wins outright and would drop the tint.
+            <image
+                href=asset_url(art)
+                x=-half y=-half width=size height=size
+                style=format!(
+                    "filter: url(#{}) drop-shadow(0 1px 2px rgb(0 0 0 / 0.5)); \
+                     pointer-events: none;",
+                    tint_id(colour)
+                )
+            >
+                <title>{alt}</title>
+            </image>
         </g>
     }
 }
 
 #[component]
 fn Settlement(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-    let color = player_color(player_id, &state);
-
-    view! {
-        <g transform=format!("translate({}, {})", x, y)>
-            // House shape (scaled up for better visibility)
-            <polygon
-                points="0,-12 9,0 9,12 -9,12 -9,0"
-                class=format!("{} stroke-black stroke-2", color)
-            />
-        </g>
-    }
+    view! { <Piece x=x y=y player_id=player_id art="build-settlement" size=32.0 alt="Settlement" /> }
 }
 
 #[component]
 fn City(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-    let color = player_color(player_id, &state);
-
-    view! {
-        <g transform=format!("translate({}, {})", x, y)>
-            // Larger building with tower (scaled up for better visibility)
-            <rect
-                x="-12"
-                y="-6"
-                width="24"
-                height="18"
-                class=format!("{} stroke-black stroke-2", color)
-            />
-            <rect
-                x="-4"
-                y="-18"
-                width="8"
-                height="12"
-                class=format!("{} stroke-black stroke-2", color)
-            />
-        </g>
-    }
-}
-
-#[component]
-fn Road(x: f32, y: f32, player_id: Uuid) -> impl IntoView {
-    let state = use_context::<GameState>().expect("GameState missing");
-    let color = player_color(player_id, &state);
-
-    view! {
-        <g transform=format!("translate({}, {})", x, y)>
-            <line
-                x1="-15"
-                y1="0"
-                x2="15"
-                y2="0"
-                class=format!("{} stroke-4", color.replace("fill", "stroke"))
-            />
-        </g>
-    }
+    view! { <Piece x=x y=y player_id=player_id art="build-city" size=40.0 alt="City" /> }
 }

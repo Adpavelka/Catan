@@ -2,12 +2,561 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The look is a printed board game, not a dashboard: cream card stock on
+   water, thick outlines, and controls that sit proud of the surface. Depth
+   comes from a dark outer edge, a light inner edge and a short shadow -
+   never from a big soft blur, which reads as modern web chrome. */
+
+@layer base {
+    :root {
+        --water: #0877ba;
+        --water-deep: #05679f;
+        --cyan: #24bde5;
+        --cream: #f3e9d6;
+        --cream-light: #faf4e8;
+        --cream-dim: #e9ddc8;
+        --edge: #34515f;
+        --edge-warm: #80796c;
+        --gold: #b98624;
+        --tray: #f5f0e6;
+        --hud-cyan-top: #56c6e1;
+        --hud-cyan-bottom: #83d3e7;
+        --hud-rim: #1d5f86;
+        --badge-blue: #285a99;
+
+        /* The dashboard rail down the right. The trade panels are anchored
+           off it, so it lives here rather than being written out at each of
+           the three places that need it - when those drifted apart, an offer
+           ended up a different size on each side of the table. */
+        --rail-w: 460px;
+        --rail-gap: 16px;
+    }
+
+    body {
+        font-family: "Nunito", "Trebuchet MS", "Arial Rounded MT Bold",
+            ui-rounded, system-ui, sans-serif;
+    }
+}
+
 @layer components {
     .custom-scrollbar::-webkit-scrollbar {
-        width: 6px;
+        width: 8px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
     }
     .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: #475569;
+        background: #c3b79f;
         border-radius: 10px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #a89b81;
+    }
+
+    /* The table. Near-flat: the HUD panels are what carry the contrast, and a
+       strong gradient here competes with them. */
+    .water {
+        background:
+            radial-gradient(ellipse 80% 80% at 50% 42%,
+                #1780b8 0%, var(--water) 55%, var(--water-deep) 100%);
+    }
+
+    /* A sheet of card stock. */
+    .panel {
+        background: linear-gradient(180deg, var(--cream-light) 0%, var(--cream) 100%);
+        border: 2px solid var(--edge-warm);
+        border-radius: 8px;
+        box-shadow: 0 3px 6px rgb(0 0 0 / 0.28), inset 0 1px 0 rgb(255 255 255 / 0.7);
+    }
+
+    .panel-tight {
+        border-radius: 6px;
+    }
+
+    /* A control you press. Cyan, bevelled, and it moves when you press it. */
+    .game-btn {
+        background: linear-gradient(180deg, #5fd8f5 0%, var(--cyan) 55%, #12a3c9 100%);
+        border: 3px solid #0d6e8c;
+        border-radius: 12px;
+        box-shadow:
+            inset 0 2px 0 rgb(255 255 255 / 0.85),
+            inset 0 -3px 0 rgb(0 0 0 / 0.18),
+            0 3px 5px rgb(0 0 0 / 0.32);
+        color: #06384a;
+        transition: transform 80ms ease, filter 120ms ease;
+    }
+    .game-btn:hover:not(:disabled) {
+        filter: brightness(1.08);
+    }
+    .game-btn:active:not(:disabled) {
+        transform: translateY(2px);
+        box-shadow:
+            inset 0 2px 4px rgb(0 0 0 / 0.3),
+            0 1px 2px rgb(0 0 0 / 0.3);
+    }
+    /* Disabled keeps its footprint: the row must not reflow. */
+    .game-btn:disabled {
+        filter: saturate(0.25) brightness(0.85);
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .game-btn-red {
+        background: linear-gradient(180deg, #ff8a7a 0%, #f04444 55%, #c92a2a 100%);
+        border-color: #8f1f1f;
+        color: #3d0808;
+    }
+    .game-btn-green {
+        background: linear-gradient(180deg, #6ee88a 0%, #13b83d 55%, #0b8a2c 100%);
+        border-color: #0a6621;
+        color: #042b0e;
+    }
+    .game-btn-cream {
+        background: linear-gradient(180deg, var(--cream-light) 0%, var(--cream-dim) 100%);
+        border-color: var(--edge-warm);
+        color: #3d3627;
+    }
+
+    /* A physical card: thick dark edge, highlight along the top. */
+    .game-card {
+        border: 2px solid #2b2418;
+        border-radius: 6px;
+        box-shadow:
+            0 2px 4px rgb(0 0 0 / 0.35),
+            inset 0 1px 0 rgb(255 255 255 / 0.35);
+        transition: transform 90ms ease, box-shadow 90ms ease;
+    }
+    .game-card-pick:hover:not(:disabled) {
+        transform: translateY(-4px);
+        box-shadow: 0 6px 10px rgb(0 0 0 / 0.4);
+    }
+    .game-card-off {
+        filter: grayscale(1);
+        opacity: 0.45;
+    }
+
+    /* Text that has to stay readable over artwork. */
+    .ink {
+        text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
+    }
+
+    /* ---------------------------------------------------------- bottom HUD */
+
+    /* The card tray the hand sits in, and the small cream slabs beside it. */
+    .hud-tray {
+        background: var(--tray);
+        border: 2px solid #cdc4b2;
+        border-radius: 8px;
+        box-shadow:
+            0 -2px 8px rgb(0 0 0 / 0.22),
+            0 2px 4px rgb(0 0 0 / 0.18),
+            inset 0 1px 0 rgb(255 255 255 / 0.85);
+    }
+
+    /* A big square control: dark rim, pale bezel, glossy cyan face. The rim is
+       a ring rather than a border so the bezel keeps its full thickness. */
+    .hud-btn {
+        background: linear-gradient(
+            170deg,
+            #7fd6ec 0%,
+            var(--hud-cyan-top) 42%,
+            var(--hud-cyan-bottom) 100%
+        );
+        border: 4px solid #e8f7fd;
+        border-radius: 15px;
+        box-shadow:
+            0 0 0 3px var(--hud-rim),
+            0 5px 0 rgb(13 62 92 / 0.5),
+            0 7px 11px rgb(0 0 0 / 0.33),
+            inset 0 4px 8px rgb(255 255 255 / 0.5),
+            inset 0 -4px 7px rgb(4 60 88 / 0.16);
+        color: #0d3e5c;
+        transition:
+            transform 80ms ease,
+            filter 120ms ease,
+            box-shadow 80ms ease;
+    }
+    .hud-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        filter: brightness(1.07);
+    }
+    .hud-btn:active:not(:disabled) {
+        transform: translateY(2px);
+        box-shadow:
+            0 0 0 3px var(--hud-rim),
+            0 1px 0 rgb(13 62 92 / 0.5),
+            inset 0 4px 8px rgb(4 60 88 / 0.28);
+    }
+    /* Unaffordable. The button stays where it is - the action still exists and
+       its count is still worth reading - but it drops out of the foreground:
+       the colour goes, the lift goes, and it sits flat against the water.
+       Greying only the icon left it looking almost as live as the real ones,
+       which is what made a buildable piece hard to pick out. */
+    .hud-btn:disabled {
+        cursor: not-allowed;
+        background: linear-gradient(170deg, #9fb3c0 0%, #8ba1b0 42%, #74899a 100%);
+        border-color: #d3dee5;
+        box-shadow:
+            0 0 0 3px rgb(29 62 84 / 0.55),
+            0 2px 0 rgb(13 62 92 / 0.35),
+            inset 0 2px 5px rgb(255 255 255 / 0.3);
+        filter: saturate(0.7) brightness(0.84);
+    }
+    .hud-btn:disabled .hud-icon {
+        filter: grayscale(1) brightness(0.85);
+        opacity: 0.55;
+    }
+    /* Affordable right now. A gold rim, the same gold the board uses for the
+       player on turn and for an upgradeable settlement, so "you can do this"
+       looks the same wherever it appears. */
+    .hud-btn-ready {
+        box-shadow:
+            0 0 0 3px #ffb718,
+            0 0 12px rgb(255 183 24 / 0.55),
+            0 5px 0 rgb(13 62 92 / 0.5),
+            0 7px 11px rgb(0 0 0 / 0.33),
+            inset 0 4px 8px rgb(255 255 255 / 0.5),
+            inset 0 -4px 7px rgb(4 60 88 / 0.16);
+    }
+    /* Armed: this build is selected and the board is waiting for a spot. */
+    .hud-btn-armed {
+        background: linear-gradient(170deg, #8ef0a4 0%, #35cf5c 42%, #17a83f 100%);
+        border-color: #eafde9;
+        box-shadow:
+            0 0 0 3px #0f6b2c,
+            0 5px 0 rgb(8 74 30 / 0.5),
+            0 7px 11px rgb(0 0 0 / 0.33),
+            inset 0 4px 8px rgb(255 255 255 / 0.5);
+    }
+
+    /* The count in a button's top-right: attached to it, not floating off it. */
+    .hud-badge {
+        background: rgb(38 72 108 / 0.6);
+        border: 2px solid rgb(255 255 255 / 0.42);
+        border-radius: 8px;
+        color: #fff;
+        text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+    }
+
+    /* Dice waiting to be thrown: a slow breath, so the eye is drawn to them
+       without anything jumping about. Stops the moment they are rolled. */
+    .dice-waiting {
+        animation: dice-breathe 1300ms ease-in-out infinite;
+    }
+    @keyframes dice-breathe {
+        0%,
+        100% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(1.09);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .dice-waiting {
+            animation: none;
+        }
+    }
+
+    /* ------------------------------------------------- roll feedback */
+
+    /* A tile that just paid out: one bright pulse, then it settles back to
+       the steady rim so you can still find it a moment later. */
+    /* `forwards` matters: without it the overlay snaps back to full strength
+       when the animation ends and leaves the tile washed out until the next
+       roll, instead of settling to the faint tint the last keyframe sets. */
+    .hex-flash {
+        animation: hex-flash 900ms ease-out 1 forwards;
+    }
+    @keyframes hex-flash {
+        0% {
+            opacity: 0.75;
+        }
+        100% {
+            opacity: 0.12;
+        }
+    }
+
+    /* A card travelling from the tile that produced it to the player who got
+       it. Position and travel come from custom properties set per card. */
+    .flyer {
+        position: fixed;
+        left: 0;
+        top: 0;
+        pointer-events: none;
+        z-index: 9000;
+        animation: flyer var(--dur, 850ms) cubic-bezier(0.4, 0.05, 0.35, 1)
+            var(--delay, 0ms) both;
+    }
+    @keyframes flyer {
+        0% {
+            transform: translate(var(--x0), var(--y0)) scale(0.35);
+            opacity: 0;
+        }
+        18% {
+            transform: translate(
+                    calc(var(--x0) + (var(--x1) - var(--x0)) * 0.18),
+                    calc(var(--y0) + (var(--y1) - var(--y0)) * 0.18 - 26px)
+                )
+                scale(1.05);
+            opacity: 1;
+        }
+        80% {
+            opacity: 1;
+        }
+        100% {
+            transform: translate(var(--x1), var(--y1)) scale(0.4);
+            opacity: 0;
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .flyer {
+            display: none;
+        }
+        .hex-flash {
+            animation: none;
+            opacity: 0.2;
+        }
+    }
+
+    /* The count on a resource card: a little tab folded over the corner. */
+    .card-badge {
+        background: var(--badge-blue);
+        border: 2px solid #16365e;
+        border-radius: 5px;
+        color: #fff;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    }
+
+    /* ------------------------------------------------- end-of-game stats */
+
+    /* The table is still there when the game ends - people want to look at
+       the position they finished in - so this darkens the board rather than
+       covering it, and does not blur it. */
+    .stats-veil {
+        background: rgb(3 22 34 / 0.72);
+        animation: stats-fade 220ms ease-out both;
+    }
+
+    /* The sheet the statistics sit on. Deep navy with a thin cyan rim, the
+       same rim the HUD buttons use, so it reads as part of the game rather
+       than a browser dialog dropped on top of it. */
+    .stats-sheet {
+        background: linear-gradient(180deg, rgb(7 45 68 / 0.94) 0%, rgb(4 30 46 / 0.96) 100%);
+        border: 2px solid rgb(86 198 225 / 0.4);
+        border-radius: 12px;
+        box-shadow:
+            0 14px 40px rgb(0 0 0 / 0.5),
+            inset 0 1px 0 rgb(255 255 255 / 0.1);
+        animation: stats-rise 260ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+
+    @keyframes stats-fade {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes stats-rise {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: none; }
+    }
+
+    /* One tab. Quiet until it is the live one, which gets white text and the
+       cyan rule underneath. The border is always there, transparent when off,
+       so switching tabs does not shift the row by a pixel. */
+    .stats-tab {
+        color: rgb(197 223 236 / 0.62);
+        font-weight: 700;
+        border-bottom: 3px solid transparent;
+        padding: 0.4rem 0.15rem 0.45rem;
+        transition: color 120ms ease, border-color 160ms ease;
+        white-space: nowrap;
+    }
+    .stats-tab:hover {
+        color: #e8f7fd;
+    }
+    .stats-tab-on {
+        color: #fff;
+        font-weight: 900;
+        border-bottom-color: var(--cyan);
+    }
+
+    /* A small caption over a block of figures, in the same voice as the side
+       panels' headings. */
+    .stats-caption {
+        color: rgb(160 200 219 / 0.75);
+        font-size: 13px;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+    }
+
+    /* A statistics matrix. One grid holds every cell of every row, which is
+       what keeps the icon, the heading and each player's figure in the same
+       column however long the names are. */
+    /* `stretch`, not `center`: with `center` every cell is only as tall as
+       its own content, so the empty cell above the names drew its rule at a
+       different height from the icon cells beside it and the line under the
+       heading arrived at the winner's row in steps. Stretching makes every
+       cell fill the row, so the rules meet. The content stays centred by
+       each cell's own flex. */
+    .stats-matrix {
+        display: grid;
+        align-items: stretch;
+        width: 100%;
+    }
+    .stats-cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.45rem 0.2rem;
+        min-width: 0;
+        border-bottom: 1px solid rgb(255 255 255 / 0.09);
+    }
+    .stats-cell-last {
+        border-bottom: 0;
+    }
+    .stats-name-cell {
+        justify-content: flex-start;
+        gap: 0.5rem;
+        padding-left: 0.35rem;
+        padding-right: 0.6rem;
+    }
+    /* The heading strip: no rule under it beyond the one the first row draws,
+       and the artwork sized so eleven of them still fit across. */
+    .stats-head {
+        border-bottom: 2px solid rgb(86 198 225 / 0.3);
+        padding-bottom: 0.4rem;
+    }
+    /* Artwork that is already painted on a plate of its own. */
+    .stats-icon {
+        width: clamp(34px, 3vw, 46px);
+        height: clamp(34px, 3vw, 46px);
+        object-fit: contain;
+    }
+    /* Artwork we are plating ourselves: smaller by the plate's own padding
+       and rim, so both kinds finish the same size on the page. */
+    .stats-plate .stats-icon {
+        width: clamp(24px, 2.2vw, 33px);
+        height: clamp(24px, 2.2vw, 33px);
+    }
+    .stats-figure {
+        color: #eaf6fb;
+        font-size: clamp(17px, 1.5vw, 22px);
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+    /* The headline figure of a matrix - the score - carries the row. */
+    .stats-figure-lead {
+        color: #fff;
+        font-size: clamp(22px, 2vw, 29px);
+        font-weight: 900;
+    }
+    .stats-figure-zero {
+        color: rgb(234 246 251 / 0.28);
+    }
+    /* The plate the statistics artwork is painted on, for the icons that do
+       not come with one of their own. Same teal and same pale rim as the
+       resource marks, so a heading row mixing the two reads as one row. */
+    .stats-plate {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3px;
+        border-radius: 7px;
+        background: #55a4b0;
+        border: 2px solid #c0e9ff;
+    }
+
+    /* The winner's row, picked out in the same gold the board uses for the
+       player on turn. The tint goes on every cell; the edge only on the one
+       that starts the row, or it rules the row into columns. */
+    .stats-row-win {
+        background: rgb(255 183 24 / 0.09);
+    }
+    .stats-row-win-lead {
+        box-shadow: inset 3px 0 0 #ffb718;
+    }
+
+    /* A player's disc, drawn from the end-of-game snapshot rather than the
+       live roster: somebody who walked out still belongs in the final table. */
+    .stats-disc {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 9999px;
+        border: 2px solid rgb(255 255 255 / 0.85);
+        box-shadow: 0 0 0 2px rgb(4 30 46 / 0.8);
+        flex-shrink: 0;
+    }
+
+    /* A control that leaves the screen. Dark and translucent so it sits on
+       the sheet rather than shouting over the figures. */
+    .stats-home {
+        background: rgb(9 52 76 / 0.85);
+        border: 2px solid rgb(86 198 225 / 0.45);
+        border-radius: 10px;
+        color: #eaf6fb;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        transition: background 120ms ease, transform 80ms ease;
+    }
+    .stats-home:hover {
+        background: rgb(16 78 110 / 0.9);
+    }
+    .stats-home:active {
+        transform: translateY(2px);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .stats-veil,
+        .stats-sheet {
+            animation: none;
+        }
+    }
+
+    /* ------------------------------------------------------ stats charts */
+
+    /* The plot area, with a few faint rules across it so a bar can be read
+       against something. Four bands, not a graph-paper grid. */
+    .stats-plot {
+        background-image: repeating-linear-gradient(
+            to top,
+            rgb(255 255 255 / 0.07) 0 1px,
+            transparent 1px 25%
+        );
+        border-bottom: 2px solid rgb(86 198 225 / 0.35);
+    }
+    /* A bar and the figure that rides on it, stacked and pushed to the axis. */
+    .stats-bar-track {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        height: 100%;
+    }
+    /* A bar is a flat colour with a dark edge, like a playing piece - not a
+       gradient. It grows once, on the way in. */
+    .stats-bar {
+        width: 100%;
+        max-width: 64px;
+        min-height: 2px;
+        border: 1px solid rgb(0 0 0 / 0.45);
+        border-bottom: 0;
+        border-radius: 3px 3px 0 0;
+        box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.3);
+        height: var(--bar-height, 0%);
+        animation: stats-bar-grow 460ms cubic-bezier(0.25, 1, 0.5, 1) both;
+    }
+    @keyframes stats-bar-grow {
+        from { height: 0; }
+        to { height: var(--bar-height, 0%); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .stats-bar {
+            animation: none;
+        }
     }
 }

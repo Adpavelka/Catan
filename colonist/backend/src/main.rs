@@ -28,29 +28,24 @@ async fn main() -> Result<(), io::Error> {
         .await
         .expect("Failed to connect to PostgreSQL");
 
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS games (
-            id TEXT PRIMARY KEY,
-            status TEXT NOT NULL,
-            state_json JSONB NOT NULL,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-        "#
-        )
-        .execute(&pool)
+    let repo = GameRepository::new(pool);
+    repo.migrate()
         .await
         .expect("Failed to initialize database schema");
 
-    let repo = GameRepository::new(pool);
     let recovered_games = repo.load_all_active().await.unwrap_or_else(|e| {
         error!("Critical error during game recovery: {}", e);
         Vec::new()
     });
 
+    let recovered_tokens = repo.load_all_sessions().await.unwrap_or_else(|e| {
+        error!("Could not load player sessions: {}", e);
+        Vec::new()
+    });
+
     let games_count = recovered_games.len();
 
-    let lobby = Lobby::new(repo, recovered_games).start();
+    let lobby = Lobby::new(repo, recovered_games, recovered_tokens).start();
 
     info!("COLONIST.RS Server listening at 127.0.0.1:8080");
     info!("Recovered {} active games from database", games_count);

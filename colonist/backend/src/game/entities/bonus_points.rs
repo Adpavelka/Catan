@@ -12,10 +12,15 @@ pub trait BonusCard {
     fn minimum_number(&self) -> usize;
     fn player_number(&self, player: &Player) -> usize;
 
+    /// Awards the card to whoever leads outright. The holder keeps it while
+    /// they are still level with the best score: a challenger has to *beat*
+    /// them, not merely match them. If the holder falls behind and several
+    /// challengers tie for the lead, the card is set aside until one of them
+    /// pulls ahead.
     fn recalculate(&mut self, players: &mut Players) {
-        let best = self.find_best_player(players);
+        let leaders = self.leaders(players);
 
-        let Some((best_pid, best_value)) = best else {
+        let Some((best_value, leader_ids)) = leaders else {
             self.remove_holder(players);
             return;
         };
@@ -25,44 +30,34 @@ pub trait BonusCard {
             return;
         }
 
-        if self.holder() == Some(best_pid) {
-            return;
-        }
-
-        self.transfer_holder(players, best_pid);
-    }
-
-    fn find_best_player(
-        &self,
-        players: &mut Players,
-    ) -> Option<(Uuid, usize)> {
-        let mut best: Option<(Uuid, usize)> = None;
-        let mut tie = false;
-
-        for idx in 0..players.len() {
-            let player = players.get_by_index(idx).unwrap();
-            let value = self.player_number(&player);
-
-            match best {
-                None => {
-                    best = Some((player.id, value));
-                }
-                Some((_, best_value)) if value > best_value => {
-                    best = Some((player.id, value));
-                    tie = false;
-                }
-                Some((_, best_value)) if value == best_value && value != 0 => {
-                    tie = true;
-                }
-                _ => {}
+        if let Some(holder) = self.holder() {
+            if leader_ids.contains(&holder) {
+                return;
             }
         }
 
-        if tie {
-            None
-        } else {
-            best
+        match leader_ids.as_slice() {
+            [only] => self.transfer_holder(players, *only),
+            _ => self.remove_holder(players),
         }
+    }
+
+    /// The highest score and everyone holding it.
+    fn leaders(&self, players: &Players) -> Option<(usize, Vec<Uuid>)> {
+        let scores: Vec<(Uuid, usize)> = (0..players.len())
+            .filter_map(|idx| players.get_by_index(idx))
+            .map(|player| (player.id, self.player_number(player)))
+            .collect();
+
+        let best_value = scores.iter().map(|(_, value)| *value).max()?;
+
+        let leader_ids = scores
+            .into_iter()
+            .filter(|(_, value)| *value == best_value)
+            .map(|(id, _)| id)
+            .collect();
+
+        Some((best_value, leader_ids))
     }
 
     fn transfer_holder(
@@ -184,6 +179,7 @@ impl BonusCard for BiggestArmy {
 
 #[cfg(test)]
 mod tests {
+    use shared::PlayerColour;
     use uuid::Uuid;
 
     use crate::game::entities::player::Player;
@@ -201,7 +197,69 @@ mod tests {
     }
 
     fn p(id: Uuid) -> Player {
-        Player::new(id, &format!("Player {}", id), 'A')
+        Player::new(id, &format!("Player {}", id), PlayerColour::Blue)
+    }
+
+    /// Regression test: tying the holder used to strip the card from everyone.
+    #[test]
+    fn tying_the_holder_does_not_take_the_card_away() {
+        let p1 = Uuid::from_u128(1);
+        let p2 = Uuid::from_u128(2);
+        let mut players = players(&[p1, p2]);
+
+        players.get_mut(p1).unwrap().longest_road = 5;
+        let mut road = LongestRoad::new();
+        road.recalculate(&mut players);
+
+        assert_eq!(road.holder(), Some(p1));
+        assert_eq!(players.get(p1).unwrap().get_victory_points(), road.points());
+
+        // p2 only matches p1, so p1 keeps both the card and the points.
+        players.get_mut(p2).unwrap().longest_road = 5;
+        road.recalculate(&mut players);
+
+        assert_eq!(road.holder(), Some(p1), "a tie must not unseat the holder");
+        assert_eq!(players.get(p1).unwrap().get_victory_points(), road.points());
+        assert_eq!(players.get(p2).unwrap().get_victory_points(), 0);
+    }
+
+    #[test]
+    fn beating_the_holder_transfers_the_card_and_the_points() {
+        let p1 = Uuid::from_u128(1);
+        let p2 = Uuid::from_u128(2);
+        let mut players = players(&[p1, p2]);
+
+        players.get_mut(p1).unwrap().longest_road = 5;
+        let mut road = LongestRoad::new();
+        road.recalculate(&mut players);
+
+        players.get_mut(p2).unwrap().longest_road = 6;
+        road.recalculate(&mut players);
+
+        assert_eq!(road.holder(), Some(p2));
+        assert_eq!(players.get(p1).unwrap().get_victory_points(), 0);
+        assert_eq!(players.get(p2).unwrap().get_victory_points(), road.points());
+    }
+
+    /// If the holder is overtaken by two players at once, nobody holds it.
+    #[test]
+    fn holder_overtaken_by_tied_challengers_loses_the_card() {
+        let p1 = Uuid::from_u128(1);
+        let p2 = Uuid::from_u128(2);
+        let p3 = Uuid::from_u128(3);
+        let mut players = players(&[p1, p2, p3]);
+
+        players.get_mut(p1).unwrap().longest_road = 5;
+        let mut road = LongestRoad::new();
+        road.recalculate(&mut players);
+        assert_eq!(road.holder(), Some(p1));
+
+        players.get_mut(p2).unwrap().longest_road = 7;
+        players.get_mut(p3).unwrap().longest_road = 7;
+        road.recalculate(&mut players);
+
+        assert_eq!(road.holder(), None);
+        assert_eq!(players.get(p1).unwrap().get_victory_points(), 0);
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::game::entities::building::{EdgeBuilding, VertexBuilding};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use shared::{BoardInfo, BuildingInfo, HexInfo, PortInfo, ResourceType};
+use shared::{BoardInfo, BoardLayout, BuildingInfo, HexInfo, PortInfo, ResourceType};
 use std::collections::{HashMap, HashSet};
 use std::iter::repeat_n;
 use uuid::Uuid;
@@ -118,18 +118,50 @@ impl Board {
         ((a.0 + b.0) / 3, (a.1 + b.1) / 3)
     }
 
-    fn generate_from_layout(resources: Vec<ResourceType>, numbers: Vec<u8>) -> Self {
-        let mut board = Board::default();
+    /// The hexes that make up a layout.
+    ///
+    /// `Standard` is the base game's radius-2 hexagon (19 hexes). `Extended`
+    /// is the 5-6 player board: rows of 3-4-5-6-5-4-3, i.e. 30 hexes.
+    pub fn hex_coords_for(layout: BoardLayout) -> Vec<Coordinates> {
+        let radius = match layout {
+            BoardLayout::Standard => 2,
+            BoardLayout::Extended => 3,
+        };
 
-        let radius = 2;
-        let mut hex_coords = Vec::new();
-        for q in -radius..=radius {
-            for r in -radius..=radius {
-                if ((q + r) as i32).abs() <= radius {
-                    hex_coords.push((q, r));
-                }
+        let mut coords = Vec::new();
+        for r in -radius..=radius {
+            let q_min = (-radius).max(-r - radius);
+            let q_max = radius.min(-r + radius);
+
+            for q in q_min..=q_max {
+                coords.push((q, r));
             }
         }
+
+        if layout == BoardLayout::Extended {
+            // A radius-3 hexagon is 37 hexes; the extension board is 30. Drop
+            // one hex from the end of each row to reach 3-4-5-6-5-4-3.
+            let mut trimmed: Vec<Coordinates> = Vec::new();
+            for r in -radius..=radius {
+                let mut row: Vec<Coordinates> =
+                    coords.iter().copied().filter(|(_, rr)| *rr == r).collect();
+                row.sort();
+                // Alternate which end is trimmed. Taking from the same side
+                // every time shears the whole board; alternating leaves the
+                // half-hex row offset a hex grid has anyway.
+                if r.rem_euclid(2) == 0 { row.pop(); } else { row.remove(0); }
+                trimmed.extend(row);
+            }
+            return trimmed;
+        }
+
+        coords
+    }
+
+    fn generate_from_layout(layout: BoardLayout, resources: Vec<ResourceType>, numbers: Vec<u8>) -> Self {
+        let mut board = Board::default();
+
+        let hex_coords = Self::hex_coords_for(layout);
 
         let mut res_iter = resources.into_iter();
         let mut num_iter = numbers.into_iter();
@@ -193,86 +225,162 @@ impl Board {
     }
 
 
-    fn test_layout() -> (Vec<ResourceType>, Vec<u8>) { // standard counts: wood 4, sheep 4, wheat 4, brick 3, ore 3, desert 1 => 19 hexes
+    /// The terrain and number tokens for a layout, in a fixed order. Callers
+    /// shuffle; this only fixes the *counts*.
+    ///
+    /// Standard is the base game. Extended follows the 5-6 player extension:
+    /// 30 hexes with two deserts, and 28 tokens rather than 18.
+    fn layout_pieces(layout: BoardLayout) -> (Vec<ResourceType>, Vec<u8>) {
         use ResourceType::*;
-        let mut resources = Vec::with_capacity(19);
-        resources.extend(repeat_n(Wood, 4));
-        resources.extend(repeat_n(Sheep, 4));
-        resources.extend(repeat_n(Wheat, 4));
-        resources.extend(repeat_n(Brick, 3));
-        resources.extend(repeat_n(Ore, 3));
-        resources.push(Desert);
 
-        let numbers = vec![5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11, 0]; // fixed order
-        (resources, numbers)
+        match layout {
+            BoardLayout::Standard => {
+                let mut resources = Vec::with_capacity(19);
+                resources.extend(repeat_n(Wood, 4));
+                resources.extend(repeat_n(Sheep, 4));
+                resources.extend(repeat_n(Wheat, 4));
+                resources.extend(repeat_n(Brick, 3));
+                resources.extend(repeat_n(Ore, 3));
+                resources.push(Desert);
+
+                let numbers = vec![
+                    2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12,
+                    0,
+                ];
+                (resources, numbers)
+            }
+
+            BoardLayout::Extended => {
+                let mut resources = Vec::with_capacity(30);
+                resources.extend(repeat_n(Wood, 6));
+                resources.extend(repeat_n(Sheep, 6));
+                resources.extend(repeat_n(Wheat, 6));
+                resources.extend(repeat_n(Brick, 5));
+                resources.extend(repeat_n(Ore, 5));
+                resources.extend(repeat_n(Desert, 2));
+
+                let mut numbers = vec![2, 2, 12, 12];
+                for n in [3, 4, 5, 6, 8, 9, 10, 11] {
+                    numbers.extend(repeat_n(n, 3));
+                }
+                numbers.extend(repeat_n(0, 2));
+                (resources, numbers)
+            }
+        }
     }
 
-    fn random_layout() -> (Vec<ResourceType>, Vec<u8>) {
-        let (mut resources, mut numbers) = Self::test_layout();
+    #[cfg(test)]
+    fn test_layout() -> (Vec<ResourceType>, Vec<u8>) {
+        Self::layout_pieces(BoardLayout::Standard)
+    }
 
-        //#[cfg(not(test))]
-        {
-            use rand::seq::SliceRandom;
-            use rand::thread_rng;
+    fn random_layout(layout: BoardLayout) -> (Vec<ResourceType>, Vec<u8>) {
+        use rand::seq::SliceRandom;
+        use rand::{thread_rng, Rng};
 
-            let mut rng = thread_rng();
+        let (resources, numbers) = Self::layout_pieces(layout);
+        let resource_total = resources.len();
+        let mut rng = thread_rng();
 
-            let mut combined: Vec<(ResourceType, u8)> = resources.into_iter().zip(numbers.into_iter()).collect();
-            combined.shuffle(&mut rng);
+        let mut land: Vec<ResourceType> = resources
+            .into_iter()
+            .filter(|resource| *resource != ResourceType::Desert)
+            .collect();
+        let mut tokens: Vec<u8> = numbers.into_iter().filter(|number| *number != 0).collect();
 
-            let (res, nums): (Vec<_>, Vec<_>) = combined.into_iter().unzip();
-            resources = res;
-            numbers = nums;
+        land.shuffle(&mut rng);
+        tokens.shuffle(&mut rng);
+
+        // Put each desert back at a random slot, taking its blank token with it.
+        let desert_count = resource_total - land.len();
+        for _ in 0..desert_count {
+            let slot = rng.gen_range(0..=land.len());
+            land.insert(slot, ResourceType::Desert);
+            tokens.insert(slot, 0);
         }
 
-        (resources, numbers)
+        (land, tokens)
     }
 
 
-    fn add_ports(&mut self) {
+    /// Places `port_count` harbours evenly around the coast.
+    ///
+    /// The coast is derived from the board rather than hardcoded, so this works
+    /// for any layout: a coastal edge is simply one that belongs to exactly a
+    /// single hex. Harbours are then spread evenly by angle around the centre.
+    fn add_ports(&mut self, port_count: usize) {
         use PortType::*;
 
-        let port_coords: [[Coordinates; 2]; 9] = [
-            [(2, -7), (4, -8)],
-            [(7, -8), (8, -7)],
-            [(8, -4), (7, -2)],
-            [(5, 2), (4, 4)],
-            [(1, 7), (-1, 8)],
-            [(-4, 8), (-5, 7)],
-            [(-7, 5), (-8, 4)],
-            [(-7, -1), (-8, 1)],
-            [(-4, -4), (-2, -5)],
-        ];
+        let mut edge_hex_count: HashMap<Coordinates, usize> = HashMap::new();
+        for hex_coord in self.hexes.keys() {
+            let corners = Self::get_adjacent_hexes(*hex_coord);
+            for i in 0..6 {
+                let key = Self::edge_key(corners[i], corners[(i + 1) % 6]);
+                *edge_hex_count.entry(key).or_insert(0) += 1;
+            }
+        }
 
-        let mut port_types = vec![
+        let mut coastline: Vec<Coordinates> = edge_hex_count
+            .into_iter()
+            .filter(|(_, hexes)| *hexes == 1)
+            .map(|(edge, _)| edge)
+            .collect();
+
+        // Order the coast so evenly spaced picks really are spread out.
+        coastline.sort_by(|a, b| {
+            Self::edge_angle(self, *a)
+                .partial_cmp(&Self::edge_angle(self, *b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        if coastline.is_empty() {
+            return;
+        }
+
+        let mut port_types: Vec<PortType> = vec![
             TwoToOne(ResourceType::Brick),
             TwoToOne(ResourceType::Wood),
             TwoToOne(ResourceType::Sheep),
             TwoToOne(ResourceType::Wheat),
             TwoToOne(ResourceType::Ore),
-            ThreeToOne,
-            ThreeToOne,
-            ThreeToOne,
-            ThreeToOne,
         ];
+        while port_types.len() < port_count {
+            port_types.push(ThreeToOne);
+        }
+        port_types.truncate(port_count);
 
         let mut rng = rand::thread_rng();
         port_types.shuffle(&mut rng);
 
         let mut ports_map = HashMap::new();
-        for (coords, port_type) in port_coords.iter().zip(port_types.into_iter()) {
-            let port = Port {
-                coord: *coords,
-                port_type,
-            };
+        for (i, port_type) in port_types.into_iter().enumerate() {
+            let edge_coord = coastline[i * coastline.len() / port_count];
+            let Some(edge) = self.edges.get(&edge_coord) else { continue };
 
-            ports_map.insert(coords[0], port.clone());
-            ports_map.insert(coords[1], port);
+            let (a, b) = edge.adjacent_vertices;
+            let port = Port { coord: [a, b], port_type };
+
+            ports_map.insert(a, port.clone());
+            ports_map.insert(b, port);
         }
 
         self.ports = ports_map;
     }
 
+    /// Angle of an edge's midpoint about the board centre, for ordering the coast.
+    fn edge_angle(&self, edge_coord: Coordinates) -> f64 {
+        let Some(edge) = self.edges.get(&edge_coord) else { return 0.0 };
+        let (a, b) = edge.adjacent_vertices;
+
+        let point = |v: Coordinates| {
+            let (q, r) = (v.0 as f64 / 3.0, v.1 as f64 / 3.0);
+            (3f64.sqrt() * q + 3f64.sqrt() / 2.0 * r, 1.5 * r)
+        };
+
+        let (ax, ay) = point(a);
+        let (bx, by) = point(b);
+        ((ay + by) / 2.0).atan2((ax + bx) / 2.0)
+    }
 
     pub fn unique_ports(&self) -> Vec<Port> {
         use std::collections::HashSet;
@@ -294,9 +402,13 @@ impl Board {
     }
 
     fn new_standard_board() -> Self {
-        let (resources, numbers) = Self::random_layout();
-        let mut board = Self::generate_from_layout(resources, numbers);
-        board.add_ports();
+        Self::new_for_layout(BoardLayout::Standard, 9)
+    }
+
+    pub fn new_for_layout(layout: BoardLayout, port_count: usize) -> Self {
+        let (resources, numbers) = Self::random_layout(layout);
+        let mut board = Self::generate_from_layout(layout, resources, numbers);
+        board.add_ports(port_count);
         board
     }
 
@@ -352,26 +464,24 @@ impl Board {
         let vertices = [edge.adjacent_vertices.0, edge.adjacent_vertices.1];
 
         vertices.iter().any(|&vcoord| {
-            if let Some(v) = self.vertices.get(&vcoord) {
-                if let Some(id) = v.owner {
-                    if id == player_id { 
-                        return true;
-                    }
-                }
+            let Some(v) = self.vertices.get(&vcoord) else {
+                return false;
+            };
 
-                if v.adjacent_edges.iter().any(|&ek| {
-                    if let Some(e) = self.edges.get(&ek) {
-                        if let Some(id) = e.owner {
-                            return id == player_id;
-                        }
-                    }
-                    false
-                }) {
-                    return true;
-                }
+            // Your own building at the junction always connects.
+            if v.owner == Some(player_id) {
+                return true;
             }
 
-            false
+            // An opponent's settlement or city cuts the network at this
+            // junction, so roads may not be continued through it.
+            if v.building.is_some() {
+                return false;
+            }
+
+            v.adjacent_edges.iter().any(|ek| {
+                self.edges.get(ek).and_then(|e| e.owner) == Some(player_id)
+            })
         })
     }
 
@@ -387,6 +497,36 @@ impl Board {
             edge.building = Some(building);
             edge.owner = Some(player_id);
         }
+    }
+
+    /// Take a departed player's pieces off the board.
+    ///
+    /// Left standing they belong to nobody: they pay out to no one on a roll,
+    /// they hold vertices against the distance rule so nobody may ever build
+    /// there, and their settlements go on cutting other players' roads in two
+    /// on behalf of someone who is no longer in the game.
+    ///
+    /// Returns how many vertex buildings and how many roads were cleared.
+    pub fn remove_player_pieces(&mut self, player_id: Uuid) -> (usize, usize) {
+        let mut buildings = 0;
+        for vertex in self.vertices.values_mut() {
+            if vertex.owner == Some(player_id) {
+                vertex.building = None;
+                vertex.owner = None;
+                buildings += 1;
+            }
+        }
+
+        let mut roads = 0;
+        for edge in self.edges.values_mut() {
+            if edge.owner == Some(player_id) {
+                edge.building = None;
+                edge.owner = None;
+                roads += 1;
+            }
+        }
+
+        (buildings, roads)
     }
 
     pub fn calculate_longest_road(&self, player_id: Uuid) -> usize {
@@ -452,7 +592,7 @@ impl Board {
         max_length
     }
 
-    pub fn to_info(&self, robber_pos: (i32, i32)) -> BoardInfo {
+    pub fn to_info(&self, robber_pos: (i32, i32), robber_asset: &str) -> BoardInfo {
         let hexes = self.hexes.iter()
             .map(|(coords, hex)| HexInfo {
                 q: coords.0,
@@ -508,6 +648,7 @@ impl Board {
             cities,
             roads,
             robber_pos,
+            robber_asset: robber_asset.to_string(),
             ports,
         }
     }
@@ -521,6 +662,7 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
+    use shared::BoardLayout;
     use uuid::Uuid;
 
     use crate::game::entities::board::Board;
@@ -539,6 +681,26 @@ mod tests {
 
     fn pick_any_edge(board: &Board) -> Coordinates {
         *board.edges.keys().min().expect("board must have edges")
+    }
+
+    /// The vertices one edge away from `v`. Note this is *not*
+    /// `get_adjacent_hexes(v)`: that maps a **hex** coordinate to its corners,
+    /// and feeding it a vertex coordinate yields unrelated points.
+    fn vertex_neighbours(board: &Board, v: Coordinates) -> Vec<Coordinates> {
+        let Some(vertex) = board.vertices.get(&v) else {
+            return Vec::new();
+        };
+
+        vertex
+            .adjacent_edges
+            .iter()
+            .filter_map(|e| board.edges.get(e))
+            .map(|edge| {
+                let (a, b) = edge.adjacent_vertices;
+                if a == v { b } else { a }
+            })
+            .filter(|n| board.vertices.contains_key(n))
+            .collect()
     }
 
     fn pick_buildable_vertex(board: &Board) -> Coordinates {
@@ -607,7 +769,7 @@ mod tests {
     #[test]
     fn generate_from_layout_creates_hexes_vertices_edges() {
         let (resources, numbers) = Board::test_layout();
-        let board = Board::generate_from_layout(resources, numbers);
+        let board = Board::generate_from_layout(BoardLayout::Standard, resources, numbers);
 
         assert_eq!(board.hexes.len(), 19, "radius=2 board should have 19 hexes");
         assert!(!board.vertices.is_empty());
@@ -627,17 +789,31 @@ mod tests {
     #[test]
     fn test_buildable_vertex_rule() {
         let mut board = Board::new_standard_board();
-        let v = *board.vertices.keys().next().unwrap();
+        let v = pick_buildable_vertex(&board);
 
         assert!(board.is_buildable_vertex(v));
 
         board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
 
-        let v1 = (v.0, v.1 + 1);
-        let v2 = (v.0 + 1, v.1);
+        // The occupied vertex and each of its real neighbours are now blocked,
+        // but a vertex two edges away is still fair game.
+        assert!(!board.is_buildable_vertex(v));
 
-        assert!(!board.is_buildable_vertex(v1));
-        assert!(!board.is_buildable_vertex(v2));
+        let neighbours = vertex_neighbours(&board, v);
+        for n in &neighbours {
+            assert!(!board.is_buildable_vertex(*n), "{n:?} is one edge away");
+        }
+
+        let two_away = neighbours
+            .iter()
+            .flat_map(|n| vertex_neighbours(&board, *n))
+            .find(|c| *c != v && !neighbours.contains(c))
+            .expect("expected a vertex two edges away");
+
+        assert!(
+            board.is_buildable_vertex(two_away),
+            "{two_away:?} is two edges away and should stay buildable"
+        );
     }
 
     #[test]
@@ -649,12 +825,12 @@ mod tests {
     #[test]
     fn add_ports_populates_ports_and_has_expected_count() {
         let (resources, numbers) = Board::test_layout();
-        let mut board = Board::generate_from_layout(resources, numbers);
+        let mut board = Board::generate_from_layout(BoardLayout::Standard, resources, numbers);
         assert!(board.ports.is_empty());
 
-        board.add_ports();
+        board.add_ports(9);
 
-        assert_eq!(board.ports.len(), 18);
+        assert_eq!(board.ports.len(), 18, "nine harbours, two vertices each");
 
         // all port entries reference a port with exactly two coords
         for (k, p) in &board.ports {
@@ -684,13 +860,14 @@ mod tests {
 
         board.vertices.get_mut(&v).unwrap().building = Some(VertexBuilding::Settlement);
 
-        for n in Board::get_adjacent_hexes(v) {
-            if board.vertices.contains_key(&n) {
-                assert!(
-                    !board.is_buildable_vertex(n),
-                    "neighbor {n:?} should be blocked by distance rule"
-                );
-            }
+        let neighbours = vertex_neighbours(&board, v);
+        assert!(!neighbours.is_empty(), "a vertex must have neighbours");
+
+        for n in neighbours {
+            assert!(
+                !board.is_buildable_vertex(n),
+                "neighbor {n:?} should be blocked by distance rule"
+            );
         }
     }
 
@@ -753,6 +930,240 @@ mod tests {
 
         assert!(board.is_edge_connected_to_player(e_coord, pid5));
         assert!(!board.is_edge_connected_to_player(e_coord, pid6));
+    }
+
+    /// Regression test: resources and numbers used to be shuffled as fixed
+    /// pairs, so e.g. Ore was the poorest resource in literally every game.
+    /// Each layout must produce exactly the hexes, terrain and tokens the
+    /// corresponding physical game ships with.
+    #[test]
+    fn each_layout_has_the_right_hexes_terrain_and_tokens() {
+        for (layout, hexes, deserts, tokens) in [
+            (BoardLayout::Standard, 19, 1, 18),
+            (BoardLayout::Extended, 30, 2, 28),
+        ] {
+            assert_eq!(
+                Board::hex_coords_for(layout).len(),
+                hexes,
+                "{layout:?} should have {hexes} hexes"
+            );
+
+            let board = Board::new_for_layout(layout, 9);
+            assert_eq!(board.hexes.len(), hexes);
+
+            let desert_count = board
+                .hexes
+                .values()
+                .filter(|h| h.resource == ResourceType::Desert)
+                .count();
+            assert_eq!(desert_count, deserts, "{layout:?} desert count");
+
+            let numbered = board.hexes.values().filter(|h| h.number != 0).count();
+            assert_eq!(numbered, tokens, "{layout:?} token count");
+
+            assert!(
+                board.hexes.values().all(|h| h.number != 7),
+                "7 is never a token"
+            );
+            assert!(
+                board.hexes.values().all(|h| (h.resource == ResourceType::Desert) == (h.number == 0)),
+                "only deserts are blank"
+            );
+        }
+    }
+
+    /// Every hex must touch another, or the board is in pieces.
+    #[test]
+    fn the_extended_board_is_one_connected_landmass() {
+        let coords: std::collections::HashSet<Coordinates> =
+            Board::hex_coords_for(BoardLayout::Extended).into_iter().collect();
+
+        let neighbours = |(q, r): Coordinates| {
+            [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)]
+                .map(|(dq, dr)| (q + dq, r + dr))
+        };
+
+        let start = *coords.iter().next().unwrap();
+        let mut seen = std::collections::HashSet::from([start]);
+        let mut queue = vec![start];
+        while let Some(c) = queue.pop() {
+            for n in neighbours(c) {
+                if coords.contains(&n) && seen.insert(n) {
+                    queue.push(n);
+                }
+            }
+        }
+
+        assert_eq!(seen.len(), coords.len(), "the board must be connected");
+    }
+
+    /// Harbours are derived from the coast, so they must land on real coastal
+    /// edges on both layouts - never inland, never off the board.
+    #[test]
+    fn harbours_sit_on_the_coast_of_either_layout() {
+        for (layout, port_count) in [(BoardLayout::Standard, 9), (BoardLayout::Extended, 11)] {
+            let board = Board::new_for_layout(layout, port_count);
+
+            assert_eq!(
+                board.unique_ports().len(),
+                port_count,
+                "{layout:?} should have {port_count} harbours"
+            );
+
+            for port in board.unique_ports() {
+                let [a, b] = port.coord;
+                assert!(board.vertices.contains_key(&a) && board.vertices.contains_key(&b));
+
+                let edge = Board::edge_key(a, b);
+                let touching = board
+                    .hexes
+                    .keys()
+                    .filter(|hex| {
+                        let corners = Board::get_adjacent_hexes(**hex);
+                        (0..6).any(|i| Board::edge_key(corners[i], corners[(i + 1) % 6]) == edge)
+                    })
+                    .count();
+
+                assert_eq!(touching, 1, "a harbour must sit on a coastal edge");
+            }
+
+            let specific = board
+                .unique_ports()
+                .iter()
+                .filter(|p| matches!(p.port_type, PortType::TwoToOne(_)))
+                .count();
+            assert_eq!(specific, 5, "one 2:1 harbour per resource");
+        }
+    }
+
+    #[test]
+    fn resource_number_pairing_varies_between_games() {
+        use std::collections::{HashMap, HashSet};
+
+        let fingerprint = || {
+            let board = Board::new_standard_board();
+            let mut by_resource: HashMap<String, Vec<u8>> = HashMap::new();
+            for hex in board.hexes.values() {
+                by_resource
+                    .entry(format!("{:?}", hex.resource))
+                    .or_default()
+                    .push(hex.number);
+            }
+            let mut rows: Vec<String> = by_resource
+                .into_iter()
+                .map(|(resource, mut numbers)| {
+                    numbers.sort();
+                    format!("{resource}{numbers:?}")
+                })
+                .collect();
+            rows.sort();
+            rows.join("|")
+        };
+
+        let seen: HashSet<String> = (0..25).map(|_| fingerprint()).collect();
+
+        assert!(
+            seen.len() > 1,
+            "every board handed the same numbers to the same resources"
+        );
+    }
+
+    #[test]
+    fn every_board_keeps_one_desert_with_no_number() {
+        for _ in 0..25 {
+            let board = Board::new_standard_board();
+
+            let deserts: Vec<_> = board
+                .hexes
+                .values()
+                .filter(|hex| hex.resource == ResourceType::Desert)
+                .collect();
+
+            assert_eq!(deserts.len(), 1, "there must be exactly one desert");
+            assert_eq!(deserts[0].number, 0, "the desert must have no number token");
+
+            assert!(
+                board
+                    .hexes
+                    .values()
+                    .filter(|hex| hex.resource != ResourceType::Desert)
+                    .all(|hex| hex.number != 0 && hex.number != 7),
+                "every land hex needs a real token and 7 is never a token"
+            );
+        }
+    }
+
+    #[test]
+    fn every_board_uses_the_standard_token_multiset() {
+        let mut expected = vec![2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
+        expected.sort();
+
+        for _ in 0..10 {
+            let board = Board::new_standard_board();
+            let mut tokens: Vec<u8> = board
+                .hexes
+                .values()
+                .map(|hex| hex.number)
+                .filter(|number| *number != 0)
+                .collect();
+            tokens.sort();
+
+            assert_eq!(tokens, expected);
+        }
+    }
+
+    /// Two distinct edges sharing a vertex, plus that vertex.
+    fn two_edges_sharing_a_vertex(board: &Board) -> (Coordinates, Coordinates, Coordinates) {
+        board
+            .edges
+            .iter()
+            .find_map(|(&e1, edge)| {
+                let v = edge.adjacent_vertices.0;
+                board.edges.iter().find_map(|(&e2, other)| {
+                    let touches =
+                        other.adjacent_vertices.0 == v || other.adjacent_vertices.1 == v;
+                    if e2 != e1 && touches { Some((e1, v, e2)) } else { None }
+                })
+            })
+            .expect("expected two edges sharing a vertex")
+    }
+
+    /// Regression test: a road used to be extendable straight through an
+    /// opponent's settlement, which by the rules severs the network.
+    #[test]
+    fn road_cannot_be_extended_through_an_opponent_building() {
+        let mut board = Board::new_standard_board();
+        let me = Uuid::from_u128(1);
+        let opponent = Uuid::from_u128(2);
+
+        let (e1, shared_vertex, e2) = two_edges_sharing_a_vertex(&board);
+
+        board.build_edge(me, e1, EdgeBuilding::Road);
+        assert!(
+            board.is_edge_connected_to_player(e2, me),
+            "an open junction should connect my two edges"
+        );
+
+        board.build_vertex(opponent, shared_vertex, VertexBuilding::Settlement);
+
+        assert!(
+            !board.is_edge_connected_to_player(e2, me),
+            "an opponent's building must cut the road network at that junction"
+        );
+    }
+
+    /// My own building must not block me.
+    #[test]
+    fn road_can_be_extended_through_my_own_building() {
+        let mut board = Board::new_standard_board();
+        let me = Uuid::from_u128(1);
+
+        let (e1, shared_vertex, e2) = two_edges_sharing_a_vertex(&board);
+
+        board.build_edge(me, e1, EdgeBuilding::Road);
+        board.build_vertex(me, shared_vertex, VertexBuilding::Settlement);
+
+        assert!(board.is_edge_connected_to_player(e2, me));
     }
 
     #[test]

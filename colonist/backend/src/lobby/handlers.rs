@@ -1,11 +1,39 @@
 use super::{Lobby, actions};
-use crate::network::message::{ClientActorMessage, Connect, Disconnect};
+use crate::network::message::{Authenticate, Authenticated, ClientActorMessage, Connect, Disconnect};
 use actions::handle_game_request;
 use actix::prelude::*;
 use log::{error, info};
-use shared::{ClientRequest, GamePhase, PendingAction, ServerMessage};
+use shared::{ClientRequest, GamePhase, PendingAction, ServerMessage, StructureType};
 use uuid::Uuid;
-use std::collections::HashSet;
+
+impl Handler<Authenticate> for Lobby {
+    type Result = MessageResult<Authenticate>;
+
+    fn handle(&mut self, msg: Authenticate, ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(token) = msg.token {
+            if let Some(player_id) = self.tokens.get(&token) {
+                return MessageResult(Authenticated { player_id: *player_id, token });
+            }
+            info!("Rejected unknown session token; issuing a fresh identity");
+        }
+
+        let token = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        self.tokens.insert(token, player_id);
+
+        let repo = self.repo.clone();
+        ctx.spawn(
+            async move {
+                if let Err(e) = repo.save_session(token, player_id).await {
+                    error!("Failed to persist session: {}", e);
+                }
+            }
+            .into_actor(self),
+        );
+
+        MessageResult(Authenticated { player_id, token })
+    }
+}
 
 impl Handler<Connect> for Lobby {
     type Result = ();
@@ -15,12 +43,19 @@ impl Handler<Connect> for Lobby {
 
         self.sessions.insert(pid, msg.addr);
         if let Some(game_id) = self.player_to_game.get(&pid).cloned() {
-            if self.games.contains_key(&game_id) {
-                if self.games.get(&game_id).unwrap().turn_manager.game_over() {
-                    error!(
-                        "Player {} attempted to reconnect to game {} which is over",
+            if let Some(game) = self.games.get(&game_id) {
+                if game.turn_manager.game_over() {
+                    info!(
+                        "Player {} reconnected to game {}, which is over; sending them to the lobby",
                         pid, game_id
                     );
+                    // Returning outright left them staring at a blank page: no
+                    // `Joined`, no sync and - because the only `LobbyUpdate` a
+                    // fresh connection gets is the broadcast at the end of this
+                    // handler - no lobby list either. Drop the stale mapping
+                    // and fall through so they land on the menu.
+                    self.player_to_game.remove(&pid);
+                    self.broadcast_lobby_status();
                     return;
                 }
 
@@ -62,7 +97,9 @@ impl Handler<ClientActorMessage> for Lobby {
         match msg.req {
             ClientRequest::CreateGame { .. }
             | ClientRequest::JoinGame { .. }
-            | ClientRequest::GetLobbyList | ClientRequest::LeaveGame {..} => {
+            | ClientRequest::GetLobbyList
+            | ClientRequest::StartGame { .. }
+            | ClientRequest::LeaveGame {..} => {
                 actions::handle_lobby_action(self, pid, msg.req, ctx);
                 return;
             }
@@ -73,8 +110,12 @@ impl Handler<ClientActorMessage> for Lobby {
             Some(id) => id.clone(),
             None => return self.send_error(pid, "You are not in a game"),
         };
-        if self.games.get_mut(&gid).unwrap().turn_manager.game_over() {
-            return self.send_error(pid, "Game is already over");
+        match self.games.get(&gid) {
+            Some(game) if game.turn_manager.game_over() => {
+                return self.send_error(pid, "Game is already over");
+            }
+            None => return self.send_error(pid, "Game not found"),
+            _ => {}
         }
 
         let action_result = if let Some(game) = self.games.get_mut(&gid) {
@@ -85,7 +126,7 @@ impl Handler<ClientActorMessage> for Lobby {
 
         match action_result {
             Ok(msg) => {
-                self.process_successful_action(pid, &gid, msg, ctx);
+                self.process_successful_action(pid, &gid, msg, ctx, true);
             }
             Err(e) => self.send_error(pid, &e),
         }
@@ -93,35 +134,129 @@ impl Handler<ClientActorMessage> for Lobby {
 }
 
 impl Lobby {
-    fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>) {
-        self.handle_victory_if_needed(pid, gid);
-        self.persist_game(gid, ctx);
-        self.broadcast_to_game(gid, msg.clone());
-        self.handle_post_message_effects(pid, gid, &msg);
-    }
-
-    fn handle_victory_if_needed(&mut self, pid: Uuid, gid: &str) {
-        if let Some(game) = self.games.get(gid) {
-            if game.turn_manager.game_over() {
-                let victory_msg = ServerMessage::PlayerWon {
-                    player_id: pid,
-                    secret_victory_points: game.turn_manager.player_secret_victory_points(pid),
-                };
-                self.broadcast_to_game(gid, victory_msg);
+    /// `by_player` marks an action a human actually asked for.
+    ///
+    /// Only those count as the table being alive. The turn clock drives roll
+    /// and end-turn through here too, and counting those reset the idle timer
+    /// about once a minute - so a table whose players had all closed their
+    /// tabs played itself forever, auto-rolling every ten seconds and writing
+    /// to Postgres each time, never idle long enough to be evicted.
+    pub(super) fn process_successful_action(&mut self, pid: Uuid, gid: &str, msg: ServerMessage, ctx: &mut Context<Self>, by_player: bool) {
+        if by_player {
+            if let Some(game) = self.games.get_mut(gid) {
+                game.touch();
             }
         }
+        self.save_game_async(gid, ctx);
+        self.deliver_action_result(gid, msg.clone());
+        self.handle_post_message_effects(pid, gid, &msg);
+
+        // Trade calls expire stale offers as a side effect. Those ids never
+        // reached the table before: the rules layer cannot broadcast, and the
+        // five-second sweep found nothing left to announce.
+        let expired = self
+            .games
+            .get_mut(gid)
+            .map(|game| game.drain_expired_notices())
+            .unwrap_or_default();
+        for offer_id in expired {
+            self.broadcast_to_game(gid, ServerMessage::TradeCancelled { offer_id });
+        }
+
+        // The win goes out last. Announced first, the statistics sheet opened
+        // over a board still missing the settlement that won the game and a
+        // roster one point short, because the action itself and the trailing
+        // `PlayersUpdate` had not been sent yet.
+        self.handle_victory_if_needed(gid);
     }
 
-    fn persist_game(&self, gid: &str, ctx: &mut Context<Self>) {
-        let repo = self.repo.clone();
-        if let Some(instance) = self.games.get(gid).cloned() {
-            ctx.spawn(
-                async move {
-                    let _ = repo.save_game_instance(&instance).await;
+    /// Most results go to the whole table. A decline is between the two
+    /// players involved - broadcasting it would tell everyone who refused
+    /// what, which is information they should have to ask for.
+    fn deliver_action_result(&mut self, gid: &str, msg: ServerMessage) {
+        match msg {
+            ServerMessage::TradeDeclined { proposer_id, decliner_id, .. } => {
+                self.send_server_msg(proposer_id, msg.clone());
+                self.send_server_msg(decliner_id, msg);
+            }
+
+            // Only the two players involved learn which card was taken.
+            // Broadcasting it would hand everyone the information that
+            // hiding hands in `PlayerInfo` was meant to withhold.
+            ServerMessage::PlayerRobbed { thief_id, victim_id, resource, stole_a_card } => {
+                let private = ServerMessage::PlayerRobbed {
+                    thief_id,
+                    victim_id,
+                    resource,
+                    stole_a_card,
+                };
+                self.send_server_msg(thief_id, private.clone());
+                self.send_server_msg(victim_id, private);
+
+                self.broadcast_except(
+                    gid,
+                    &[thief_id, victim_id],
+                    ServerMessage::PlayerRobbed {
+                        thief_id,
+                        victim_id,
+                        resource: None,
+                        stole_a_card,
+                    },
+                );
+            }
+
+            ServerMessage::MonopolyResourcesStolen { player_id, resource, total_stolen, victims } => {
+                let summary = ServerMessage::MonopolyResourcesStolen {
+                    player_id,
+                    resource,
+                    total_stolen,
+                    victims: victims.clone(),
+                };
+                self.broadcast_to_game(gid, summary);
+
+                for victim_id in victims {
+                    let msg = ServerMessage::PlayerRobbed {
+                        thief_id: player_id,
+                        victim_id,
+                        resource: Some(resource),
+                        stole_a_card: true,
+                    };
+                    self.send_server_msg(player_id, msg.clone());
+                    self.send_server_msg(victim_id, msg.clone());
+                    self.broadcast_except(
+                        gid,
+                        &[player_id, victim_id],
+                        ServerMessage::PlayerRobbed {
+                            thief_id: player_id,
+                            victim_id,
+                            resource: None,
+                            stole_a_card: true,
+                        },
+                    );
                 }
-                .into_actor(self),
-            );
+            }
+
+            other => self.broadcast_to_game(gid, other),
         }
+    }
+
+    fn handle_victory_if_needed(&mut self, gid: &str) {
+        let victory_msg = {
+            let Some(game) = self.games.get_mut(gid) else { return };
+            let Some(winner) = game.turn_manager.winner() else { return };
+
+            // Stop the clock before reading the tally, so the duration is how
+            // long the game took rather than how long it took to be told.
+            game.stats.finish(crate::game::entities::game_instance::now_secs());
+
+            ServerMessage::PlayerWon {
+                player_id: winner,
+                secret_victory_points: game.turn_manager.player_secret_victory_points(winner),
+                stats: game.stats_snapshot(),
+            }
+        };
+
+        self.broadcast_to_game(gid, victory_msg);
     }
 
     fn handle_post_message_effects(&mut self, pid: Uuid, gid: &str, msg: &ServerMessage) {
@@ -130,6 +265,53 @@ impl Lobby {
         self.handle_initial_phase_transition(gid, msg);
         self.handle_dev_card_side_effects(pid, gid, msg);
         self.handle_robber_flow(pid, gid, msg);
+        self.close_trades_on_turn_end(gid, msg);
+        self.announce_dead_offer(gid, msg);
+    }
+
+    /// An offer belongs to the turn it was made in. Letting one outlive the
+    /// turn would move resources while somebody else is playing.
+    ///
+    /// At 5-6 players a turn ends with `PhaseChanged` into the special
+    /// building phase rather than `NextTurn`, so both have to close offers.
+    fn close_trades_on_turn_end(&mut self, gid: &str, msg: &ServerMessage) {
+        // Only a turn actually ending closes offers. Setup broadcasts
+        // PhaseChanged for every placement step, and those are not turn ends.
+        let ends_turn = matches!(
+            msg,
+            ServerMessage::NextTurn { .. }
+                | ServerMessage::PhaseChanged { new_phase: GamePhase::SpecialBuilding { .. } }
+        );
+        if !ends_turn {
+            return;
+        }
+
+        let Some(game) = self.games.get_mut(gid) else { return };
+        let closed = game.clear_trades();
+
+        for offer_id in closed {
+            self.broadcast_to_game(gid, ServerMessage::TradeCancelled { offer_id });
+        }
+    }
+
+    /// A decline is private, but the offer disappearing is not: once the last
+    /// eligible player refuses, everyone still showing the offer needs to be
+    /// told it is gone, or it sits on their screen until the expiry sweep.
+    fn announce_dead_offer(&mut self, gid: &str, msg: &ServerMessage) {
+        let offer_id = match msg {
+            ServerMessage::TradeDeclined { offer_id, .. }
+            | ServerMessage::TradeAcceptanceWithdrawn { offer_id, .. } => *offer_id,
+            _ => return,
+        };
+
+        let still_open = self
+            .games
+            .get(gid)
+            .is_some_and(|game| game.pending_trades.contains_key(&offer_id));
+
+        if !still_open {
+            self.broadcast_to_game(gid, ServerMessage::TradeCancelled { offer_id });
+        }
     }
 
     fn handle_resource_updates(&mut self, gid: &str, msg: &ServerMessage) {
@@ -149,12 +331,31 @@ impl Lobby {
         if resource_update_needed {
             self.broadcast_resource_updates(gid);
             self.broadcast_players_update(gid);
+
+            if let Some(bank) = self.games.get(gid).map(|g| g.turn_manager.bank.to_info()) {
+                self.broadcast_to_game(gid, ServerMessage::BankUpdate { bank });
+            }
         }
     }
 
     fn handle_initial_phase_transition(&mut self, gid: &str, msg: &ServerMessage) {
-        if let ServerMessage::Built { structure_type, .. } = msg {
-            if structure_type == "ROAD" {
+        // Placing a settlement during setup moves the step to BuildRoad and
+        // records which settlement the road has to touch. Without announcing
+        // it, clients keep the stale step and cannot tell which edges are
+        // legal, so they offer every edge the player is connected to.
+        if let ServerMessage::Built { structure_type: StructureType::Settlement, .. } = msg {
+            if let Some(phase) = self
+                .games
+                .get(gid)
+                .map(|g| g.get_state())
+                .filter(|p| p.is_initial_phase())
+            {
+                self.broadcast_to_game(gid, ServerMessage::PhaseChanged { new_phase: phase });
+            }
+        }
+
+        if let ServerMessage::Built { structure_type: StructureType::Road, .. } = msg {
+            {
                 let phase_check = self
                     .games
                     .get(gid)
@@ -173,6 +374,15 @@ impl Lobby {
                         );
                     }
 
+                    if let Some(phase) = self
+                        .games
+                        .get(gid)
+                        .map(|g| g.get_state())
+                        .filter(|p| p.is_initial_phase())
+                    {
+                        self.broadcast_to_game(gid, ServerMessage::PhaseChanged { new_phase: phase });
+                    }
+
                     if let Some(game) = self.games.get(gid) {
                         self.broadcast_to_game(
                             gid,
@@ -187,124 +397,79 @@ impl Lobby {
     }
 
     fn handle_dev_card_side_effects(&mut self, pid: Uuid, gid: &str, msg: &ServerMessage) {
-        if let Some(game) = self.games.get(gid) {
-            if let Some(actions) = game.pending_actions.get(&pid) {
-                for action in actions {
-                    match action {
-                        PendingAction::MoveRobber | PendingAction::PlayKnight => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustMoveRobber { player_id: pid },
-                            );
-                        }
+        // Playing a card is one of the things that can leave a player owing
+        // the game something. `announce_pending_actions` is the single place
+        // that turns those into prompts, shared with the reconnect sync, so
+        // the two cannot disagree about what is being asked for.
+        self.announce_pending_actions(pid, gid);
 
-                        PendingAction::RoadBuilding { remaining } => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustPlaceRoads {
-                                    player_id: pid,
-                                    roads_remaining: *remaining,
-                                },
-                            );
-                        }
+        // The card a player drew is theirs alone to see.
+        if let ServerMessage::DevCardBought { player_id } = msg {
+            let drawn = self
+                .games
+                .get(gid)
+                .and_then(|game| game.turn_manager.players.get(*player_id))
+                .and_then(|player| player.dev_cards.last())
+                .map(|card| card.get_type());
 
-                        PendingAction::YearOfPlenty => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustChooseYearOfPlentyResources { player_id: pid },
-                            );
-                        }
+            if let Some(card_type) = drawn {
+                let is_victory_point = card_type == shared::DevCardType::VictoryPoint;
+                self.send_server_msg(*player_id, ServerMessage::DevCardDrawn { card_type });
 
-                        PendingAction::Monopoly => {
-                            self.send_server_msg(
-                                pid,
-                                ServerMessage::MustChooseMonopolyResource { player_id: pid },
-                            );
-                        }
-
-                        _ => {} // Discard handled elsewhere
-                    }
+                if is_victory_point {
+                    self.send_secret_victory_points_to_player(*player_id, gid);
                 }
             }
-        }
-
-
-        if let ServerMessage::DevCardBought {card_type: shared::DevCardType::VictoryPoint, ..} = msg {
-            self.send_secret_victory_points_to_player(pid, gid);
         }
     }
 
     fn handle_discard_flow(&mut self, gid: &str, msg: &ServerMessage) {
-        match msg {
-            ServerMessage::DiceRolled { dice_1, dice_2, .. } if dice_1 + dice_2 == 7 => {
-                if let Some(game) = self.games.get(gid) {
-                    for (player_id, actions) in &game.pending_actions {
-                        if actions.contains(&PendingAction::Discard) {
-                            if let Some(player) = game.turn_manager.players.get(*player_id) {
-                                let total = player.resources.get_cards_total();
-                                let count = (total / 2) as usize;
+        // A 7 opens the discard round, and a robbery can change what the
+        // victim still owes. A successful discard itself is not a fresh prompt;
+        // it closes the current one.
+        let prompt_needed = match msg {
+            ServerMessage::DiceRolled { dice_1, dice_2, .. } => dice_1 + dice_2 == 7,
+            _ => false,
+        };
 
-                                self.send_server_msg(
-                                    *player_id,
-                                    ServerMessage::MustDiscardCards {
-                                        player_id: *player_id,
-                                        count,
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+        if !prompt_needed {
+            return;
+        }
 
-            ServerMessage::CardsDiscarded { .. } => {
-                // If someone just discarded, check if other players still need to discard
-                if let Some(game) = self.games.get(gid) {
-                    for (player_id, actions) in &game.pending_actions {
-                        if actions.contains(&PendingAction::Discard) {
-                            if let Some(player) = game.turn_manager.players.get(*player_id) {
-                                let total = player.resources.get_cards_total();
-                                let count = (total / 2) as usize;
+        let Some(game) = self.games.get(gid) else { return };
 
-                                self.send_server_msg(
-                                    *player_id,
-                                    ServerMessage::MustDiscardCards {
-                                        player_id: *player_id,
-                                        count,
-                                    },
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+        let outstanding: Vec<(Uuid, usize)> = game
+            .pending_actions
+            .iter()
+            .filter(|(_, actions)| actions.contains(&PendingAction::Discard))
+            .filter_map(|(player_id, _)| {
+                let player = game.turn_manager.players.get(*player_id)?;
+                Some((*player_id, (player.resources.get_cards_total() / 2) as usize))
+            })
+            .collect();
 
-            _ => {
-                // Other messages are ignored
-            }
+        for (player_id, count) in outstanding {
+            self.send_server_msg(
+                player_id,
+                ServerMessage::MustDiscardCards { player_id, count },
+            );
         }
     }
 
 
     fn handle_robber_flow(&mut self, pid: Uuid, gid: &str, msg: &ServerMessage) {
-        if let ServerMessage::RobberMoved { new_q, new_r, .. } = msg {
+        if let ServerMessage::RobberMoved { .. } = msg {
             if let Some(game) = self.games.get(gid) {
+                let discard_pending = game
+                    .pending_actions
+                    .get(&pid)
+                    .is_some_and(|actions| actions.contains(&PendingAction::Discard));
 
-                let mut robbable_players = HashSet::new();
-                let adjacent =
-                    crate::game::entities::board::Board::get_adjacent_hexes((*new_q, *new_r));
-
-                for vertex_coord in &adjacent {
-                    if let Some(vertex) = game.turn_manager.board.vertices.get(vertex_coord) {
-                        if vertex.building.is_some() {
-                            if let Some(owner_id) = vertex.owner {
-                                if owner_id != pid {
-                                    robbable_players.insert(owner_id);
-                                }
-                            }
-                        }
-                    }
+                if discard_pending {
+                    return;
                 }
+
+                let robbable_players = game.turn_manager.robbable_players(pid);
 
                 self.send_server_msg(
                     pid,
@@ -314,5 +479,9 @@ impl Lobby {
                 );
             }
         }
+
+        // An active discard is already the current prompt. Re-announcing it
+        // after every rob action just opens the same modal a second time, and
+        // the existing `CardsDiscarded` path is the place that clears it.
     }
 }

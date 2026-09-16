@@ -1,0 +1,18 @@
+[package]
+name = "frontend"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+leptos = { version = "0.6", features = ["csr"] }
+shared = { path = "../shared" }
+serde_json = "1.0"
+gloo-net = { version = "0.5", features = ["websocket"] }
+futures = "0.3.31"
+js-sys = "0.3"
+# DomRect is what the resource animation measures hexes and player rows with.
+web-sys = { version = "0.3", features = ["DomRect", "Element", "Location", "Storage", "Window"] }
+uuid = { version = "1.19.0", features = ["v4"] }

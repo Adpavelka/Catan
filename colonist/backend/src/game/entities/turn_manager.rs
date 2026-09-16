@@ -4,12 +4,13 @@ use crate::game::entities::board::{Board, Coordinates};
 use crate::game::entities::bonus_points::{BiggestArmy, BonusCard, LongestRoad};
 use crate::game::entities::development_card::DevelopmentCard;
 use crate::game::entities::dice::Dice;
-use crate::game::entities::player::Player;
 use crate::game::entities::players::Players;
 use crate::game::entities::resources::ResourceSet;
 use crate::game::entities::robber::Robber;
 use log::info;
 use serde::{Deserialize, Serialize};
+use shared::{GameRules, PlayerColour};
+use std::collections::HashSet;
 use uuid::Uuid;
 use crate::game::entities::building::EdgeBuilding::Road;
 use crate::game::entities::building::VertexBuilding::{City, Settlement};
@@ -23,33 +24,71 @@ pub struct TurnManager {
 
     robber: Robber,
     game_over: bool,
+    /// Bumped every time a turn ends. The turn clock keys off this rather
+    /// than off whose turn it is: in a one-player game the player never
+    /// changes, so identity alone never told the clock to re-arm.
+    #[serde(default)]
+    turn_seq: u64,
+    /// Everything that varies with the number of players.
+    #[serde(default = "default_rules")]
+    rules: GameRules,
+    #[serde(default)]
+    winner: Option<Uuid>,
     
     pub army_bonus: BiggestArmy, // tohle by taky mělo private ne?
     pub road_bonus: LongestRoad, // tohle by taky mělo private ne?
 }
 
+/// Older saves predate configurable table sizes; they were all four-player.
+fn default_rules() -> GameRules {
+    GameRules::for_player_count(4)
+}
+
 impl TurnManager {
-    pub fn new(player_count: usize, first_player_id:Uuid) -> TurnManager {
-        let first_player = Player::new(first_player_id, "Player 1", 'b');
+    pub fn new(player_count: usize, first_player_id: Uuid, name: &str, colour: PlayerColour) -> TurnManager {
+        Self::new_for_game_seed(player_count, first_player_id, name, colour, rand::random())
+    }
 
-        let board = Board::new();
+    pub fn new_for_game_seed(
+        player_count: usize,
+        first_player_id: Uuid,
+        name: &str,
+        colour: PlayerColour,
+        game_seed: u64,
+    ) -> TurnManager {
+        let rules = GameRules::for_player_count(player_count);
+        let board = Board::new_for_layout(rules.board, rules.port_count);
+        let robber = Robber::new_for_seed(&board, game_seed);
 
-        info!("New game initialized for {} players", player_count);
+        // The creator is seated exactly like everyone else, with the name and
+        // colour they picked. An empty roster cannot clash, so this cannot fail.
+        let mut players = Players::new(Vec::new());
+        let _ = players.seat(first_player_id, name, colour);
+
+        info!(
+            "New game initialized for {} players ({:?} board, {} to win)",
+            rules.player_count, rules.board, rules.victory_points_to_win
+        );
 
         Self {
             dice: Dice::new(),
-            bank: Bank::new(),
-            board: Board::new(),
+            bank: Bank::new(&rules),
+            board,
+            rules,
             game_over: false,
-            robber: Robber::new(&board),
+            turn_seq: 0,
+            winner: None,
+            robber,
             army_bonus: BiggestArmy::new(),
             road_bonus: LongestRoad::new(),
-            players: Players::new(vec![first_player.clone()]),
+            players,
         }
     }
 
 
-    pub fn next_turn(&mut self) -> Result<((u8, u8), Vec<(Uuid, shared::ResourceType, u32)>), GameError> {
+    /// Rolls for the current player and pays out production. Despite the old
+    /// name this does *not* advance the turn - `end_turn` does that.
+    pub fn roll_dice(&mut self) -> Result<((u8, u8), Vec<(Uuid, shared::ResourceType, u32)>), GameError> {
         if self.game_over {
             return Err(GameError::InvalidAction);
         }
@@ -72,7 +111,13 @@ impl TurnManager {
     }
 
 
+    /// How many turns have ended. Only meaningful as a change detector.
+    pub fn turn_seq(&self) -> u64 {
+        self.turn_seq
+    }
+
     pub fn end_turn(&mut self) {
+        self.turn_seq = self.turn_seq.wrapping_add(1);
         let prev_player = self.players.get_current_index();
         {
             let pid = self.players.get_current_player().id;
@@ -115,8 +160,9 @@ impl TurnManager {
     }
 
 
-    pub fn build_settlement(&mut self, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
-        let pid: Uuid = self.players.get_current_player().id;
+    /// `pid` is passed in rather than assumed to be the player on turn: during
+    /// the 5-6 special building phase the builder is somebody else.
+    pub fn build_settlement(&mut self, pid: Uuid, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
 
         let vertex = self
             .board
@@ -151,15 +197,20 @@ impl TurnManager {
         }
 
         self.board.build_vertex(pid, pos, Settlement);
-        self.has_player_won(pid);
+
+        // A settlement planted in the middle of somebody else's road cuts it
+        // in two, which can take the longest road off them. Only the builder's
+        // own road was ever re-measured, so the holder kept the card and its
+        // two points on a chain that no longer existed.
+        self.recalculate_bonuses();
+        self.check_for_winner();
 
         info!("Player {} built a SETTLEMENT at {:?}", pid, pos);
         Ok(())
     }
 
 
-    pub fn build_city(&mut self, pos: Coordinates) -> Result<(), GameError> {
-        let pid = self.players.get_current_player().id;
+    pub fn build_city(&mut self, pid: Uuid, pos: Coordinates) -> Result<(), GameError> {
 
         let vertex = self
             .board
@@ -182,15 +233,14 @@ impl TurnManager {
         player.use_city()?;
 
         self.board.build_vertex(pid, pos, City);
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         info!("Player {} built a CITY at {:?}", pid, pos);
         Ok(())
     }
 
 
-    pub fn build_road(&mut self, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
-        let pid = self.players.get_current_player().id;
+    pub fn build_road(&mut self, pid: Uuid, pos: Coordinates, is_initial: bool) -> Result<(), GameError> {
 
         let edge = self.board.edges.get(&pos).ok_or(GameError::InvalidAction)?;
         if edge.building.is_some() || !self.board.is_edge_connected_to_player(pos, pid) {
@@ -228,15 +278,38 @@ impl TurnManager {
         player.longest_road = longest_road_len;
 
         self.road_bonus.recalculate(&mut self.players);
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         info!("Player {} built a ROAD at {:?}", pid, pos);
         Ok(())
     }
 
 
-    pub fn buy_dev_card(&mut self) -> Result<shared::DevCardType, GameError> {
-        let pid = self.players.get_current_player().id;
+    /// Re-measure every remaining player's longest road and re-award both
+    /// bonus cards.
+    ///
+    /// Needed after pieces leave the board rather than arrive on it: a
+    /// departed player's settlement may have been cutting an opponent's road
+    /// in two, so clearing it can *lengthen* someone else's road, and the
+    /// player who held longest road or largest army may no longer be at the
+    /// table to hold it.
+    pub fn recalculate_bonuses(&mut self) {
+        let ids: Vec<Uuid> = (0..self.players.len())
+            .filter_map(|idx| self.players.get_by_index(idx).map(|p| p.id))
+            .collect();
+
+        for id in ids {
+            let length = self.board.calculate_longest_road(id);
+            if let Some(player) = self.players.get_mut(id) {
+                player.longest_road = length;
+            }
+        }
+
+        self.road_bonus.recalculate(&mut self.players);
+        self.army_bonus.recalculate(&mut self.players);
+    }
+
+    pub fn buy_dev_card(&mut self, pid: Uuid) -> Result<shared::DevCardType, GameError> {
         let cost = DevelopmentCard::cost();
 
         {
@@ -247,6 +320,13 @@ impl TurnManager {
             if !player.can_pay(&cost) {
                 return Err(GameError::NotEnoughResources);
             }
+        }
+
+        // Check the deck before taking the money. Drawing after paying meant
+        // that when the last card had gone the buyer was charged three
+        // resources and then handed an error.
+        if self.bank.dev_cards_left() == 0 {
+            return Err(GameError::InvalidAction);
         }
 
         self.bank.collect_from_player(pid, cost, &mut self.players)?;
@@ -265,7 +345,7 @@ impl TurnManager {
         }
 
         player.dev_cards.push(card);
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         Ok(card_type)
     }
@@ -312,7 +392,7 @@ impl TurnManager {
             .ok_or(GameError::PlayerNotFound)?;
 
         player.dev_card_played_this_turn = true;
-        self.has_player_won(pid);
+        self.check_for_winner();
 
         Ok(())
     }
@@ -339,16 +419,37 @@ impl TurnManager {
     }    
 
     
-    fn has_player_won(&mut self, player_id: Uuid) -> bool {
-        let answer = self.players
-                                .get(player_id)
-                                .map(|p| p.get_total_victory_points() >= 10)
-                                .unwrap_or(false);
+    /// Scans every player, not just whoever moved: gaining or losing Longest
+    /// Road or Largest Army can push a different player over the line.
+    fn check_for_winner(&mut self) -> Option<Uuid> {
+        if self.winner.is_some() {
+            return self.winner;
+        }
 
-        if answer {
+        let winner = (0..self.players.len())
+            .filter_map(|idx| self.players.get_by_index(idx))
+            .find(|player| player.get_total_victory_points() >= self.rules.victory_points_to_win)
+            .map(|player| player.id);
+
+        if let Some(id) = winner {
+            self.winner = Some(id);
             self.game_over = true;
         }
-        answer
+
+        winner
+    }
+
+    pub fn winner(&self) -> Option<Uuid> {
+        self.winner
+    }
+
+    pub fn rules(&self) -> GameRules {
+        self.rules
+    }
+
+    #[cfg(test)]
+    pub fn check_for_winner_for_test(&mut self) -> Option<Uuid> {
+        self.check_for_winner()
     }
 
 
@@ -375,12 +476,46 @@ impl TurnManager {
     pub fn get_robber_pos(&self) -> Coordinates {
         self.robber.get_pos()
     }
+
+    pub fn get_robber_asset(&self) -> &str {
+        self.robber.get_asset_name()
+    }
+
+    pub fn set_robber_asset_for_seed(&mut self, seed: u64) {
+        self.robber = Robber::new_for_seed(&self.board, seed);
+    }
+
+    /// Everyone except `thief_id` with a settlement or city on a corner of the
+    /// hex the robber currently occupies. These are the only legal steal targets.
+    pub fn robbable_players(&self, thief_id: Uuid) -> HashSet<Uuid> {
+        let mut victims = HashSet::new();
+
+        for vertex_coord in Board::get_adjacent_hexes(self.get_robber_pos()) {
+            let Some(vertex) = self.board.vertices.get(&vertex_coord) else { continue };
+            if vertex.building.is_none() {
+                continue;
+            }
+            if let Some(owner) = vertex.owner {
+                if owner != thief_id {
+                    victims.insert(owner);
+                }
+            }
+        }
+
+        victims
+    }
 }
 
 
 
 #[cfg(test)]
 mod tests {
+    /// Whoever is on turn - the actor for build calls in these tests.
+    fn tm_current(tm: &TurnManager) -> Uuid {
+        tm.players.get_current_player().id
+    }
+
+    use shared::PlayerColour;
     use crate::errors::GameError;
     use crate::game::entities::building::EdgeBuilding::Road;
     use crate::game::entities::building::VertexBuilding::Settlement;
@@ -394,13 +529,13 @@ mod tests {
     }
 
     fn make_tm(player_count: usize) -> TurnManager {
-        TurnManager::new(player_count, pid(1))
+        TurnManager::new(player_count, pid(1), "Tester", PlayerColour::Blue)
     }
 
     fn add_players(tm: &mut TurnManager, count: usize) {
         for i in 2..=count as u128 {
             tm.players
-                .add_player(Player::new(pid(i), &format!("Player {}", i), 'x'));
+                .add_player(Player::new(pid(i), &format!("Player {}", i), PlayerColour::Blue));
         }
     }
 
@@ -418,6 +553,31 @@ mod tests {
 
         assert!(!tm.game_over());
         assert_eq!(tm.players.len(), 1);
+    }
+
+    /// The robber must start on the desert of the board the game is actually
+    /// played on. Regression test: the robber used to be placed on the desert
+    /// of a second, discarded board, so it started on a producing hex.
+    #[test]
+    fn robber_starts_on_the_desert_of_the_game_board() {
+        for _ in 0..20 {
+            let tm = make_tm(3);
+            let pos = tm.get_robber_pos();
+
+            let hex = tm
+                .board
+                .hexes
+                .get(&pos)
+                .expect("robber must stand on a hex of the game board");
+
+            assert_eq!(
+                hex.resource,
+                ResourceType::Desert,
+                "robber started on {:?} at {:?}",
+                hex.resource,
+                pos
+            );
+        }
     }
 
     #[test]
@@ -449,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn next_turn_fails_when_game_over() {
+    fn roll_dice_fails_when_game_over() {
         let mut tm = make_tm(3);
         let pid = tm.players.get_current_player().id;
 
@@ -460,8 +620,8 @@ mod tests {
                 .add_secret_victory_point();
         }
 
-        tm.has_player_won(pid);
-        let res = tm.next_turn();
+        tm.check_for_winner();
+        let res = tm.roll_dice();
         assert!(res.is_err());
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
@@ -470,7 +630,7 @@ mod tests {
     fn build_settlement_fails_if_vertex_missing() {
         let mut tm = make_tm(3);
 
-        let res = tm.build_settlement((9999, 9999), true);
+        let res = tm.build_settlement(tm_current(&tm), (9999, 9999), true);
         assert_eq!(res.unwrap_err(), GameError::InvalidPosition);
     }
 
@@ -482,7 +642,7 @@ mod tests {
 
         tm.board.build_vertex(pid, v, Settlement);
 
-        let res = tm.build_settlement(v, true);
+        let res = tm.build_settlement(tm_current(&tm), v, true);
         assert_eq!(res.unwrap_err(), GameError::InvalidPosition);
     }
 
@@ -503,7 +663,7 @@ mod tests {
 
         let before = player.resources.clone();
 
-        tm.build_settlement(v, true).unwrap();
+        tm.build_settlement(tm_current(&tm), v, true).unwrap();
 
         let after = tm.players.get(pid).unwrap().resources.clone();
         assert_eq!(before, after);
@@ -514,7 +674,7 @@ mod tests {
         let mut tm = make_tm(3);
         let v = find_any_vertex_coords(&tm);
 
-        let res = tm.build_city(v);
+        let res = tm.build_city(tm_current(&tm), v);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -526,7 +686,7 @@ mod tests {
         let v = find_any_vertex_coords(&tm);
         tm.board.build_vertex(pid(2), v, Settlement);
 
-        let res = tm.build_city(v);
+        let res = tm.build_city(tm_current(&tm), v);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -534,7 +694,7 @@ mod tests {
     fn build_road_fails_if_edge_missing() {
         let mut tm = make_tm(3);
 
-        let res = tm.build_road((9999, 9999), true);
+        let res = tm.build_road(tm_current(&tm), (9999, 9999), true);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -546,7 +706,7 @@ mod tests {
 
         tm.board.build_edge(pid, e, Road);
 
-        let res = tm.build_road(e, true);
+        let res = tm.build_road(tm_current(&tm), e, true);
         assert_eq!(res.unwrap_err(), GameError::InvalidAction);
     }
 
@@ -557,7 +717,7 @@ mod tests {
 
         tm.players.get_mut(pid).unwrap().resources = ResourceSet::new();
 
-        let res = tm.buy_dev_card();
+        let res = tm.buy_dev_card(tm_current(&tm));
         assert_eq!(res.unwrap_err(), GameError::NotEnoughResources);
     }
 
@@ -573,8 +733,9 @@ mod tests {
                 .add_secret_victory_point();
         }
 
-        let won = tm.has_player_won(pid);
-        assert!(won);
+        let won = tm.check_for_winner();
+        assert_eq!(won, Some(pid));
         assert!(tm.game_over());
+        assert_eq!(tm.winner(), Some(pid));
     }
 }

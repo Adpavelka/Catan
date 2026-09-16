@@ -101,6 +101,19 @@ impl DevelopmentCard {
         }
     }
 
+    /// Whether this card has already been played. A played card stays in the
+    /// hand - a knight still counts towards the largest army - but it is spent
+    /// and must not go back to the deck.
+    pub fn is_played(&self) -> bool {
+        match self {
+            Self::Knight(s)
+            | Self::VictoryPoint(s)
+            | Self::RoadBuilder(s)
+            | Self::YearOfPlenty(s)
+            | Self::Monopoly(s) => s.played,
+        }
+    }
+
     pub fn get_type(&self) -> DevCardType {
         match self {
             Self::Knight(_) => DevCardType::Knight,
@@ -118,6 +131,7 @@ impl DevelopmentCard {
 
 #[cfg(test)]
 mod tests {
+    use shared::PlayerColour;
     use shared::DevCardType;
     use uuid::Uuid;
 
@@ -128,7 +142,7 @@ mod tests {
     use crate::game::entities::resources::ResourceType;
 
     fn dummy_player() -> Player {
-        Player::new(Uuid::new_v4(), "Test".into(), 'c')
+        Player::new(Uuid::new_v4(), "Test".into(), PlayerColour::Blue)
     }
 
     #[test]
