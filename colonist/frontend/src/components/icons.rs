@@ -172,7 +172,15 @@ pub fn asset_url(name: &str) -> String {
         return format!("/assets/ports/{name}.svg");
     }
 
-    if name == "stat-devcards" || name == "stat-knights" || name == "stat-road" || name == "stats-points" {
+    if matches!(
+        name,
+        "stat-devcards"
+            | "stat-knights"
+            | "stat-knights_actived"
+            | "stat-road"
+            | "stat-road_actived"
+            | "stats-points"
+    ) {
         return format!("/assets/statistics/{name}.svg");
     }
 

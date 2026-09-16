@@ -164,6 +164,40 @@ pub fn ResourceFlight() -> impl IntoView {
         );
     });
 
+    // Monopoly steals several players at once. Show a resource flight from each
+    // victim to the thief so the animation reflects the actual transfer.
+    create_effect(move |_| {
+        let Some(monopoly) = state.last_monopoly_event.get() else {
+            return;
+        };
+        let me = state.player_id.get_untracked();
+        if monopoly.victims.is_empty() || monopoly.total_stolen == 0 {
+            return;
+        }
+        set_timeout(
+            move || {
+                let mut batch = Vec::with_capacity(monopoly.victims.len());
+                for (i, victim) in monopoly.victims.iter().enumerate() {
+                    let (Some(from), Some(to)) = (hand_centre(*victim, me), hand_centre(monopoly.thief, me)) else {
+                        continue;
+                    };
+                    let id = next_id.get_value();
+                    next_id.set_value(id + 1);
+                    batch.push(Flyer {
+                        id,
+                        art: resource_art(monopoly.resource),
+                        label: label_of(monopoly.resource),
+                        from,
+                        to,
+                        delay: (i as u64) * STAGGER_MS,
+                    });
+                }
+                launch(batch);
+            },
+            std::time::Duration::from_millis(60),
+        );
+    });
+
     view! {
         <div class="fixed inset-0 pointer-events-none z-[9000]">
             <For

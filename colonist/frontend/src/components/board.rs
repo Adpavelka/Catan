@@ -11,27 +11,14 @@ fn axial_to_pixel(q: i32, r: i32, size: f32) -> (f32, f32) {
     (x, y)
 }
 
-// Get color for a resource type
-fn resource_color(resource: &ResourceType) -> &'static str {
+fn hex_asset(resource: &ResourceType) -> &'static str {
     match resource {
-        ResourceType::Wood => "fill-emerald-600",
-        ResourceType::Brick => "fill-orange-400",
-        ResourceType::Sheep => "fill-lime-500",
-        ResourceType::Wheat => "fill-yellow-500",
-        ResourceType::Ore => "fill-slate-500",
-        ResourceType::Desert => "fill-amber-200",
-    }
-}
-
-// Get label for a resource type
-fn resource_label(resource: &ResourceType) -> &'static str {
-    match resource {
-        ResourceType::Wood => "WOOD",
-        ResourceType::Brick => "BRICK",
-        ResourceType::Sheep => "SHEEP",
-        ResourceType::Wheat => "WHEAT",
-        ResourceType::Ore => "ORE",
-        ResourceType::Desert => "DESERT",
+        ResourceType::Wood => "/assets/hexes/wood.PNG?v=2",
+        ResourceType::Brick => "/assets/hexes/brick.PNG?v=2",
+        ResourceType::Sheep => "/assets/hexes/sheep.PNG?v=2",
+        ResourceType::Wheat => "/assets/hexes/wheat.PNG?v=2",
+        ResourceType::Ore => "/assets/hexes/ore.PNG?v=2",
+        ResourceType::Desert => "/assets/hexes/dessert.PNG?v=2",
     }
 }
 
@@ -973,8 +960,6 @@ pub fn DiceTray() -> impl IntoView {
 fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
     let state = use_context::<GameState>().expect("GameState missing");
     let points = "0,-50 43,-25 43,25 0,50 -43,25 -43,-25";
-    let color = resource_color(&hex.resource);
-    let label = resource_label(&hex.resource);
 
     // How many of the 36 dice combinations make this number: 6 and 8 are the
     // richest, 2 and 12 the poorest. Shown as pips, the way the real tokens do.
@@ -997,7 +982,15 @@ fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
             class="group"
             data-hex=format!("{q},{r}")
         >
-            <polygon points=points class=format!("{} stroke-black/30 [stroke-width:2]", color) />
+            <image
+                href=hex_asset(&hex.resource)
+                x="-60"
+                y="-60"
+                width="120"
+                height="120"
+                preserveAspectRatio="xMidYMid meet"
+                class="pointer-events-none"
+            />
 
             // The flash: a bright rim that fades, plus a steady glow while the
             // roll stands, so a tile that paid out stays findable afterwards.
@@ -1014,15 +1007,6 @@ fn HexTile(x: f32, y: f32, hex: HexInfo) -> impl IntoView {
             // A little inner shading so the tiles read as solid, not flat.
             <polygon points=points class="fill-none stroke-white/10" stroke-width="1"
                      transform="scale(0.93)" />
-
-            <text
-                y="-26"
-                text-anchor="middle"
-                class="fill-white/80 text-[11px] font-bold pointer-events-none uppercase tracking-[0.15em]"
-                style="text-shadow: 0 1px 3px rgba(0,0,0,0.9)"
-            >
-                {label}
-            </text>
 
             // The number token, centred in the hex like the cardboard chit it
             // stands in for - it used to be an off-centre dark blob shared

@@ -22,6 +22,12 @@ impl Robber {
     }
 
     fn available_assets_from_dir(dir: &Path) -> Vec<String> {
+        let legacy = [
+            "robber_claude",
+            "robber_fox",
+            "robber_raccoon",
+        ];
+
         let mut assets = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
@@ -34,10 +40,13 @@ impl Robber {
 
                 let stem = path.file_stem()?.to_str()?;
                 if stem == "robber" || stem.starts_with("robber_") {
-                    Some(stem.to_string())
-                } else {
-                    None
+                    if legacy.contains(&stem) {
+                        return None;
+                    }
+                    return Some(stem.to_string());
                 }
+
+                None
             })
             .collect::<Vec<_>>();
 
@@ -175,12 +184,14 @@ mod tests {
         std::fs::write(dir.join("robber.svg"), "").unwrap();
         std::fs::write(dir.join("robber_fox.svg"), "").unwrap();
         std::fs::write(dir.join("robber_raccoon.svg"), "").unwrap();
+        std::fs::write(dir.join("robber_cupid.svg"), "").unwrap();
         std::fs::write(dir.join("other.svg"), "").unwrap();
 
         let assets = Robber::available_assets_from_dir(&dir);
         assert!(assets.contains(&"robber".to_string()));
-        assert!(assets.contains(&"robber_fox".to_string()));
-        assert!(assets.contains(&"robber_raccoon".to_string()));
+        assert!(!assets.contains(&"robber_fox".to_string()));
+        assert!(!assets.contains(&"robber_raccoon".to_string()));
+        assert!(assets.contains(&"robber_cupid".to_string()));
         assert!(!assets.contains(&"other".to_string()));
 
         let _ = std::fs::remove_dir_all(&dir);

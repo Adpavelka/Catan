@@ -47,6 +47,7 @@ impl GameInstance {
                     Ok(ServerMessage::CardsDiscarded {
                         player_id: pid,
                         count: count as usize,
+                        resources,
                     })
                 } else {
                     Err("Not enough resources to discard".to_string())

@@ -8,9 +8,9 @@
 use leptos::*;
 use uuid::Uuid;
 
-use crate::components::icons::{resource_art, Art};
+use crate::components::icons::{asset_url, resource_art, Art};
 use crate::state::{ChatLine, GameState};
-use shared::{ClientRequest, PlayerColour, ResourceType};
+use shared::{ClientRequest, PlayerColour, PlayerInfo, ResourceType};
 
 /// The five resources in board order, with the label the artwork uses.
 const RESOURCES: [(ResourceType, &str); 5] = [
@@ -23,6 +23,251 @@ const RESOURCES: [(ResourceType, &str); 5] = [
 
 fn colour_hex(colour: PlayerColour) -> &'static str {
     colour.hex()
+}
+
+fn log_resource_icon(res: ResourceType) -> View {
+    let art = resource_art(res);
+    view! {
+        <Art
+            name=art
+            alt=res.label()
+            class="inline-block h-[18px] w-[14px] object-cover rounded-[2px] game-card align-middle mx-0.5"
+        />
+    }
+}
+
+fn log_build_icon(label: &str) -> Option<&'static str> {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "road" => Some("build-road"),
+        "settlement" => Some("build-settlement"),
+        "city" => Some("build-city"),
+        "development" | "development-card" => Some("build-dev-card"),
+        "knight" => Some("dev-knight"),
+        "year" | "year-of-plenty" => Some("dev-plenty"),
+        "monopoly" => Some("dev-monopoly"),
+        "road-building" => Some("dev-road"),
+        "victory" | "victory-point" => Some("dev-victory"),
+        _ => None,
+    }
+}
+
+fn log_event_icon_for_player_action(text: &str) -> Option<(&'static str, &'static str, bool)> {
+    let phrase = text.trim();
+
+    for (prefix, label) in [
+        ("built a ", " built a "),
+        ("bought a ", " bought a "),
+        ("played a ", " played a "),
+        ("used a ", " used a "),
+    ] {
+        if let Some(rest) = phrase.strip_prefix(prefix) {
+            let lower = rest.to_ascii_lowercase();
+
+            if lower.contains("road building") {
+                return Some((label, "dev-road", false));
+            }
+            if lower.contains("year of plenty") {
+                return Some((label, "dev-plenty", false));
+            }
+            if lower.contains("monopoly") {
+                return Some((label, "dev-monopoly", false));
+            }
+            if lower.contains("knight") {
+                return Some((label, "dev-knight", false));
+            }
+
+            let token = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or(rest)
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+
+            if let Some(icon) = log_build_icon(token) {
+                let tint = !icon.starts_with("dev-") && icon != "build-dev-card";
+                return Some((label, icon, tint));
+            }
+
+            if rest.contains("development") {
+                return Some((label, "build-dev-card", false));
+            }
+        }
+    }
+
+    if phrase.contains("moved the robber") {
+        return Some((" moved the robber", "robber", false));
+    }
+
+    None
+}
+
+fn tinted_asset_icon(icon: &str, hex: &str) -> View {
+    let url = asset_url(icon);
+    view! {
+        <span
+            aria-hidden="true"
+            class="inline-block align-middle"
+            style=format!(
+                "width: 18px; height: 18px; display: inline-block; background-color: {hex}; mask-image: url('{}'); -webkit-mask-image: url('{}'); mask-repeat: no-repeat; -webkit-mask-repeat: no-repeat; mask-size: contain; -webkit-mask-size: contain; mask-position: center; -webkit-mask-position: center;",
+                url, url
+            )
+        />
+    }
+    .into_view()
+}
+
+fn parse_resource_token(token: &str) -> Option<ResourceType> {
+    let resources = [
+        (ResourceType::Wood, "wood"),
+        (ResourceType::Wood, "lumber"),
+        (ResourceType::Brick, "brick"),
+        (ResourceType::Sheep, "sheep"),
+        (ResourceType::Wheat, "wheat"),
+        (ResourceType::Ore, "ore"),
+    ];
+
+    let cleaned = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+    let lower = cleaned.to_ascii_lowercase();
+    let normalized = lower.strip_suffix('s').unwrap_or(&lower);
+
+    resources
+        .iter()
+        .find(|(_, name)| normalized == *name)
+        .map(|(res, _)| *res)
+}
+
+fn render_trade_pair(count: usize, res: ResourceType) -> Vec<View> {
+    let mut parts = Vec::new();
+    if count > 0 {
+        parts.push(view! { <span>{count}</span> }.into_view());
+    }
+    parts.push(log_resource_icon(res));
+    parts
+}
+
+fn render_message_tokens(text: &str) -> Vec<View> {
+    let mut parts: Vec<View> = Vec::new();
+    let mut pending = String::new();
+
+    for token in text.split_whitespace() {
+        let cleaned = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+        let matched_resource = parse_resource_token(cleaned);
+        let matched_build = log_build_icon(cleaned);
+
+        if let Some(res) = matched_resource {
+            if !pending.is_empty() {
+                parts.push(view! { <span>{pending.clone()}</span> }.into_view());
+                pending.clear();
+            }
+            parts.push(log_resource_icon(res));
+        } else if let Some(asset) = matched_build {
+            if !pending.is_empty() {
+                parts.push(view! { <span>{pending.clone()}</span> }.into_view());
+                pending.clear();
+            }
+            parts.push(view! { <Art name=asset alt="" class="inline-block h-[18px] w-[18px] object-contain align-middle mx-0.5" /> });
+        } else {
+            if pending.is_empty() {
+                pending = token.to_string();
+            } else {
+                pending.push(' ');
+                pending.push_str(token);
+            }
+        }
+    }
+
+    if !pending.is_empty() {
+        parts.push(view! { <span>{pending.clone()}</span> }.into_view());
+    }
+
+    parts
+}
+
+fn render_log_message(msg: &str, players: &[PlayerInfo], robber_asset: &str) -> Vec<View> {
+    if let Some(player) = players.iter().find(|player| msg.starts_with(&player.name)) {
+        let player_name = player.name.clone();
+        let colour = player.colour.hex().to_string();
+        let tail = &msg[player_name.len()..];
+
+        let mut parts: Vec<View> = vec![view! {
+            <span style=format!("color: {}", colour)>{player_name}</span>
+        }.into_view()];
+
+        let remainder = tail.trim_start();
+        let lower = remainder.to_ascii_lowercase();
+        if lower.contains(" traded ") {
+            let mut words = remainder.split_whitespace();
+            let mut sweep: Vec<View> = Vec::new();
+
+            while let Some(word) = words.next() {
+                if word.eq_ignore_ascii_case("traded") {
+                    sweep.push(view! { <span> traded </span> }.into_view());
+                    continue;
+                }
+                if word.eq_ignore_ascii_case("for") {
+                    sweep.push(view! { <span> for </span> }.into_view());
+                    continue;
+                }
+
+                if let Ok(count) = word.parse::<usize>() {
+                    let next = words.next();
+                    if let Some(resource_word) = next.and_then(|w| parse_resource_token(w).map(|res| (w, res))) {
+                        let (_, res) = resource_word;
+                        sweep.extend(render_trade_pair(count, res));
+                        continue;
+                    }
+                    sweep.push(view! { <span>{word.to_string()}</span> }.into_view());
+                    continue;
+                }
+
+                if let Some(res) = parse_resource_token(word) {
+                    sweep.extend(render_trade_pair(1, res));
+                    continue;
+                }
+
+                sweep.push(view! { <span>{word.to_string()}</span> }.into_view());
+            }
+
+            parts.extend(sweep);
+            return parts;
+        }
+
+        if let Some((prefix, icon, tint)) = log_event_icon_for_player_action(remainder) {
+            parts.push(view! { <span>{prefix}</span> }.into_view());
+
+            if icon == "robber" {
+                let robber_name = robber_asset.trim();
+                let asset = if robber_name.is_empty() { "robber" } else { robber_name };
+                parts.push(view! {
+                    <img
+                        src=asset_url(asset)
+                        alt=""
+                        draggable="false"
+                        class="inline-block h-[18px] w-[18px] object-contain align-middle mx-0.5 select-none pointer-events-none"
+                    />
+                }.into_view());
+                return parts;
+            }
+
+            if tint {
+                parts.push(tinted_asset_icon(icon, &colour));
+            } else {
+                parts.push(view! {
+                    <img
+                        src=asset_url(icon)
+                        alt=""
+                        draggable="false"
+                        class="inline-block h-[18px] w-[18px] object-contain align-middle mx-0.5 select-none pointer-events-none"
+                    />
+                }.into_view());
+            }
+            return parts;
+        }
+
+        parts.extend(render_message_tokens(remainder));
+        return parts;
+    }
+
+    render_message_tokens(msg)
 }
 
 /// A transcript of the game: who built what, who rolled what.
@@ -55,10 +300,13 @@ pub fn EventLog() -> impl IntoView {
                 <For
                     each=events
                     key=|(i, msg)| (*i, msg.clone())
-                    children=move |(_, msg)| view! {
-                        <div class="text-[13px] leading-snug text-[#413a2c] border-b border-[#e2d7c0] py-1.5 last:border-0">
-                            {msg}
-                        </div>
+                    children=move |(_, msg)| {
+                        let rendered = render_log_message(&msg, &state.players.get(), &state.robber_asset.get());
+                        view! {
+                            <div class="text-[13px] leading-snug text-[#413a2c] border-b border-[#e2d7c0] py-1.5 last:border-0 flex flex-wrap items-center gap-x-1">
+                                {rendered}
+                            </div>
+                        }
                     }
                 />
                 <Show when=no_events>
@@ -237,18 +485,6 @@ fn PlayerPanel(player_id: Uuid) -> impl IntoView {
                 let active = is_active();
                 let road_active = p.has_longest_road;
                 let army_active = p.has_largest_army;
-                let road_filter = if road_active {
-                    "filter: brightness(0) saturate(120%) invert(68%) sepia(92%) saturate(1260%) hue-rotate(18deg) brightness(128%) contrast(118%);"
-                } else {
-                    ""
-                };
-                let army_filter = if army_active {
-                    "filter: brightness(0) saturate(120%) invert(68%) sepia(92%) saturate(1260%) hue-rotate(18deg) brightness(128%) contrast(118%);"
-                } else {
-                    ""
-                };
-                let road_color = if road_active { "#f5b93f" } else { "#2e3e46" };
-                let army_color = if army_active { "#f5b93f" } else { "#2e3e46" };
 
                 view! {
                     <div
@@ -326,19 +562,29 @@ fn PlayerPanel(player_id: Uuid) -> impl IntoView {
                                         class="flex min-w-[4.5rem] flex-col items-center justify-center rounded-[8px] bg-transparent"
                                         title="Knights played"
                                     >
-                                        <div style=army_filter>
-                                            <Art name="stat-knights" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
-                                        </div>
-                                        <span class="mt-0.5 text-[12px] font-black tabular-nums" style=format!("color: {}", army_color)>{p.knights_played}</span>
+                                        <Show
+                                            when=move || army_active
+                                            fallback=|| view! {
+                                                <Art name="stat-knights" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                            }
+                                        >
+                                            <Art name="stat-knights_actived" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                        </Show>
+                                        <span class="mt-0.5 text-[12px] font-black tabular-nums text-[#2e3e46]">{p.knights_played}</span>
                                     </div>
                                     <div
                                         class="flex min-w-[4.5rem] flex-col items-center justify-center rounded-[8px] bg-transparent"
                                         title="Longest road"
                                     >
-                                        <div style=road_filter>
-                                            <Art name="stat-road" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
-                                        </div>
-                                        <span class="mt-0.5 text-[12px] font-black tabular-nums" style=format!("color: {}", road_color)>{p.roads_count}</span>
+                                        <Show
+                                            when=move || road_active
+                                            fallback=|| view! {
+                                                <Art name="stat-road" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                            }
+                                        >
+                                            <Art name="stat-road_actived" class="h-[clamp(2.4rem,2.1vw,3.6rem)] w-[clamp(2.4rem,2.1vw,3.6rem)] object-contain" />
+                                        </Show>
+                                        <span class="mt-0.5 text-[12px] font-black tabular-nums text-[#2e3e46]">{p.roads_count}</span>
                                     </div>
                                 </div>
                             </div>

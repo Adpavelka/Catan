@@ -854,7 +854,7 @@ fn HudButton(
     view! {
         <button
             class=move || format!(
-                "hud-btn group relative w-[112px] h-[112px] flex items-center justify-center {}",
+                "hud-btn group relative z-[40] w-[112px] h-[112px] flex items-center justify-center {}",
                 if armed.get() {
                     "hud-btn-armed"
                 } else if priced && enabled.get() {
@@ -904,11 +904,12 @@ fn CostHint(label: &'static str, cost: [u8; 5]) -> impl IntoView {
 
     view! {
         <div
-            class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2.5 z-50
-                   hud-tray px-2.5 py-2 flex flex-col items-center gap-1.5
+            class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2.5 z-[999]
+                   px-2.5 py-2 flex flex-col items-center gap-1.5
                    opacity-0 invisible translate-y-1
                    group-hover:opacity-100 group-hover:visible group-hover:translate-y-0
                    transition-all duration-100"
+            style="background: #f5f0e6; border: 2px solid #cdc4b2; border-radius: 8px; box-shadow: 0 6px 14px rgba(0,0,0,0.28);"
         >
             <span class="text-[10px] font-black uppercase tracking-[0.14em] text-[#7a7263] whitespace-nowrap">
                 {label}

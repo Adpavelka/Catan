@@ -89,6 +89,8 @@ impl GameInstance {
             player_id: pid,
             gave: give,
             received: receive,
+            gave_count: ratio as u32,
+            received_count: 1,
         })
     }
 

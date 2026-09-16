@@ -424,11 +424,11 @@ impl Lobby {
     }
 
     fn handle_discard_flow(&mut self, gid: &str, msg: &ServerMessage) {
-        // A 7 opens the discard round; each completed discard may still leave
-        // others outstanding. Both cases just re-prompt whoever still owes cards.
+        // A 7 opens the discard round, and a robbery can change what the
+        // victim still owes. A successful discard itself is not a fresh prompt;
+        // it closes the current one.
         let prompt_needed = match msg {
             ServerMessage::DiceRolled { dice_1, dice_2, .. } => dice_1 + dice_2 == 7,
-            ServerMessage::CardsDiscarded { .. } => true,
             _ => false,
         };
 
@@ -460,6 +460,15 @@ impl Lobby {
     fn handle_robber_flow(&mut self, pid: Uuid, gid: &str, msg: &ServerMessage) {
         if let ServerMessage::RobberMoved { .. } = msg {
             if let Some(game) = self.games.get(gid) {
+                let discard_pending = game
+                    .pending_actions
+                    .get(&pid)
+                    .is_some_and(|actions| actions.contains(&PendingAction::Discard));
+
+                if discard_pending {
+                    return;
+                }
+
                 let robbable_players = game.turn_manager.robbable_players(pid);
 
                 self.send_server_msg(
@@ -471,19 +480,8 @@ impl Lobby {
             }
         }
 
-        // Robbing somebody who owes a discard changes what they owe: the
-        // amount is half their hand, worked out afresh when they submit. Their
-        // dialog still showed the old figure, so every submission came back
-        // refused and they were stuck until the turn clock stepped in.
-        if let ServerMessage::PlayerRobbed { victim_id, stole_a_card: true, .. } = msg {
-            let still_owes = self
-                .games
-                .get(gid)
-                .is_some_and(|game| game.has_pending_action(*victim_id, PendingAction::Discard));
-
-            if still_owes {
-                self.announce_pending_actions(*victim_id, gid);
-            }
-        }
+        // An active discard is already the current prompt. Re-announcing it
+        // after every rob action just opens the same modal a second time, and
+        // the existing `CardsDiscarded` path is the place that clears it.
     }
 }

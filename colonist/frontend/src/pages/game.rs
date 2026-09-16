@@ -702,10 +702,22 @@ fn IncomingTradeItem(trade: crate::state::PendingTradeOffer) -> impl IntoView {
             </div>
 
             <Show when=move || countering.get()>
-                <CounterOfferForm
-                    offer_id=offer_id
-                    on_done=Callback::new(move |_| set_countering.set(false))
-                />
+                <div class="relative z-10 ml-4 mt-2 pb-1">
+                    <div class="border-l-2 border-[#d7af4d] pl-3 py-1.5">
+                        <div class="mb-1 flex items-center gap-2">
+                            <span class="text-[10px] font-black uppercase tracking-[0.18em] text-[#8b6b2f]">
+                                "Counter to this offer"
+                            </span>
+                            <span class="h-px flex-1 bg-[#d7af4d]/70" />
+                        </div>
+                        <div class="relative z-20">
+                            <CounterOfferForm
+                                offer_id=offer_id
+                                on_done=Callback::new(move |_| set_countering.set(false))
+                            />
+                        </div>
+                    </div>
+                </div>
             </Show>
         </div>
     }

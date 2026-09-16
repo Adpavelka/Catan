@@ -150,7 +150,17 @@ impl Lobby
         let Some(game) = self.games.get(game_id) else { return };
         let Some(actions) = game.pending_actions.get(&pid) else { return };
 
+        // A discard is a blocking prompt: the player must finish it before any
+        // follow-up robber or steal prompt can be shown. Otherwise a single 7
+        // can open both a discard modal and a robber modal for the same
+        // player, which makes the post-discard flow reopen the wrong prompt.
+        let has_discard = actions.contains(&PendingAction::Discard);
+
         for action in actions.clone() {
+            if has_discard && !matches!(action, PendingAction::Discard) {
+                continue;
+            }
+
             let msg = match action {
                 PendingAction::MoveRobber | PendingAction::PlayKnight => {
                     shared::ServerMessage::MustMoveRobber { player_id: pid }

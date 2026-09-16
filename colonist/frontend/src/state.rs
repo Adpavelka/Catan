@@ -56,6 +56,16 @@ pub struct StealEvent {
     pub seq: u64,
 }
 
+/// A Monopoly transfer, which can involve several players at once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MonopolyEvent {
+    pub thief: Uuid,
+    pub resource: shared::ResourceType,
+    pub victims: Vec<Uuid>,
+    pub total_stolen: u32,
+    pub seq: u64,
+}
+
 /// One line of player chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatLine {
@@ -119,6 +129,10 @@ pub struct GameState {
     /// that *a* card moved, which is what they are entitled to know, and the
     /// animation shows them a face-down one.
     pub last_steal_event: RwSignal<Option<StealEvent>>,
+    /// A Monopoly draw that can take several cards at once from several
+    /// different players. The animation needs the whole victim list, not just a
+    /// single card, because the server is telling us exactly what was taken.
+    pub last_monopoly_event: RwSignal<Option<MonopolyEvent>>,
     /// Ticks once per turn handed out by the server.
     ///
     /// The turn clock resets off this rather than off `current_turn_player`.
@@ -195,6 +209,114 @@ pub fn resource_label(res: shared::ResourceType) -> &'static str {
         shared::ResourceType::Ore => "ore",
         shared::ResourceType::Desert => "nothing",
     }
+}
+
+fn bank_trade_resource_key(name: &str) -> Option<shared::ResourceType> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "wood" | "lumber" => Some(shared::ResourceType::Wood),
+        "brick" => Some(shared::ResourceType::Brick),
+        "sheep" | "wool" => Some(shared::ResourceType::Sheep),
+        "wheat" | "grain" => Some(shared::ResourceType::Wheat),
+        "ore" => Some(shared::ResourceType::Ore),
+        _ => None,
+    }
+}
+
+fn bank_trade_resource_totals(side: &str) -> Vec<(shared::ResourceType, u32)> {
+    let mut totals: std::collections::HashMap<shared::ResourceType, u32> = std::collections::HashMap::new();
+
+    for chunk in side.split(" and ").flat_map(|s| s.split(", ")) {
+        let trimmed = chunk.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut words = trimmed.split_whitespace();
+        let count = words.next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+        if count == 0 {
+            continue;
+        }
+
+        let resource_name = words.collect::<Vec<_>>().join(" ");
+        if let Some(resource) = bank_trade_resource_key(&resource_name) {
+            *totals.entry(resource).or_insert(0) += count;
+        }
+    }
+
+    let order = [
+        shared::ResourceType::Wood,
+        shared::ResourceType::Brick,
+        shared::ResourceType::Sheep,
+        shared::ResourceType::Wheat,
+        shared::ResourceType::Ore,
+    ];
+
+    order.into_iter().filter_map(|resource| totals.get(&resource).copied().map(|count| (resource, count))).collect()
+}
+
+fn bank_trade_summary(player_name: &str, give: Vec<(shared::ResourceType, u32)>, receive: Vec<(shared::ResourceType, u32)>) -> String {
+    let format_pair = |items: &[(shared::ResourceType, u32)]| {
+        items.iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(resource, count)| format!("{} {}", count, resource.label().to_ascii_lowercase()))
+            .collect::<Vec<_>>()
+            .join(" and ")
+    };
+
+    format!(
+        "{player_name} traded {} for {}",
+        format_pair(&give),
+        format_pair(&receive)
+    )
+}
+
+fn merge_bank_trade_lines(existing: &str, incoming: &str, player_name: &str) -> String {
+    let mut give_totals: std::collections::HashMap<shared::ResourceType, u32> = std::collections::HashMap::new();
+    let mut receive_totals: std::collections::HashMap<shared::ResourceType, u32> = std::collections::HashMap::new();
+
+    let parse_line = |line: &str| -> Option<(Vec<(shared::ResourceType, u32)>, Vec<(shared::ResourceType, u32)>)> {
+        let line = line.strip_prefix(&format!("{player_name} traded "))?;
+        let (give_part, receive_part) = line.split_once(" for ")?;
+        Some((bank_trade_resource_totals(give_part), bank_trade_resource_totals(receive_part)))
+    };
+
+    if let Some((existing_give, existing_receive)) = parse_line(existing) {
+        for (resource, count) in existing_give {
+            *give_totals.entry(resource).or_insert(0) += count;
+        }
+        for (resource, count) in existing_receive {
+            *receive_totals.entry(resource).or_insert(0) += count;
+        }
+    }
+
+    if let Some((incoming_give, incoming_receive)) = parse_line(incoming) {
+        for (resource, count) in incoming_give {
+            *give_totals.entry(resource).or_insert(0) += count;
+        }
+        for (resource, count) in incoming_receive {
+            *receive_totals.entry(resource).or_insert(0) += count;
+        }
+    }
+
+    let resource_order = [
+        shared::ResourceType::Wood,
+        shared::ResourceType::Brick,
+        shared::ResourceType::Sheep,
+        shared::ResourceType::Wheat,
+        shared::ResourceType::Ore,
+    ];
+
+    let give = resource_order
+        .iter()
+        .filter_map(|resource| give_totals.get(resource).copied().map(|count| (*resource, count)))
+        .collect::<Vec<_>>();
+
+    let receive = resource_order
+        .iter()
+        .filter_map(|resource| receive_totals.get(resource).copied().map(|count| (*resource, count)))
+        .collect::<Vec<_>>();
+
+    bank_trade_summary(player_name, give, receive)
 }
 
 /// The six corners of a hex, in the axial-times-three coordinates the server
@@ -694,6 +816,10 @@ impl GameState {
                         }
                     });
 
+                    if Some(player_id) == self.player_id.get_untracked() {
+                        return;
+                    }
+
                     let player_name = self.players.get_untracked()
                         .iter()
                         .find(|p| p.player_id == player_id)
@@ -742,7 +868,12 @@ impl GameState {
                         shared::DevCardType::YearOfPlenty => "Year of Plenty",
                     };
 
-                    self.messages.update(|m| m.push(format!("{} played a {} card", player_name, card_name)));
+                    if !matches!(
+                        card_type,
+                        shared::DevCardType::Monopoly | shared::DevCardType::RoadBuilding | shared::DevCardType::YearOfPlenty
+                    ) {
+                        self.messages.update(|m| m.push(format!("{} played a {} card", player_name, card_name)));
+                    }
                 }
                 ServerMessage::Error { message } => {
                     logging::error!("Server error: {}", message);
@@ -804,8 +935,8 @@ impl GameState {
                         self.must_discard_count.set(Some(count));
                     }
                 }
-                ServerMessage::CardsDiscarded { player_id, count } => {
-                    logging::log!("✅ Player {} discarded {} cards", player_id, count);
+                ServerMessage::CardsDiscarded { player_id, count, resources } => {
+                    logging::log!("✅ Player {} discarded {} cards: {:?}", player_id, count, resources);
 
                     let player_name = self.players.get_untracked()
                         .iter()
@@ -813,7 +944,32 @@ impl GameState {
                         .map(|p| p.name.clone())
                         .unwrap_or_else(|| format!("Player {}", player_id));
 
-                    self.messages.update(|m| m.push(format!("{} discarded {} cards", player_name, count)));
+                    let mut parts: Vec<String> = Vec::new();
+                    let resource_labels = [
+                        (shared::ResourceType::Wood, resources.lumber, "wood"),
+                        (shared::ResourceType::Brick, resources.brick, "brick"),
+                        (shared::ResourceType::Sheep, resources.wool, "sheep"),
+                        (shared::ResourceType::Wheat, resources.grain, "wheat"),
+                        (shared::ResourceType::Ore, resources.ore, "ore"),
+                    ];
+
+                    for (_, amount, label) in resource_labels {
+                        if amount > 0 {
+                            parts.push(format!("{} {}", amount, label));
+                        }
+                    }
+
+                    let details = if parts.is_empty() {
+                        "nothing".to_string()
+                    } else if parts.len() == 1 {
+                        parts[0].clone()
+                    } else {
+                        let last = parts.last().cloned().unwrap();
+                        let rest = parts[..parts.len() - 1].join(", ");
+                        format!("{}, and {}", rest, last)
+                    };
+
+                    self.messages.update(|m| m.push(format!("{} discarded {}", player_name, details)));
 
                     // If this is MY discard confirmation, close the discard modal
                     if Some(player_id) == self.player_id.get_untracked() {
@@ -892,13 +1048,25 @@ impl GameState {
                         self.messages.update(|m| m.push("Choose a resource type to steal from all players!".to_string()));
                     }
                 }
-                ServerMessage::MonopolyResourcesStolen { player_id, resource, total_stolen, .. } => {
+                ServerMessage::MonopolyResourcesStolen { player_id, resource, total_stolen, victims } => {
                     logging::log!("Player {} stole {} {:?} via Monopoly", player_id, total_stolen, resource);
 
                     // If it's me, close the modal
                     if Some(player_id) == self.player_id.get_untracked() {
                         self.monopoly_pending.set(false);
                     }
+
+                    let victim_copy = victims.clone();
+                    self.last_monopoly_event.update(|e| {
+                        let seq = e.as_ref().map_or(0, |ev| ev.seq + 1);
+                        *e = Some(MonopolyEvent {
+                            thief: player_id,
+                            resource,
+                            victims: victim_copy.clone(),
+                            total_stolen,
+                            seq,
+                        });
+                    });
 
                     let player_name = self.players.get_untracked()
                         .iter()
@@ -911,17 +1079,14 @@ impl GameState {
                         player_name, total_stolen, resource
                     )));
                 }
-                ServerMessage::BankTradeCompleted { player_id, gave, received } => {
-                    logging::log!("Player {} traded with bank: gave {:?}, received {:?}", player_id, gave, received);
+                ServerMessage::BankTradeCompleted { player_id, gave, received, gave_count, received_count } => {
+                    logging::log!("Player {} traded with bank: gave {:?} x{}, received {:?} x{}", player_id, gave, gave_count, received, received_count);
 
                     let player_name = self.players.get_untracked()
                         .iter()
                         .find(|p| p.player_id == player_id)
                         .map(|p| p.name.clone())
                         .unwrap_or_else(|| format!("Player {}", player_id));
-
-                    // Calculate the ratio used based on player's ports
-                    let ratio = self.get_best_ratio(gave);
 
                     let gave_name = match gave {
                         shared::ResourceType::Brick => "Brick",
@@ -941,7 +1106,27 @@ impl GameState {
                         shared::ResourceType::Desert => "Desert",
                     };
 
-                    self.messages.update(|m| m.push(format!("{} traded {} {} for 1 {}", player_name, ratio, gave_name, received_name)));
+                    let gave_count = gave_count.max(1);
+                    let received_count = received_count.max(1);
+
+                    let trade_line = format!(
+                        "{} traded {} {} for {} {}",
+                        player_name,
+                        gave_count,
+                        gave_name,
+                        received_count,
+                        received_name
+                    );
+
+                    self.messages.update(|m| {
+                        if let Some(last) = m.last_mut() {
+                            if last.starts_with(&format!("{player_name} traded ")) {
+                                *last = merge_bank_trade_lines(last, &trade_line, &player_name);
+                                return;
+                            }
+                        }
+                        m.push(trade_line);
+                    });
                 }
                 ServerMessage::PortsUpdate { player_id, ports } => {
                     logging::log!("Player {} ports updated: {:?}", player_id, ports);
@@ -1332,6 +1517,7 @@ pub fn provide_game_state() {
         chat: create_rw_signal(Vec::new()),
         last_roll_event: create_rw_signal(None),
         last_steal_event: create_rw_signal(None),
+        last_monopoly_event: create_rw_signal(None),
         turn_epoch: create_rw_signal(0),
         bank: create_rw_signal(shared::BankInfo::default()),
         is_in_game: create_rw_signal(false),

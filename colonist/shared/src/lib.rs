@@ -337,6 +337,7 @@ pub enum ServerMessage {
     CardsDiscarded {
         player_id: Uuid,
         count: usize,
+        resources: Resources,
     },
     MustMoveRobber {
         player_id: Uuid,
@@ -369,6 +370,10 @@ pub enum ServerMessage {
         player_id: Uuid,
         gave: ResourceType,
         received: ResourceType,
+        #[serde(default)]
+        gave_count: u32,
+        #[serde(default)]
+        received_count: u32,
     },
     PortsUpdate {
         player_id: Uuid,
